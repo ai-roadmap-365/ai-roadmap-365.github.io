@@ -1,0 +1,15 @@
+# What is exact, what may differ, and why
+
+Everything in this directory is captured from a real run on the authoring
+machine on 2026-08-29: macOS (Apple Silicon, arm64), Python 3.14.0,
+in this lab's virtual environment with numpy 2.5.2, scikit-learn 1.9.0,
+pytest 9.1.1, and scipy 1.15.2.
+
+## Exact on any machine, for any reason
+
+- **The RBF kernel self-similarity diagonal `K[i, i]`** is strictly `1.0` by definition of `exp(0) = 1`.
+- **RBF Gram matrix** is strictly symmetric positive semi-definite.
+
+## Exact under these pins, and only these
+
+- **SVC(kernel='rbf') test accuracy on Breast Cancer holdout**: `0.9763` (97.63%).

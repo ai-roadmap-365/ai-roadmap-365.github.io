@@ -2,7 +2,7 @@
 
 > GENERATED — do not edit by hand. Run `npm run generate:section-nav`.
 
-The complete map of all nine courses: **154 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
+The complete map of all nine courses: **175 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
 
 <details>
 <summary><h3>Course01 · Computing Foundations — 42/42 complete</h3></summary>
@@ -309,7 +309,7 @@ The linear algebra, calculus, probability, and data-analysis skills that make ma
 </details>
 
 <details>
-<summary><h3>Course04 · Machine Learning — 14/56 complete</h3></summary>
+<summary><h3>Course04 · Machine Learning — 35/56 complete</h3></summary>
 
 Classical machine learning done properly: models, evaluation, feature work, and the discipline that separates working systems from leaderboard tricks.
 
@@ -342,45 +342,45 @@ Classical machine learning done properly: models, evaluation, feature work, and 
 
 </details>
 <details>
-<summary>Days 155-161 · Classification — 0/7</summary>
+<summary>Days 155-161 · Classification — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 155 | Logistic Regression | — | — | planned |
-| Day 156 | Decision Boundaries | — | — | planned |
-| Day 157 | k-Nearest Neighbors | — | — | planned |
-| Day 158 | Naive Bayes and Text Classification | — | — | planned |
-| Day 159 | Precision, Recall, ROC, and Choosing Thresholds | — | — | planned |
-| Day 160 | Class Imbalance | — | — | planned |
-| Day 161 | A Complete Classification Project | — | — | planned |
+| Day 155 | [Logistic Regression](content/sections/machine-learning/day-155-logistic-regression/) | [lab](labs/sections/machine-learning/day-155-logistic-regression/) | [blog](https://ai-roadmap-365.github.io/day-155-logistic-regression) | complete |
+| Day 156 | [Decision Boundaries](content/sections/machine-learning/day-156-decision-boundaries/) | [lab](labs/sections/machine-learning/day-156-decision-boundaries/) | [blog](https://ai-roadmap-365.github.io/day-156-decision-boundaries) | complete |
+| Day 157 | [k-Nearest Neighbors](content/sections/machine-learning/day-157-k-nearest-neighbors/) | [lab](labs/sections/machine-learning/day-157-k-nearest-neighbors/) | [blog](https://ai-roadmap-365.github.io/day-157-k-nearest-neighbors) | complete |
+| Day 158 | [Naive Bayes and Text Classification](content/sections/machine-learning/day-158-naive-bayes-and-text-classification/) | [lab](labs/sections/machine-learning/day-158-naive-bayes-and-text-classification/) | [blog](https://ai-roadmap-365.github.io/day-158-naive-bayes-and-text-classification) | complete |
+| Day 159 | [Precision, Recall, ROC, and Choosing Thresholds](content/sections/machine-learning/day-159-precision-recall-roc-and-choosing-thresholds/) | [lab](labs/sections/machine-learning/day-159-precision-recall-roc-and-choosing-thresholds/) | [blog](https://ai-roadmap-365.github.io/day-159-precision-recall-roc-and-choosing-thresholds) | complete |
+| Day 160 | [Class Imbalance](content/sections/machine-learning/day-160-class-imbalance/) | [lab](labs/sections/machine-learning/day-160-class-imbalance/) | [blog](https://ai-roadmap-365.github.io/day-160-class-imbalance) | complete |
+| Day 161 | [A Complete Classification Project](content/sections/machine-learning/day-161-a-complete-classification-project/) | [lab](labs/sections/machine-learning/day-161-a-complete-classification-project/) | [blog](https://ai-roadmap-365.github.io/day-161-a-complete-classification-project) | complete |
 
 </details>
 <details>
-<summary>Days 162-168 · Trees and Ensembles — 0/7</summary>
+<summary>Days 162-168 · Trees and Ensembles — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 162 | Decision Trees | — | — | planned |
-| Day 163 | Random Forests | — | — | planned |
-| Day 164 | Gradient Boosting | — | — | planned |
-| Day 165 | XGBoost and LightGBM in Practice | — | — | planned |
-| Day 166 | Hyperparameter Tuning | — | — | planned |
-| Day 167 | Cross-Validation Done Right | — | — | planned |
-| Day 168 | Winning on Tabular Data | — | — | planned |
+| Day 162 | [Decision Trees](content/sections/machine-learning/day-162-decision-trees/) | [lab](labs/sections/machine-learning/day-162-decision-trees/) | [blog](https://ai-roadmap-365.github.io/day-162-decision-trees) | complete |
+| Day 163 | [Random Forests](content/sections/machine-learning/day-163-random-forests/) | [lab](labs/sections/machine-learning/day-163-random-forests/) | [blog](https://ai-roadmap-365.github.io/day-163-random-forests) | complete |
+| Day 164 | [Gradient Boosting](content/sections/machine-learning/day-164-gradient-boosting/) | [lab](labs/sections/machine-learning/day-164-gradient-boosting/) | [blog](https://ai-roadmap-365.github.io/day-164-gradient-boosting) | complete |
+| Day 165 | [XGBoost and LightGBM in Practice](content/sections/machine-learning/day-165-xgboost-and-lightgbm-in-practice/) | [lab](labs/sections/machine-learning/day-165-xgboost-and-lightgbm-in-practice/) | [blog](https://ai-roadmap-365.github.io/day-165-xgboost-and-lightgbm-in-practice) | complete |
+| Day 166 | [Hyperparameter Tuning](content/sections/machine-learning/day-166-hyperparameter-tuning/) | [lab](labs/sections/machine-learning/day-166-hyperparameter-tuning/) | [blog](https://ai-roadmap-365.github.io/day-166-hyperparameter-tuning) | complete |
+| Day 167 | [Cross-Validation Done Right](content/sections/machine-learning/day-167-cross-validation-done-right/) | [lab](labs/sections/machine-learning/day-167-cross-validation-done-right/) | [blog](https://ai-roadmap-365.github.io/day-167-cross-validation-done-right) | complete |
+| Day 168 | [Winning on Tabular Data](content/sections/machine-learning/day-168-winning-on-tabular-data/) | [lab](labs/sections/machine-learning/day-168-winning-on-tabular-data/) | [blog](https://ai-roadmap-365.github.io/day-168-winning-on-tabular-data) | complete |
 
 </details>
 <details>
-<summary>Days 169-175 · Features and Support Vector Machines — 0/7</summary>
+<summary>Days 169-175 · Features and Support Vector Machines — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 169 | Support Vector Machines | — | — | planned |
-| Day 170 | Feature Scaling and Encoding | — | — | planned |
-| Day 171 | Feature Engineering | — | — | planned |
-| Day 172 | Feature Selection | — | — | planned |
-| Day 173 | scikit-learn Pipelines | — | — | planned |
-| Day 174 | Handling Missing Data | — | — | planned |
-| Day 175 | Features Beat Algorithms | — | — | planned |
+| Day 169 | [Support Vector Machines](content/sections/machine-learning/day-169-support-vector-machines/) | [lab](labs/sections/machine-learning/day-169-support-vector-machines/) | [blog](https://ai-roadmap-365.github.io/day-169-support-vector-machines) | complete |
+| Day 170 | [Feature Scaling and Encoding](content/sections/machine-learning/day-170-feature-scaling-and-encoding/) | [lab](labs/sections/machine-learning/day-170-feature-scaling-and-encoding/) | [blog](https://ai-roadmap-365.github.io/day-170-feature-scaling-and-encoding) | complete |
+| Day 171 | [Feature Engineering](content/sections/machine-learning/day-171-feature-engineering/) | [lab](labs/sections/machine-learning/day-171-feature-engineering/) | [blog](https://ai-roadmap-365.github.io/day-171-feature-engineering) | complete |
+| Day 172 | [Feature Selection](content/sections/machine-learning/day-172-feature-selection/) | [lab](labs/sections/machine-learning/day-172-feature-selection/) | [blog](https://ai-roadmap-365.github.io/day-172-feature-selection) | complete |
+| Day 173 | [scikit-learn Pipelines](content/sections/machine-learning/day-173-scikit-learn-pipelines/) | [lab](labs/sections/machine-learning/day-173-scikit-learn-pipelines/) | [blog](https://ai-roadmap-365.github.io/day-173-scikit-learn-pipelines) | complete |
+| Day 174 | [Handling Missing Data](content/sections/machine-learning/day-174-handling-missing-data/) | [lab](labs/sections/machine-learning/day-174-handling-missing-data/) | [blog](https://ai-roadmap-365.github.io/day-174-handling-missing-data) | complete |
+| Day 175 | [Features Beat Algorithms](content/sections/machine-learning/day-175-features-beat-algorithms/) | [lab](labs/sections/machine-learning/day-175-features-beat-algorithms/) | [blog](https://ai-roadmap-365.github.io/day-175-features-beat-algorithms) | complete |
 
 </details>
 <details>
