@@ -2,7 +2,7 @@
 
 > GENERATED — do not edit by hand. Run `npm run generate:section-nav`.
 
-The complete map of all nine courses: **175 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
+The complete map of all nine courses: **189 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
 
 <details>
 <summary><h3>Course01 · Computing Foundations — 42/42 complete</h3></summary>
@@ -309,7 +309,7 @@ The linear algebra, calculus, probability, and data-analysis skills that make ma
 </details>
 
 <details>
-<summary><h3>Course04 · Machine Learning — 35/56 complete</h3></summary>
+<summary><h3>Course04 · Machine Learning — 49/56 complete</h3></summary>
 
 Classical machine learning done properly: models, evaluation, feature work, and the discipline that separates working systems from leaderboard tricks.
 
@@ -384,31 +384,31 @@ Classical machine learning done properly: models, evaluation, feature work, and 
 
 </details>
 <details>
-<summary>Days 176-182 · Evaluation and Interpretation — 0/7</summary>
+<summary>Days 176-182 · Evaluation and Interpretation — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 176 | Choosing the Right Metric | — | — | planned |
-| Day 177 | Learning Curves and Diagnostics | — | — | planned |
-| Day 178 | Interpreting Models: Importances and SHAP | — | — | planned |
-| Day 179 | Fairness and Bias in Models | — | — | planned |
-| Day 180 | Data Leakage | — | — | planned |
-| Day 181 | Baselines and Error Analysis | — | — | planned |
-| Day 182 | Writing a Model Report | — | — | planned |
+| Day 176 | [Choosing the Right Metric](content/sections/machine-learning/day-176-choosing-the-right-metric/) | [lab](labs/sections/machine-learning/day-176-choosing-the-right-metric/) | [blog](https://ai-roadmap-365.github.io/day-176-choosing-the-right-metric) | complete |
+| Day 177 | [Learning Curves and Diagnostics](content/sections/machine-learning/day-177-learning-curves-and-diagnostics/) | [lab](labs/sections/machine-learning/day-177-learning-curves-and-diagnostics/) | [blog](https://ai-roadmap-365.github.io/day-177-learning-curves-and-diagnostics) | complete |
+| Day 178 | [Interpreting Models: Importances and SHAP](content/sections/machine-learning/day-178-interpreting-models-importances-and-shap/) | [lab](labs/sections/machine-learning/day-178-interpreting-models-importances-and-shap/) | [blog](https://ai-roadmap-365.github.io/day-178-interpreting-models-importances-and-shap) | complete |
+| Day 179 | [Fairness and Bias in Models](content/sections/machine-learning/day-179-fairness-and-bias-in-models/) | [lab](labs/sections/machine-learning/day-179-fairness-and-bias-in-models/) | [blog](https://ai-roadmap-365.github.io/day-179-fairness-and-bias-in-models) | complete |
+| Day 180 | [Data Leakage](content/sections/machine-learning/day-180-data-leakage/) | [lab](labs/sections/machine-learning/day-180-data-leakage/) | [blog](https://ai-roadmap-365.github.io/day-180-data-leakage) | complete |
+| Day 181 | [Baselines and Error Analysis](content/sections/machine-learning/day-181-baselines-and-error-analysis/) | [lab](labs/sections/machine-learning/day-181-baselines-and-error-analysis/) | [blog](https://ai-roadmap-365.github.io/day-181-baselines-and-error-analysis) | complete |
+| Day 182 | [Writing a Model Report](content/sections/machine-learning/day-182-writing-a-model-report/) | [lab](labs/sections/machine-learning/day-182-writing-a-model-report/) | [blog](https://ai-roadmap-365.github.io/day-182-writing-a-model-report) | complete |
 
 </details>
 <details>
-<summary>Days 183-189 · Unsupervised Learning — 0/7</summary>
+<summary>Days 183-189 · Unsupervised Learning — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 183 | Clustering with k-means | — | — | planned |
-| Day 184 | Hierarchical Clustering and DBSCAN | — | — | planned |
-| Day 185 | Principal Component Analysis | — | — | planned |
-| Day 186 | t-SNE and UMAP | — | — | planned |
-| Day 187 | Anomaly Detection | — | — | planned |
-| Day 188 | Recommender Systems | — | — | planned |
-| Day 189 | A Segmentation Study | — | — | planned |
+| Day 183 | [Clustering with k-means](content/sections/machine-learning/day-183-clustering-with-k-means/) | [lab](labs/sections/machine-learning/day-183-clustering-with-k-means/) | [blog](https://ai-roadmap-365.github.io/day-183-clustering-with-k-means) | complete |
+| Day 184 | [Hierarchical Clustering and DBSCAN](content/sections/machine-learning/day-184-hierarchical-clustering-and-dbscan/) | [lab](labs/sections/machine-learning/day-184-hierarchical-clustering-and-dbscan/) | [blog](https://ai-roadmap-365.github.io/day-184-hierarchical-clustering-and-dbscan) | complete |
+| Day 185 | [Principal Component Analysis](content/sections/machine-learning/day-185-principal-component-analysis/) | [lab](labs/sections/machine-learning/day-185-principal-component-analysis/) | [blog](https://ai-roadmap-365.github.io/day-185-principal-component-analysis) | complete |
+| Day 186 | [t-SNE and UMAP](content/sections/machine-learning/day-186-t-sne-and-umap/) | [lab](labs/sections/machine-learning/day-186-t-sne-and-umap/) | [blog](https://ai-roadmap-365.github.io/day-186-t-sne-and-umap) | complete |
+| Day 187 | [Anomaly Detection](content/sections/machine-learning/day-187-anomaly-detection/) | [lab](labs/sections/machine-learning/day-187-anomaly-detection/) | [blog](https://ai-roadmap-365.github.io/day-187-anomaly-detection) | complete |
+| Day 188 | [Recommender Systems](content/sections/machine-learning/day-188-recommender-systems/) | [lab](labs/sections/machine-learning/day-188-recommender-systems/) | [blog](https://ai-roadmap-365.github.io/day-188-recommender-systems) | complete |
+| Day 189 | [A Segmentation Study](content/sections/machine-learning/day-189-a-segmentation-study/) | [lab](labs/sections/machine-learning/day-189-a-segmentation-study/) | [blog](https://ai-roadmap-365.github.io/day-189-a-segmentation-study) | complete |
 
 </details>
 <details>
@@ -416,13 +416,13 @@ Classical machine learning done properly: models, evaluation, feature work, and 
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 190 | The ML Project Lifecycle | — | — | planned |
-| Day 191 | Building Datasets and Labeling | — | — | planned |
-| Day 192 | Time Series Forecasting Basics | — | — | planned |
-| Day 193 | Saving and Versioning Models | — | — | planned |
-| Day 194 | Serving a Model over an API | — | — | planned |
-| Day 195 | Monitoring Models in Production | — | — | planned |
-| Day 196 | Section Project: An ML Service | — | — | planned |
+| Day 190 | [The ML Project Lifecycle](content/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [lab](labs/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [blog](https://ai-roadmap-365.github.io/day-190-the-ml-project-lifecycle) | planned |
+| Day 191 | [Building Datasets and Labeling](content/sections/machine-learning/day-191-building-datasets-and-labeling/) | [lab](labs/sections/machine-learning/day-191-building-datasets-and-labeling/) | [blog](https://ai-roadmap-365.github.io/day-191-building-datasets-and-labeling) | planned |
+| Day 192 | [Time Series Forecasting Basics](content/sections/machine-learning/day-192-time-series-forecasting-basics/) | [lab](labs/sections/machine-learning/day-192-time-series-forecasting-basics/) | [blog](https://ai-roadmap-365.github.io/day-192-time-series-forecasting-basics) | planned |
+| Day 193 | [Saving and Versioning Models](content/sections/machine-learning/day-193-saving-and-versioning-models/) | [lab](labs/sections/machine-learning/day-193-saving-and-versioning-models/) | [blog](https://ai-roadmap-365.github.io/day-193-saving-and-versioning-models) | planned |
+| Day 194 | [Serving a Model over an API](content/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [lab](labs/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [blog](https://ai-roadmap-365.github.io/day-194-serving-a-model-over-an-api) | planned |
+| Day 195 | [Monitoring Models in Production](content/sections/machine-learning/day-195-monitoring-models-in-production/) | [lab](labs/sections/machine-learning/day-195-monitoring-models-in-production/) | [blog](https://ai-roadmap-365.github.io/day-195-monitoring-models-in-production) | planned |
+| Day 196 | [Section Project: An ML Service](content/sections/machine-learning/day-196-section-project-an-ml-service/) | [lab](labs/sections/machine-learning/day-196-section-project-an-ml-service/) | [blog](https://ai-roadmap-365.github.io/day-196-section-project-an-ml-service) | planned |
 
 </details>
 
@@ -438,13 +438,13 @@ Neural networks from first principles to transformers: build them, train them, d
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 197 | The Perceptron | — | — | planned |
-| Day 198 | Activation Functions | — | — | planned |
-| Day 199 | Forward Propagation | — | — | planned |
-| Day 200 | Backpropagation | — | — | planned |
-| Day 201 | A Neural Network in Pure NumPy | — | — | planned |
-| Day 202 | PyTorch Tensors | — | — | planned |
-| Day 203 | Training MNIST from Scratch | — | — | planned |
+| Day 197 | [The Perceptron](content/sections/deep-learning/day-197-the-perceptron/) | [lab](labs/sections/deep-learning/day-197-the-perceptron/) | [blog](https://ai-roadmap-365.github.io/day-197-the-perceptron) | planned |
+| Day 198 | [Activation Functions](content/sections/deep-learning/day-198-activation-functions/) | [lab](labs/sections/deep-learning/day-198-activation-functions/) | [blog](https://ai-roadmap-365.github.io/day-198-activation-functions) | planned |
+| Day 199 | [Forward Propagation](content/sections/deep-learning/day-199-forward-propagation/) | [lab](labs/sections/deep-learning/day-199-forward-propagation/) | [blog](https://ai-roadmap-365.github.io/day-199-forward-propagation) | planned |
+| Day 200 | [Backpropagation](content/sections/deep-learning/day-200-backpropagation/) | [lab](labs/sections/deep-learning/day-200-backpropagation/) | [blog](https://ai-roadmap-365.github.io/day-200-backpropagation) | planned |
+| Day 201 | [A Neural Network in Pure NumPy](content/sections/deep-learning/day-201-a-neural-network-in-pure-numpy/) | [lab](labs/sections/deep-learning/day-201-a-neural-network-in-pure-numpy/) | [blog](https://ai-roadmap-365.github.io/day-201-a-neural-network-in-pure-numpy) | planned |
+| Day 202 | [PyTorch Tensors](content/sections/deep-learning/day-202-pytorch-tensors/) | [lab](labs/sections/deep-learning/day-202-pytorch-tensors/) | [blog](https://ai-roadmap-365.github.io/day-202-pytorch-tensors) | planned |
+| Day 203 | [Training MNIST from Scratch](content/sections/deep-learning/day-203-training-mnist-from-scratch/) | [lab](labs/sections/deep-learning/day-203-training-mnist-from-scratch/) | [blog](https://ai-roadmap-365.github.io/day-203-training-mnist-from-scratch) | planned |
 
 </details>
 <details>
@@ -452,13 +452,13 @@ Neural networks from first principles to transformers: build them, train them, d
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 204 | PyTorch: autograd and nn.Module | — | — | planned |
-| Day 205 | Datasets and DataLoaders | — | — | planned |
-| Day 206 | Optimizers: SGD to Adam | — | — | planned |
-| Day 207 | Learning Rate Schedules | — | — | planned |
-| Day 208 | Dropout, Batch Norm, and Regularization | — | — | planned |
-| Day 209 | Debugging Training Runs | — | — | planned |
-| Day 210 | A Disciplined Training Project | — | — | planned |
+| Day 204 | [PyTorch: autograd and nn.Module](content/sections/deep-learning/day-204-pytorch-autograd-and-nn-module/) | [lab](labs/sections/deep-learning/day-204-pytorch-autograd-and-nn-module/) | [blog](https://ai-roadmap-365.github.io/day-204-pytorch-autograd-and-nn-module) | planned |
+| Day 205 | [Datasets and DataLoaders](content/sections/deep-learning/day-205-datasets-and-dataloaders/) | [lab](labs/sections/deep-learning/day-205-datasets-and-dataloaders/) | [blog](https://ai-roadmap-365.github.io/day-205-datasets-and-dataloaders) | planned |
+| Day 206 | [Optimizers: SGD to Adam](content/sections/deep-learning/day-206-optimizers-sgd-to-adam/) | [lab](labs/sections/deep-learning/day-206-optimizers-sgd-to-adam/) | [blog](https://ai-roadmap-365.github.io/day-206-optimizers-sgd-to-adam) | planned |
+| Day 207 | [Learning Rate Schedules](content/sections/deep-learning/day-207-learning-rate-schedules/) | [lab](labs/sections/deep-learning/day-207-learning-rate-schedules/) | [blog](https://ai-roadmap-365.github.io/day-207-learning-rate-schedules) | planned |
+| Day 208 | [Dropout, Batch Norm, and Regularization](content/sections/deep-learning/day-208-dropout-batch-norm-and-regularization/) | [lab](labs/sections/deep-learning/day-208-dropout-batch-norm-and-regularization/) | [blog](https://ai-roadmap-365.github.io/day-208-dropout-batch-norm-and-regularization) | planned |
+| Day 209 | [Debugging Training Runs](content/sections/deep-learning/day-209-debugging-training-runs/) | [lab](labs/sections/deep-learning/day-209-debugging-training-runs/) | [blog](https://ai-roadmap-365.github.io/day-209-debugging-training-runs) | planned |
+| Day 210 | [A Disciplined Training Project](content/sections/deep-learning/day-210-a-disciplined-training-project/) | [lab](labs/sections/deep-learning/day-210-a-disciplined-training-project/) | [blog](https://ai-roadmap-365.github.io/day-210-a-disciplined-training-project) | planned |
 
 </details>
 <details>

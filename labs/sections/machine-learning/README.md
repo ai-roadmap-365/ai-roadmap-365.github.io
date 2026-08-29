@@ -4,7 +4,7 @@
 
 Hands-on companions to this section's lessons. Each day directory is self-contained: open it, follow its README, finish with its tests passing.
 
-**35 of 56 labs written.** Expand a subsection below to see its days.
+**56 of 56 labs written.** Expand a subsection below to see its days.
 
 <details>
 <summary><strong>Days 141-147 · Machine Learning Fundamentals</strong> — 7/7 complete</summary>
@@ -91,52 +91,52 @@ Hands-on companions to this section's lessons. Each day directory is self-contai
 
 </details>
 
-<details open>
-<summary><strong>Days 176-182 · Evaluation and Interpretation</strong> — 0/7 complete</summary>
+<details>
+<summary><strong>Days 176-182 · Evaluation and Interpretation</strong> — 7/7 complete</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 176 | Choosing the Right Metric | — | — | planned |
-| Day 177 | Learning Curves and Diagnostics | — | — | planned |
-| Day 178 | Interpreting Models: Importances and SHAP | — | — | planned |
-| Day 179 | Fairness and Bias in Models | — | — | planned |
-| Day 180 | Data Leakage | — | — | planned |
-| Day 181 | Baselines and Error Analysis | — | — | planned |
-| Day 182 | Writing a Model Report | — | — | planned |
+| Day 176 | [Choosing the Right Metric](../../../content/sections/machine-learning/day-176-choosing-the-right-metric/) | [lab](./day-176-choosing-the-right-metric/) | [blog](https://ai-roadmap-365.github.io/day-176-choosing-the-right-metric) | complete |
+| Day 177 | [Learning Curves and Diagnostics](../../../content/sections/machine-learning/day-177-learning-curves-and-diagnostics/) | [lab](./day-177-learning-curves-and-diagnostics/) | [blog](https://ai-roadmap-365.github.io/day-177-learning-curves-and-diagnostics) | complete |
+| Day 178 | [Interpreting Models: Importances and SHAP](../../../content/sections/machine-learning/day-178-interpreting-models-importances-and-shap/) | [lab](./day-178-interpreting-models-importances-and-shap/) | [blog](https://ai-roadmap-365.github.io/day-178-interpreting-models-importances-and-shap) | complete |
+| Day 179 | [Fairness and Bias in Models](../../../content/sections/machine-learning/day-179-fairness-and-bias-in-models/) | [lab](./day-179-fairness-and-bias-in-models/) | [blog](https://ai-roadmap-365.github.io/day-179-fairness-and-bias-in-models) | complete |
+| Day 180 | [Data Leakage](../../../content/sections/machine-learning/day-180-data-leakage/) | [lab](./day-180-data-leakage/) | [blog](https://ai-roadmap-365.github.io/day-180-data-leakage) | complete |
+| Day 181 | [Baselines and Error Analysis](../../../content/sections/machine-learning/day-181-baselines-and-error-analysis/) | [lab](./day-181-baselines-and-error-analysis/) | [blog](https://ai-roadmap-365.github.io/day-181-baselines-and-error-analysis) | complete |
+| Day 182 | [Writing a Model Report](../../../content/sections/machine-learning/day-182-writing-a-model-report/) | [lab](./day-182-writing-a-model-report/) | [blog](https://ai-roadmap-365.github.io/day-182-writing-a-model-report) | complete |
 
 **Project:** Model Audit Report — Audit a trained model for leakage, fairness, and failure modes, and write a decision-ready model report.
 
 </details>
 
 <details>
-<summary><strong>Days 183-189 · Unsupervised Learning</strong> — 0/7 complete</summary>
+<summary><strong>Days 183-189 · Unsupervised Learning</strong> — 7/7 complete</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 183 | Clustering with k-means | — | — | planned |
-| Day 184 | Hierarchical Clustering and DBSCAN | — | — | planned |
-| Day 185 | Principal Component Analysis | — | — | planned |
-| Day 186 | t-SNE and UMAP | — | — | planned |
-| Day 187 | Anomaly Detection | — | — | planned |
-| Day 188 | Recommender Systems | — | — | planned |
-| Day 189 | A Segmentation Study | — | — | planned |
+| Day 183 | [Clustering with k-means](../../../content/sections/machine-learning/day-183-clustering-with-k-means/) | [lab](./day-183-clustering-with-k-means/) | [blog](https://ai-roadmap-365.github.io/day-183-clustering-with-k-means) | complete |
+| Day 184 | [Hierarchical Clustering and DBSCAN](../../../content/sections/machine-learning/day-184-hierarchical-clustering-and-dbscan/) | [lab](./day-184-hierarchical-clustering-and-dbscan/) | [blog](https://ai-roadmap-365.github.io/day-184-hierarchical-clustering-and-dbscan) | complete |
+| Day 185 | [Principal Component Analysis](../../../content/sections/machine-learning/day-185-principal-component-analysis/) | [lab](./day-185-principal-component-analysis/) | [blog](https://ai-roadmap-365.github.io/day-185-principal-component-analysis) | complete |
+| Day 186 | [t-SNE and UMAP](../../../content/sections/machine-learning/day-186-t-sne-and-umap/) | [lab](./day-186-t-sne-and-umap/) | [blog](https://ai-roadmap-365.github.io/day-186-t-sne-and-umap) | complete |
+| Day 187 | [Anomaly Detection](../../../content/sections/machine-learning/day-187-anomaly-detection/) | [lab](./day-187-anomaly-detection/) | [blog](https://ai-roadmap-365.github.io/day-187-anomaly-detection) | complete |
+| Day 188 | [Recommender Systems](../../../content/sections/machine-learning/day-188-recommender-systems/) | [lab](./day-188-recommender-systems/) | [blog](https://ai-roadmap-365.github.io/day-188-recommender-systems) | complete |
+| Day 189 | [A Segmentation Study](../../../content/sections/machine-learning/day-189-a-segmentation-study/) | [lab](./day-189-a-segmentation-study/) | [blog](https://ai-roadmap-365.github.io/day-189-a-segmentation-study) | complete |
 
 **Project:** Customer Segmentation — Cluster a customer dataset, reduce it for visualization, name the segments, and defend the number of clusters chosen.
 
 </details>
 
-<details>
+<details open>
 <summary><strong>Days 190-196 · Machine Learning in Practice</strong> — 0/7 complete</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 190 | The ML Project Lifecycle | — | — | planned |
-| Day 191 | Building Datasets and Labeling | — | — | planned |
-| Day 192 | Time Series Forecasting Basics | — | — | planned |
-| Day 193 | Saving and Versioning Models | — | — | planned |
-| Day 194 | Serving a Model over an API | — | — | planned |
-| Day 195 | Monitoring Models in Production | — | — | planned |
-| Day 196 | Section Project: An ML Service | — | — | planned |
+| Day 190 | [The ML Project Lifecycle](../../../content/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [lab](./day-190-the-ml-project-lifecycle/) | [blog](https://ai-roadmap-365.github.io/day-190-the-ml-project-lifecycle) | planned |
+| Day 191 | [Building Datasets and Labeling](../../../content/sections/machine-learning/day-191-building-datasets-and-labeling/) | [lab](./day-191-building-datasets-and-labeling/) | [blog](https://ai-roadmap-365.github.io/day-191-building-datasets-and-labeling) | planned |
+| Day 192 | [Time Series Forecasting Basics](../../../content/sections/machine-learning/day-192-time-series-forecasting-basics/) | [lab](./day-192-time-series-forecasting-basics/) | [blog](https://ai-roadmap-365.github.io/day-192-time-series-forecasting-basics) | planned |
+| Day 193 | [Saving and Versioning Models](../../../content/sections/machine-learning/day-193-saving-and-versioning-models/) | [lab](./day-193-saving-and-versioning-models/) | [blog](https://ai-roadmap-365.github.io/day-193-saving-and-versioning-models) | planned |
+| Day 194 | [Serving a Model over an API](../../../content/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [lab](./day-194-serving-a-model-over-an-api/) | [blog](https://ai-roadmap-365.github.io/day-194-serving-a-model-over-an-api) | planned |
+| Day 195 | [Monitoring Models in Production](../../../content/sections/machine-learning/day-195-monitoring-models-in-production/) | [lab](./day-195-monitoring-models-in-production/) | [blog](https://ai-roadmap-365.github.io/day-195-monitoring-models-in-production) | planned |
+| Day 196 | [Section Project: An ML Service](../../../content/sections/machine-learning/day-196-section-project-an-ml-service/) | [lab](./day-196-section-project-an-ml-service/) | [blog](https://ai-roadmap-365.github.io/day-196-section-project-an-ml-service) | planned |
 
 **Project:** Section Project: Deployed ML Service — Train, persist, and serve a model behind a FastAPI endpoint with input validation, tests, and a monitoring plan.
 

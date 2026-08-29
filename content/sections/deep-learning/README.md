@@ -4,20 +4,20 @@
 
 Neural networks from first principles to transformers: build them, train them, debug them, and understand the hardware they run on.
 
-**0 of 42 lessons written.** Expand a subsection below to see its days.
+**14 of 42 lessons written.** Expand a subsection below to see its days.
 
 <details open>
 <summary><strong>Days 197-203 · Neural Network Foundations</strong> — 0/7 complete</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 197 | The Perceptron | — | — | planned |
-| Day 198 | Activation Functions | — | — | planned |
-| Day 199 | Forward Propagation | — | — | planned |
-| Day 200 | Backpropagation | — | — | planned |
-| Day 201 | A Neural Network in Pure NumPy | — | — | planned |
-| Day 202 | PyTorch Tensors | — | — | planned |
-| Day 203 | Training MNIST from Scratch | — | — | planned |
+| Day 197 | [The Perceptron](./day-197-the-perceptron/) | [lab](../../../labs/sections/deep-learning/day-197-the-perceptron/) | [blog](https://ai-roadmap-365.github.io/day-197-the-perceptron) | planned |
+| Day 198 | [Activation Functions](./day-198-activation-functions/) | [lab](../../../labs/sections/deep-learning/day-198-activation-functions/) | [blog](https://ai-roadmap-365.github.io/day-198-activation-functions) | planned |
+| Day 199 | [Forward Propagation](./day-199-forward-propagation/) | [lab](../../../labs/sections/deep-learning/day-199-forward-propagation/) | [blog](https://ai-roadmap-365.github.io/day-199-forward-propagation) | planned |
+| Day 200 | [Backpropagation](./day-200-backpropagation/) | [lab](../../../labs/sections/deep-learning/day-200-backpropagation/) | [blog](https://ai-roadmap-365.github.io/day-200-backpropagation) | planned |
+| Day 201 | [A Neural Network in Pure NumPy](./day-201-a-neural-network-in-pure-numpy/) | [lab](../../../labs/sections/deep-learning/day-201-a-neural-network-in-pure-numpy/) | [blog](https://ai-roadmap-365.github.io/day-201-a-neural-network-in-pure-numpy) | planned |
+| Day 202 | [PyTorch Tensors](./day-202-pytorch-tensors/) | [lab](../../../labs/sections/deep-learning/day-202-pytorch-tensors/) | [blog](https://ai-roadmap-365.github.io/day-202-pytorch-tensors) | planned |
+| Day 203 | [Training MNIST from Scratch](./day-203-training-mnist-from-scratch/) | [lab](../../../labs/sections/deep-learning/day-203-training-mnist-from-scratch/) | [blog](https://ai-roadmap-365.github.io/day-203-training-mnist-from-scratch) | planned |
 
 **Project:** MNIST from Scratch — Implement a two-layer neural network in pure NumPy that reaches at least 95% accuracy on MNIST digits.
 
@@ -28,13 +28,13 @@ Neural networks from first principles to transformers: build them, train them, d
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 204 | PyTorch: autograd and nn.Module | — | — | planned |
-| Day 205 | Datasets and DataLoaders | — | — | planned |
-| Day 206 | Optimizers: SGD to Adam | — | — | planned |
-| Day 207 | Learning Rate Schedules | — | — | planned |
-| Day 208 | Dropout, Batch Norm, and Regularization | — | — | planned |
-| Day 209 | Debugging Training Runs | — | — | planned |
-| Day 210 | A Disciplined Training Project | — | — | planned |
+| Day 204 | [PyTorch: autograd and nn.Module](./day-204-pytorch-autograd-and-nn-module/) | [lab](../../../labs/sections/deep-learning/day-204-pytorch-autograd-and-nn-module/) | [blog](https://ai-roadmap-365.github.io/day-204-pytorch-autograd-and-nn-module) | planned |
+| Day 205 | [Datasets and DataLoaders](./day-205-datasets-and-dataloaders/) | [lab](../../../labs/sections/deep-learning/day-205-datasets-and-dataloaders/) | [blog](https://ai-roadmap-365.github.io/day-205-datasets-and-dataloaders) | planned |
+| Day 206 | [Optimizers: SGD to Adam](./day-206-optimizers-sgd-to-adam/) | [lab](../../../labs/sections/deep-learning/day-206-optimizers-sgd-to-adam/) | [blog](https://ai-roadmap-365.github.io/day-206-optimizers-sgd-to-adam) | planned |
+| Day 207 | [Learning Rate Schedules](./day-207-learning-rate-schedules/) | [lab](../../../labs/sections/deep-learning/day-207-learning-rate-schedules/) | [blog](https://ai-roadmap-365.github.io/day-207-learning-rate-schedules) | planned |
+| Day 208 | [Dropout, Batch Norm, and Regularization](./day-208-dropout-batch-norm-and-regularization/) | [lab](../../../labs/sections/deep-learning/day-208-dropout-batch-norm-and-regularization/) | [blog](https://ai-roadmap-365.github.io/day-208-dropout-batch-norm-and-regularization) | planned |
+| Day 209 | [Debugging Training Runs](./day-209-debugging-training-runs/) | [lab](../../../labs/sections/deep-learning/day-209-debugging-training-runs/) | [blog](https://ai-roadmap-365.github.io/day-209-debugging-training-runs) | planned |
+| Day 210 | [A Disciplined Training Project](./day-210-a-disciplined-training-project/) | [lab](../../../labs/sections/deep-learning/day-210-a-disciplined-training-project/) | [blog](https://ai-roadmap-365.github.io/day-210-a-disciplined-training-project) | planned |
 
 **Project:** Fashion-MNIST Classifier — Train a PyTorch classifier with a proper training loop, LR schedule, and regularization, beating a stated baseline.
 
