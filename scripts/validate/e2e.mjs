@@ -6,6 +6,8 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { internalPath } from '../lib/internal-links.mjs';
 import * as cheerio from 'cheerio';
 import { allDays, loadConfig, repoRoot, makeReporter } from '../lib/course.mjs';
 
@@ -73,13 +75,11 @@ if (existsSync(dist)) {
       // Every internal link on the page must resolve to a built file.
       $('a[href]').each((_, el) => {
         const href = $(el).attr('href');
-        // External links are not this validator's business. This guard must
-        // come FIRST: with a root site basePath is '' and every string
-        // startsWith(''), so relying on the basePath test alone silently
-        // began treating github.com and linkedin.com as internal paths.
-        if (/^(?:https?:)?\/\//i.test(href) || /^(?:mailto|tel):/i.test(href)) return;
-        if (!href.startsWith(basePath)) return;
-        const clean = href.split('#')[0].slice(basePath.length) || '/';
+        // Externality is decided on its own terms, never by a prefix test
+        // against basePath — which is '' for a root site and therefore
+        // matches everything. See scripts/lib/internal-links.mjs.
+        const clean = internalPath(href, basePath);
+        if (clean === null) return;
         if (clean.endsWith('.json') || clean.endsWith('.svg') || /\.\w{2,4}$/.test(clean)) {
           if (!existsSync(path.join(dist, clean.replace(/^\//, ''))))
             r.fail(`day ${d.number}: dead asset link ${href}`);
