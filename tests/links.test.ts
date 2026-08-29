@@ -16,19 +16,19 @@ const lesson = {
 const baseConfig = {
   repository: {
     mode: 'public',
-    owner: 'sandeepbazar',
-    name: 'ai-roadmap-365',
-    url: 'https://github.com/sandeepbazar/ai-roadmap-365',
+    owner: 'ai-roadmap-365',
+    name: 'ai-roadmap-365.github.io',
+    url: 'https://github.com/ai-roadmap-365/ai-roadmap-365.github.io',
     branch: 'main',
-    public_name: 'ai-roadmap-365',
-    public_url: 'https://github.com/sandeepbazar/ai-roadmap-365',
+    public_name: 'ai-roadmap-365.github.io',
+    public_url: 'https://github.com/ai-roadmap-365/ai-roadmap-365.github.io',
     public_branch: 'main',
     site_branch: 'site',
   },
   website: {
-    local_base_url: 'http://localhost:4321/ai-roadmap-365',
-    public_base_url: 'https://sandeepbazar.github.io/ai-roadmap-365',
-    base_path: '/ai-roadmap-365',
+    local_base_url: 'http://localhost:4321',
+    public_base_url: 'https://ai-roadmap-365.github.io',
+    base_path: '',
     port: 4321,
   },
 } as never;
@@ -41,10 +41,10 @@ const noSiteConfig = {
 describe('link mode: local', () => {
   it('builds lesson and lab URLs under the local base', () => {
     expect(links.getLessonUrl(baseConfig, lesson, 'local')).toBe(
-      'http://localhost:4321/ai-roadmap-365/day-001-how-a-computer-works-from-transistors',
+      'http://localhost:4321/day-001-how-a-computer-works-from-transistors',
     );
     expect(links.getLocalLabUrl(baseConfig, lesson)).toBe(
-      'http://localhost:4321/ai-roadmap-365/labs/day-001-how-a-computer-works-from-transistors',
+      'http://localhost:4321/labs/day-001-how-a-computer-works-from-transistors',
     );
   });
 });
@@ -52,7 +52,7 @@ describe('link mode: local', () => {
 describe('link mode: repo', () => {
   it('builds GitHub tree URLs into the one repository', () => {
     expect(links.getRepoLabUrl(baseConfig, lesson)).toBe(
-      'https://github.com/sandeepbazar/ai-roadmap-365/tree/main/labs/sections/computing-foundations/day-001-how-a-computer-works-from-transistors',
+      'https://github.com/ai-roadmap-365/ai-roadmap-365.github.io/tree/main/labs/sections/computing-foundations/day-001-how-a-computer-works-from-transistors',
     );
     expect(links.getLessonUrl(baseConfig, lesson, 'repo')).toContain(
       '/tree/main/content/sections/',
@@ -69,7 +69,7 @@ describe('link mode: repo', () => {
 describe('the two links every day must have', () => {
   it('points the blog URL at the site and the lab URL at the repository', () => {
     expect(links.getBlogUrl(baseConfig, lesson)).toBe(
-      'https://sandeepbazar.github.io/ai-roadmap-365/day-001-how-a-computer-works-from-transistors',
+      'https://ai-roadmap-365.github.io/day-001-how-a-computer-works-from-transistors',
     );
     expect(links.getLessonUrl(baseConfig, lesson, 'public')).toBe(
       links.getBlogUrl(baseConfig, lesson),

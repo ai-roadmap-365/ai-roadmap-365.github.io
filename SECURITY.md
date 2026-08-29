@@ -9,7 +9,7 @@ surface considerably — but not to nothing.
 ## Reporting a vulnerability
 
 Please report privately through
-[GitHub Security Advisories](https://github.com/sandeepbazar/ai-roadmap-365/security/advisories/new)
+[GitHub Security Advisories](https://github.com/ai-roadmap-365/ai-roadmap-365.github.io/security/advisories/new)
 rather than opening a public issue.
 
 Include what you found, which file or lab it is in, and how to reproduce it.
