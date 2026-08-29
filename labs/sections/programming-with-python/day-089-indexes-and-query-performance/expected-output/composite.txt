@@ -1,0 +1,111 @@
+events.db: 400,000 rows
+
+------------------------------------------------------------------------------
+1. The leftmost-prefix rule: one index on (run_id, status)
+------------------------------------------------------------------------------
+  The index holds every row's (run_id, status) pair, sorted by
+  run_id first and by status only within one run_id.
+
+  a) both columns, leading first  WHERE run_id = ? AND status = ?
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_run_status (run_id=? AND status=?)
+    time : best     0.004 ms | median     0.004 ms | spread   0.016 ms
+  b) the leading column alone     WHERE run_id = ?
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_run_status (run_id=?)
+    time : best     0.004 ms | median     0.005 ms | spread   0.004 ms
+  c) the trailing column alone    WHERE status = ?
+    plan : [SCAN] SCAN events USING COVERING INDEX ix_run_status
+    time : best     7.281 ms | median     7.325 ms | spread   0.092 ms
+  d) both columns, order swapped  WHERE status = ? AND run_id = ?
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_run_status (run_id=? AND status=?)
+    time : best     0.004 ms | median     0.004 ms | spread   0.006 ms
+
+  (a), (b) and (d) seek. (c) cannot.
+  The order you write conditions in WHERE does not matter — (d)
+  is (a) rearranged and gets the same plan. The order of COLUMNS
+  IN THE INDEX is what decides, because a sorted list of pairs is
+  only sorted by the second value inside one value of the first.
+  A phone book sorted by surname then forename cannot find every
+  Ada without reading all of it.
+
+------------------------------------------------------------------------------
+2. Covering: the index answers, and the table is never opened
+------------------------------------------------------------------------------
+  index on (run_id) — seek, then fetch the row for score
+    plan : [SEEK] SEARCH events USING INDEX ix_run (run_id=?)
+    time : best     0.017 ms | median     0.017 ms | spread   0.017 ms
+  index on (run_id, score) — score is already in the index
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_run_score (run_id=?)
+    time : best     0.015 ms | median     0.015 ms | spread   0.020 ms
+
+  The second plan says COVERING INDEX. Every column the query
+  named is in the index, so there is no reason to touch the table.
+  This is the fastest an index gets — and the reason to widen an
+  index is sometimes the columns you SELECT, not the ones you filter.
+
+------------------------------------------------------------------------------
+3. ORDER BY: an index is already sorted, so the sort disappears
+------------------------------------------------------------------------------
+  no index on created_on
+    plan : [SCAN] SCAN events / USE TEMP B-TREE FOR ORDER BY
+    time : best    13.978 ms | median    14.756 ms | spread   0.995 ms
+  with an index on created_on
+    plan : [SCAN] SCAN events USING COVERING INDEX ix_created
+    time : best     0.007 ms | median     0.007 ms | spread   0.019 ms
+
+  USE TEMP B-TREE FOR ORDER BY means SQLite built a throwaway tree
+  to sort 400,000 rows so it could hand back the first 20. With the
+  index it walks the first 20 entries and stops. Nothing was sorted.
+
+------------------------------------------------------------------------------
+4. Partial: index only the rows anybody asks about
+------------------------------------------------------------------------------
+  no index at all
+    plan : [SCAN] SCAN events
+    time : best    12.784 ms | median    13.009 ms | spread   0.665 ms
+  with a partial index, WHERE status = 'failed'
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_failed_created (created_on>?)
+    time : best     0.051 ms | median     0.054 ms | spread   0.009 ms
+
+  rows in the table        : 400,000
+  rows the partial covers  : 39,598 (9.9%)
+  a full index on created_on costs 1,857 pages (7,606,272 bytes)
+  the partial index costs          186 pages (761,856 bytes)
+
+  The catch: the planner will only use it for a query it can prove
+  falls inside the WHERE clause. Drop `status = 'failed'` from the
+  query and this index becomes unusable, not merely unhelpful:
+  the same date range without status = 'failed'
+    plan : [SCAN] SCAN events
+    time : best    11.574 ms | median    11.907 ms | spread   0.600 ms
+
+------------------------------------------------------------------------------
+5. ANALYZE: what the planner knows about your data
+------------------------------------------------------------------------------
+  two usable indexes, no statistics
+    plan : [SEEK] SEARCH events USING INDEX ix_run (run_id=?)
+    time : best     0.007 ms | median     0.008 ms | spread   0.019 ms
+  the same query after ANALYZE
+    plan : [SEEK] SEARCH events USING INDEX ix_run (run_id=?)
+    time : best     0.007 ms | median     0.007 ms | spread   0.011 ms
+
+  sqlite_stat1 — one row per index, written by ANALYZE:
+    ix_run         400,000 rows, about     100 rows per distinct value
+    ix_status      400,000 rows, about 133,334 rows per distinct value
+
+  That second number is SELECTIVITY: how many rows the average
+  distinct value matches. An index whose average key matches 100
+  rows is worth seeking; one whose average key matches 130,000 is
+  usually worse than reading the table, because every match costs
+  a jump back into the table for the rest of the row.
+
+  Note what did NOT happen here: the plan is unchanged.
+  SQLite's built-in guess had already picked the more selective
+  of the two indexes on this data, and ANALYZE only replaced the
+  guess with a measured number. That is the usual outcome on a
+  small, evenly distributed table, and pretending otherwise would
+  be inventing a result. ANALYZE earns its keep on skewed data
+  and on tables that changed shape after the index was built —
+  so run it after a big load, and check whether anything moved.
+
+------------------------------------------------------------------------------
+Indexes dropped. The table is back to how generate.py left it.

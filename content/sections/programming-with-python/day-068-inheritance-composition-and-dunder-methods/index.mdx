@@ -1,0 +1,649 @@
+---
+day: 68
+title: 'Inheritance, Composition, and Dunder Methods'
+---
+
+## Why this matters
+
+Yesterday you wrote your first classes: a blueprint, an `__init__` that sets up each instance, methods that act on `self`, properties that guard an attribute, and a `__repr__` that makes an object printable. Today you answer the question that immediately follows. You have written two classes and noticed they share behaviour — an `Oven` and a `Toaster` both have wattage and both heat things. What do you do about that duplication? Python gives you two very different answers, **inheritance** and **composition**, and choosing badly between them is one of the most expensive mistakes in object-oriented code. Then you learn the third thing, the one that turns a class you wrote into a first-class Python citizen: the **data model**, Python's system of special methods, universally called *dunder* methods because they are spelled with double underscores at each end.
+
+The consequences are concrete and they arrive fast. Choose inheritance where composition belonged and you get a base class that nobody dares change, because a one-line edit silently alters five subclasses you have not read in months — that is the fragile base class problem, and it is measured in days of debugging. Get the data model wrong and your objects become second-class: `len(my_thing)` raises `TypeError`, `sorted(my_things)` refuses to run, two objects that hold identical data compare unequal, and putting them in a `set` crashes because you defined `__eq__` and unknowingly destroyed hashing. Get it right and something delightful happens: builtins and standard-library functions you never touched — `len`, `sorted`, `max`, `in`, `for`, `with` — start working on a class you wrote this afternoon, with zero changes to them.
+
+That last sentence is not a Python curiosity; it is the whole API surface of the machine-learning libraries in the second half of this course. A PyTorch model is a class that subclasses `nn.Module` and implements a method called `forward`. A PyTorch dataset is a class you write that implements `__len__` and `__getitem__` — and that is *all* the `DataLoader` needs in order to shuffle it, batch it, and feed it to a training loop it wrote long before your data existed. Agent and tool classes in the popular frameworks are abstract base classes with a method or two left blank for you to fill in. Every one of those is today's lesson, applied. Learn the protocols now and the frameworks later will feel like things you already know.
+
+## The idea in plain language
+
+Start with the reuse question. Two of your classes share behaviour. You have three honest options.
+
+**Copy the code into both.** Fine for two lines; a maintenance bill for twenty, because every fix has to be made twice and one day it will be made once.
+
+**Inheritance — the "is-a" relationship.** Put the shared behaviour in a *base class* (also called a *superclass* or *parent*) and let each class *inherit* from it. A `Toaster` **is a** `HeatingAppliance`, so `class Toaster(HeatingAppliance)` gives it every attribute and method the parent has, for free, plus whatever it adds or changes. The magic is in *attribute lookup*: when you write a dotted access on an instance, Python searches the instance first, then walks a fixed list of classes called the **method resolution order** (MRO) until it finds the name.
+
+**Composition — the "has-a" relationship.** Instead of *being* a heating appliance, an `Oven` **has a** `HeatingElement`: it stores one as an attribute and calls it when it needs heat. Passing a call through to a stored object like that is called **delegation**. Nothing is inherited; the wiring is written out by hand, which is more typing and far more visible.
+
+The mainstream guidance, roughly thirty years old now, is **prefer composition over inheritance** — not "never inherit," but "reach for composition first, and inherit when the is-a relationship is genuinely true and genuinely stable."
+
+Then there is the second half of the day. Python's syntax is not hard-wired to its builtin types. When you write `len(x)`, the interpreter does not check whether `x` is a list; it looks up a method named `__len__` on `x`'s **type** and calls it. Same for `x + y` and `__add__`, `x[k]` and `__getitem__`, `for i in x` and `__iter__`, `x == y` and `__eq__`, `with x` and `__enter__`/`__exit__`. That set of hooks is Python's **data model**, and implementing them is how your class joins the language rather than sitting beside it. Because the checks are "does this object have the method," not "is this object of the right class," Python is a **duck-typed** language: if it walks like a duck, it is treated like one.
+
+## Historical background
+
+Inheritance is older than most programming languages in use today. It was introduced in **Simula 67**, designed by Ole-Johan Dahl and Kristen Nygaard at the Norwegian Computing Center in Oslo, which gave the world classes, objects, and subclasses in one stroke. **Smalltalk**, developed by Alan Kay's group at Xerox PARC in the 1970s, built an entire system on objects sending messages to one another and made inheritance a household idea among programmers. By the 1980s and 1990s inheritance was *the* headline feature of object orientation, and class libraries were built as deep towers of subclasses.
+
+Then the bill arrived. Deep hierarchies proved hard to reason about, and a problem got a name in the 1990s as class libraries grew: the **fragile base class problem**, where a seemingly safe change to a base class breaks subclasses written by people who never read it. In 1994, the book *Design Patterns* by Erich Gamma, Richard Helm, Ralph Johnson, and John Vlissides — the "Gang of Four" — stated the counter-principle that is still quoted daily: *favour object composition over class inheritance*. It is the direct ancestor of the advice you will follow today.
+
+Python's own inheritance story has a specific date. Python 2.2, released in 2001, unified types and classes with what were called new-style classes. Python 2.3, in 2003, adopted **C3 linearization** as the algorithm that computes a class's method resolution order — an algorithm published in 1996 for the Dylan language, in a paper titled "A Monotonic Superclass Linearization for Dylan." Michele Simionato's essay "The Python 2.3 Method Resolution Order," still hosted on the Python website and one of today's sources, is the canonical explanation. The rest of the toolkit arrived steadily afterwards: the context manager protocol (`__enter__`/`__exit__`) in Python 2.5 via PEP 343, the `abc` module for abstract base classes in Python 2.6 via PEP 3119, `functools.total_ordering` in Python 2.7 and 3.2, and structural typing with `typing.Protocol` in Python 3.8 via PEP 544. The data model itself has been in Python since the beginning; its reference page, "Special method names," is the single densest and most useful page in the Python documentation.
+
+## What it is — and what it is not
+
+**Inheritance** is a mechanism for one class to acquire the attributes and methods of another and to override or extend them. **Composition** is the practice of building a class out of other objects held as attributes, forwarding work to them. **Dunder methods** are named methods with a defined meaning in the language, which the interpreter calls on your behalf when you use ordinary syntax.
+
+Being precise about what these are *not* saves real pain:
+
+| Common misconception | The reality |
+| --- | --- |
+| "Inheritance is for code reuse." | Inheritance is for *substitutability* — a subclass should be usable anywhere the parent is. Reuse is a side effect. If you inherit only to grab a method, composition is the honest tool. |
+| "`super()` means my parent class." | `super()` means *the next class in this instance's MRO*, which in multiple inheritance is often not the parent you would guess. You will see this proved with real output below. |
+| "Dunder methods are private and I should not write them." | Dunders are the *public protocol* of the language. A name like `_helper` is by-convention private; `__len__` is a documented hook you are invited to implement. Inventing your own new dunder names, however, is discouraged — those are reserved by the language. |
+| "Defining `__eq__` is harmless." | Defining `__eq__` sets `__hash__` to `None`, making your objects unhashable. You must define `__hash__` too if the object should live in a `set` or be a `dict` key. |
+| "`isinstance` is the way to check something works." | Duck typing checks capability, not ancestry. A function that only calls `.read()` should accept anything with `.read()` — a file, a socket wrapper, a test double — not only subclasses of one class. |
+| "Multiple inheritance is broken in Python." | It is well defined: C3 linearization produces one deterministic order or refuses to build the class at all. It is *hard to read*, which is a different objection, and the reason mixins are kept small. |
+
+## Why it was created and what problems it solves
+
+Each of today's tools defeats a specific failure.
+
+**Inheritance solves duplicated behaviour among genuinely related types.** Without it, ten kinds of appliance each carry their own copy of "store a name and wattage, describe yourself," and a change to the description format is ten edits and one forgotten file. With a base class, the shared behaviour has one home and one place to fix.
+
+**Composition solves the coupling that inheritance creates.** A subclass depends on its parent's *internals*, not just its public surface — that is why a harmless-looking base class change breaks it. An object that merely holds another object depends only on the small interface it calls. It also solves a shape problem: inheritance is single-purpose and rigid, while an object can hold as many collaborators as the job needs and swap any of them at runtime.
+
+**Abstract base classes solve the "you forgot to implement it" failure.** Without them, a half-finished subclass constructs happily and explodes much later, deep inside a call, with a confusing error. With `abc.ABC` and `@abstractmethod`, Python refuses to create the instance at all, at the exact moment you tried, naming the missing method.
+
+**The data model solves interoperability.** Before protocols, using a custom collection with library code meant either the library knew your type or you converted to a list. With protocols, `len`, `in`, `for`, `sorted`, `max`, `with` and hundreds of library functions work on your class because they were never asking about your class — they were asking about methods. That is what makes it possible for PyTorch's `DataLoader`, written years ago, to iterate a dataset class you write tomorrow.
+
+## How it works
+
+### Inheritance: syntax, lookup, and the MRO
+
+You inherit by naming the parent in parentheses. Here is the appliance domain as a hierarchy, with each level adding something:
+
+```python
+class Appliance:
+    def __init__(self, name, watts):
+        self.name = name
+        self.watts = watts
+
+    def describe(self):
+        return f"{self.name} ({self.watts}W)"
+
+
+class HeatingAppliance(Appliance):
+    def __init__(self, name, watts, max_celsius):
+        super().__init__(name, watts)      # let the parent set name and watts
+        self.max_celsius = max_celsius
+
+    def heat(self, celsius):
+        if celsius > self.max_celsius:
+            raise ValueError(f"{self.name} cannot exceed {self.max_celsius}C")
+        return f"heating to {celsius}C at {self.watts}W"
+
+
+class Oven(HeatingAppliance):
+    def __init__(self, name, watts, max_celsius, capacity_litres):
+        super().__init__(name, watts, max_celsius)
+        self.capacity_litres = capacity_litres
+
+    def describe(self):                     # extend, do not replace
+        return f"{super().describe()}, {self.capacity_litres}L"
+```
+
+Running it produces exactly this:
+
+```text
+Deck oven (3200W), 60L
+heating to 220C at 3200W
+['Oven', 'HeatingAppliance', 'Appliance', 'object']
+ValueError: Deck oven cannot exceed 260C
+```
+
+Three mechanisms are visible. **Attribute lookup walks the MRO**: `heat` is not defined on `Oven`, so Python looks at the next class in the list and finds it on `HeatingAppliance`. **Overriding** replaces a method — `Oven.describe` shadows `Appliance.describe`. **Extending** is overriding that still calls the original through `super()`, which is why the output has both the parent's part and the child's addition. And every class ends at `object`, the root of every Python class, which is where the default `__eq__`, `__repr__`, and `__hash__` you got yesterday come from.
+
+Now forget `super().__init__()` in the child and watch what actually happens:
+
+```python
+class Oven(Appliance):
+    def __init__(self, name, watts, capacity_litres):
+        self.capacity_litres = capacity_litres   # no super().__init__() call
+
+    def describe(self):
+        return f"{super().describe()}, {self.capacity_litres}L"
+
+Oven("Deck oven", 3200, 60).describe()
+```
+
+The real traceback ends:
+
+```text
+  File "exp1.py", line 15, in describe
+    return f"{super().describe()}, {self.capacity_litres}L"
+              ~~~~~~~~~~~~~~~~^^
+  File "exp1.py", line 7, in describe
+    return f"{self.name} ({self.watts}W)"
+              ^^^^^^^^^
+AttributeError: 'Oven' object has no attribute 'name'
+```
+
+Read that carefully, because it is the single most common inheritance bug. The constructor did not fail. The object was created perfectly happily — just *incomplete*, missing the two attributes the parent's `__init__` would have set. The failure surfaced later, in an unrelated method, blaming a missing attribute rather than the constructor that never ran. Defining `__init__` in a subclass **replaces** the parent's; if you want the parent's setup as well, you must call it, and by convention you call it first.
+
+### The MRO and the diamond problem
+
+With single inheritance the MRO is obvious: child, parent, grandparent, `object`. With **multiple inheritance** it needs an algorithm, because of the *diamond problem*: if `D` inherits from `B` and `C`, and both inherit from `A`, in what order does Python search? Here is a diamond you can re-derive:
+
+```python
+class Appliance:
+    def power_on(self):
+        return "Appliance: power on"
+
+class Heater(Appliance):
+    def power_on(self):
+        return "Heater: elements warming -> " + super().power_on()
+
+class Timer(Appliance):
+    def power_on(self):
+        return "Timer: clock started -> " + super().power_on()
+
+class ToasterOven(Heater, Timer):
+    def power_on(self):
+        return "ToasterOven: ready -> " + super().power_on()
+```
+
+`ToasterOven.__mro__` really prints:
+
+```text
+ToasterOven
+Heater
+Timer
+Appliance
+object
+```
+
+Derive it yourself with the rule **C3 linearization** guarantees: a class always comes before its parents (*local precedence*), and the order in which bases are listed is preserved (*monotonicity*). Start with `ToasterOven`. Its bases are `Heater` then `Timer`, so `Heater` comes next. `Heater`'s parent is `Appliance` — but `Appliance` cannot come yet, because `Timer` also inherits from it and `Timer` must precede its own parent. So `Timer`, then `Appliance`, then `object`. Notice what C3 buys you: `Appliance` appears **once**, not twice, so it is never initialised or executed twice. If no consistent order exists, Python does not guess — it raises `TypeError` when the class is defined.
+
+Now the payoff, and the reason "`super()` means the parent" is wrong:
+
+```text
+ToasterOven: ready -> Heater: elements warming -> Timer: clock started -> Appliance: power on
+```
+
+`Heater.power_on` calls `super().power_on()` and reaches **`Timer`** — a class `Heater` has never heard of and does not inherit from. `super()` walked to the next entry in *this instance's* MRO. This cooperative chaining is powerful and is exactly why multiple inheritance is hard to read: you cannot know where a `super()` call lands by looking at one class.
+
+### Composition and delegation
+
+![Diagram: the same kitchen-appliance domain modelled two ways side by side — on the left an inheritance hierarchy from Appliance to HeatingAppliance to Oven and Toaster with the method resolution order shown, on the right a composition object graph where Oven and Toaster hold HeatingElement and Timer objects and delegate to them](./assets/inheritance-vs-composition.svg)
+
+The architecture diagram shows both designs at once. On the left, `Oven` and `Toaster` are subclasses; behaviour arrives implicitly, found by walking the MRO, and a change in `Appliance` reaches everyone. On the right, the same domain is built from parts: `Oven` **has a** `HeatingElement` and **has a** `Timer`, `Toaster` **has a** `HeatingElement`, and each forwards work explicitly. Here is the right-hand side as code:
+
+```python
+class HeatingElement:
+    def __init__(self, watts):
+        self.watts = watts
+    def heat(self, celsius):
+        return f"heating to {celsius}C at {self.watts}W"
+
+class Timer:
+    def __init__(self):
+        self.minutes = 0
+    def set(self, minutes):
+        self.minutes = minutes
+        return f"timer set to {minutes} min"
+
+class Oven:
+    def __init__(self, name, watts):
+        self.name = name
+        self.element = HeatingElement(watts)   # has-a
+        self.timer = Timer()                   # has-a
+    def bake(self, celsius, minutes):          # delegation
+        return f"{self.name}: {self.element.heat(celsius)}; {self.timer.set(minutes)}"
+```
+
+Real output:
+
+```text
+Deck oven: heating to 220C at 3200W; timer set to 35 min
+Two-slice: heating to 260C at 900W
+```
+
+Compare honestly. Inheritance gave `Oven` `heat()` for free with no forwarding code, but bound it permanently to one parent chain and exposed it to every future change in that chain. Composition made you write `bake` by hand, but the wiring is visible on one screen, an `Oven` can hold as many collaborators as it needs, and you can hand it a different element — a fan-assisted one, or a fake one in a test — without touching any class it inherits from. That last point is the practical heart of it: **composition is swappable at runtime; inheritance is fixed at class-definition time.**
+
+The guidance **prefer composition over inheritance** rests on three concrete reasons. First, the *fragile base class* problem: subclasses depend on their parent's internal behaviour, so safe-looking parent edits break them at a distance. Second, *tight coupling*: a subclass cannot be understood, tested, or reused without its entire ancestry. Third, *deep hierarchies are hard to reason about*: answering "where does this method actually come from" means walking four classes, and multiple inheritance makes it worse.
+
+The honest exceptions matter just as much. Inherit when a **framework requires it** — subclassing `nn.Module` in PyTorch or a `Thread` in the standard library is how you plug into machinery that expects it. Inherit for **small, stable hierarchies** where the is-a relationship is real and the base class will not churn — Python's own exception hierarchy, which you used on Day 66, is a fine example. Inherit to declare an **abstract interface**, which is the next tool.
+
+### Abstract base classes, and the duck typing that often replaces them
+
+An **abstract base class** is a class that cannot be instantiated and that names methods subclasses must implement:
+
+```python
+from abc import ABC, abstractmethod
+
+class Station(ABC):
+    def __init__(self, name):
+        self.name = name
+
+    @abstractmethod
+    def prepare(self, dish):
+        """Return a string describing how this station prepares the dish."""
+
+    def announce(self, dish):                      # concrete, shared
+        return f"{self.name}: {self.prepare(dish)}"
+
+class GrillStation(Station):
+    def prepare(self, dish):
+        return f"grilling {dish} over charcoal"
+
+class PastryStation(Station):                       # forgot to implement it
+    pass
+```
+
+The real results:
+
+```text
+Grill: grilling mackerel over charcoal
+TypeError: Can't instantiate abstract class PastryStation without an implementation for abstract method 'prepare'
+```
+
+That error fires at construction, names the class and the missing method, and is far kinder than a mysterious failure hours into a run. Note also that `announce` — a concrete method calling an abstract one — is the *template method* shape, and it is exactly how `nn.Module` works: the framework calls your `forward`.
+
+But be clear that Python does not need this to work. **Duck typing** means a function that calls `.prepare(dish)` will happily accept any object with that method, whatever its ancestry. The choice is between asking "is this object of the right class" and asking "does this object have the method":
+
+```text
+isinstance(t, Iterable): True      # t defines __iter__ — no inheritance involved
+isinstance(t, Sized):    False     # t has no __len__
+hasattr(t, "__iter__"):  True
+len(t) -> TypeError: object of type 'Ticket' has no len()
+```
+
+`Ticket` there inherits from nothing but `object`, yet `isinstance(t, Iterable)` is `True`, because the abstract base classes in `collections.abc` check for the *methods*, not the family tree. Use `abc.ABC` when you own the hierarchy and want the enforcement; rely on duck typing when you are consuming objects other people wrote.
+
+### The data model: dunder methods as protocols
+
+![Flowchart: how the interpreter dispatches ordinary syntax to dunder methods — len of a menu looks up and calls __len__, indexing calls __getitem__, a for loop calls __iter__ then __next__, and equality calls __eq__ on the left operand with a NotImplemented fallback to the reflected call on the right operand and finally to identity comparison](./assets/dunder-dispatch-flow.svg)
+
+The flow diagram traces the big idea. You write ordinary syntax; the interpreter looks up a specially named method **on the type** (not on the instance) and calls it; you get the result. Nothing else is going on — there is no separate mechanism for "real" collections.
+
+| You write | Python calls | Protocol it joins |
+| --- | --- | --- |
+| `len(x)` | `type(x).__len__(x)` | Sized |
+| `x[k]`, `x[1:3]` | `type(x).__getitem__(x, k)` | Subscriptable / sequence |
+| `for i in x` | `type(x).__iter__(x)`, then `__next__` on the result | Iterable |
+| `k in x` | `type(x).__contains__(x, k)`, else falls back to `__iter__` | Container |
+| `x == y` | `type(x).__eq__(x, y)`, then the reflected `y.__eq__(x)` | Equality |
+| `x < y` | `type(x).__lt__(x, y)` | Ordering (used by `sorted`, `min`, `max`) |
+| `hash(x)`, `set`/`dict` keys | `type(x).__hash__(x)` | Hashable |
+| `x + y` | `type(x).__add__(x, y)`, then `y.__radd__(x)` | Numeric / concatenation |
+| `str(x)`, `print(x)` | `type(x).__str__(x)`, falling back to `__repr__` | String conversion |
+| `with x as y:` | `type(x).__enter__(x)` then `__exit__` | Context manager |
+| `x(...)` | `type(x).__call__(x, ...)` | Callable |
+
+Two rules save the most grief. **First, `__eq__` and `__hash__` travel together.** Defining `__eq__` sets `__hash__` to `None`, because objects that compare equal must hash equal and Python will not guess how. Proof:
+
+```text
+Plate.__hash__ is None: True
+TypeError: cannot use 'Plate' as a set element (unhashable type: 'Plate')
+```
+
+If your object is immutable-in-practice and belongs in sets or dicts, define `__hash__` over the same fields `__eq__` uses — typically `return hash((self.field_a, self.field_b))`.
+
+**Second, return `NotImplemented`, not `False`, for types you do not know.** Returning `NotImplemented` tells Python "ask the other operand," which then gets its chance:
+
+```text
+Grams(100) == Ounces(3.5273...):
+  Grams.__eq__ called with Ounces
+  Ounces.__eq__ called with Grams
+result: True
+
+Grams(100) == 'text':
+  Grams.__eq__ called with str
+result: False
+```
+
+In the first case `Grams` bows out with `NotImplemented`, Python tries the reflected call, and `Ounces` knows the conversion — a correct answer neither class could give alone. In the second, both sides bow out and Python falls back to identity, giving `False`. Had `Grams.__eq__` returned `False` directly, the first comparison would have been silently wrong.
+
+## An everyday analogy
+
+Picture a professional kitchen, and keep it in mind for the rest of the lesson, because every idea today has a station in it.
+
+**Inheritance is a chef trained in a tradition.** A chef who came up through classical French training carries a whole inherited repertoire: stocks, sauces, knife work, the order of service. Ask for a beurre blanc and it appears, because it came with the training — nobody had to write it down for this particular chef. That is a subclass getting a method for free by walking up its lineage. It is genuinely efficient, and it makes a strong promise: anywhere the tradition is expected, this chef will do. But it binds. If the tradition changes its house method for stock, every chef trained in it is affected, including ones who had built their own dishes on the old behaviour — the fragile base class problem, in aprons. And the deeper the lineage — classical French, then a specific house, then a specific mentor's variation — the harder it becomes to answer "why did the sauce come out like *that*," because the answer is somewhere up a chain you have to walk. That is the MRO, and `super()` is the chef saying "and now do it the way the next teacher in my line does," which in a chef trained by two traditions may not be the teacher you assumed.
+
+**Composition is a chef who hires specialists.** This head chef was not trained to make pastry; the kitchen has a pastry cook. Dessert is *delegated*: an order arrives, the head chef passes it to the pastry station, the plate comes back. More talking, more explicit handoffs, more lines in the service book. But the pastry cook can be replaced with a better one on Tuesday and nothing about the head chef changes; the grill cook can be swapped for a stand-in during a test service; and a new station can be added without rewriting anyone's training. That is why composition is preferred as a default: the kitchen is assembled from parts you can name, inspect, and replace, rather than inherited wholesale from a lineage you cannot edit.
+
+**Dunder methods are the standard-shaped fittings every appliance agrees to.** A commercial kitchen runs on standards: a gas hose has a standard connector, a shelf takes a standard gastronorm tray, a plug fits a standard socket. Nobody at the manufacturer knew what your kitchen would be; they only knew the fitting. So when a new machine arrives with the right fittings, it simply works with hoses, racks, and trolleys built years earlier. `__len__` is the gauge that any tray must respond to; `__iter__` is the standard rail that lets a trolley be wheeled through any station; `__enter__` and `__exit__` are the pre-service and post-service checklist every station signs, guaranteeing the gas is turned off even if service went badly. Implement the fittings and the whole kitchen's existing equipment works with your new machine — that is what "protocol" means, and it is why an `abc.ABC` is a written job description while duck typing is the shift manager simply checking whether the fitting is the right shape.
+
+## Examples in practice
+
+Now build the thing that proves it: a small container class of your own — a `Menu` holding `Dish` objects — that supports length, indexing, iteration, membership, equality, ordering, and the `with` statement. Every dunder here is one you just met in the table.
+
+```python
+from functools import total_ordering
+
+class Dish:
+    def __init__(self, name, minutes):
+        self.name = name
+        self.minutes = minutes
+
+    def __repr__(self):
+        return f"Dish({self.name!r}, {self.minutes})"
+
+    def __eq__(self, other):
+        if not isinstance(other, Dish):
+            return NotImplemented
+        return (self.name, self.minutes) == (other.name, other.minutes)
+
+    def __hash__(self):                                   # because __eq__ exists
+        return hash((self.name, self.minutes))
+
+
+@total_ordering
+class Menu:
+    def __init__(self, name, dishes=None):
+        self.name = name
+        self.dishes = list(dishes or [])
+        self.open = False
+
+    def __repr__(self):
+        return f"Menu({self.name!r}, {len(self.dishes)} dishes)"
+
+    def __len__(self):
+        return len(self.dishes)
+
+    def __getitem__(self, index):                          # supports slices too
+        return self.dishes[index]
+
+    def __iter__(self):
+        return iter(self.dishes)
+
+    def __contains__(self, item):
+        name = item.name if isinstance(item, Dish) else item
+        return any(dish.name == name for dish in self.dishes)
+
+    def total_minutes(self):
+        return sum(dish.minutes for dish in self.dishes)
+
+    def __eq__(self, other):
+        if not isinstance(other, Menu):
+            return NotImplemented
+        return self.dishes == other.dishes
+
+    def __hash__(self):
+        return hash(tuple(self.dishes))
+
+    def __lt__(self, other):                               # total_ordering fills the rest
+        if not isinstance(other, Menu):
+            return NotImplemented
+        return self.total_minutes() < other.total_minutes()
+
+    def __enter__(self):
+        self.open = True
+        print(f"[service open] {self.name}")
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.open = False
+        print(f"[service closed] {self.name}")
+        return False                                        # do not swallow exceptions
+```
+
+Drive it with three menus — `lunch` (Ramen 12, Gyoza 8, Salad 4), `dinner` (Ramen 12, Duck 40), and `copy`, an independent `Menu` holding equal dishes. Real output:
+
+```text
+len: 3
+index: Dish('Ramen', 12) | slice: [Dish('Gyoza', 8), Dish('Salad', 4)]
+iterate: ['Ramen', 'Gyoza', 'Salad']
+contains: True | False
+equal: True | False
+eq other type: False
+hash equal: True
+lt: False | ge (total_ordering): True
+sorted: [Menu('Lunch', 3 dishes), Menu('Dinner', 2 dishes)]
+max: Menu('Lunch', 3 dishes)
+longest dish: Dish('Ramen', 12)
+sum minutes via comprehension: 24
+set of menus: 2
+list(): 2
+```
+
+Every line is a builtin working on a class written minutes ago. `sorted` put `Lunch` (24 minutes) before `Dinner` (52) using nothing but `__lt__`. `max([dinner, lunch], key=len)` used `__len__` through the `key` function. `max(lunch, key=...)` *iterated* the menu via `__iter__` to find its longest dish. The comprehension `sum(dish.minutes for dish in lunch)` iterated it too. And `len({lunch, copy, dinner})` is `2`, not `3`, because `lunch` and `copy` are equal *and* hash equal, so the set collapsed them — the `__eq__`/`__hash__` pair doing its job. The one line to study is `lt: False | ge (total_ordering): True`: you wrote only `__lt__`, and the `@total_ordering` decorator derived `>`, `>=`, and `<=` from it plus `__eq__`.
+
+The context manager works the same way, including the case that matters:
+
+```text
+[service open] Brunch
+  inside: 1 dish, open = True
+[service closed] Brunch
+after: False
+[service open] Bad night
+[service closed] Bad night
+caught: burnt the souffle | open = False
+```
+
+Look at the last three lines. The body raised `ValueError`, and `[service closed]` still printed — `__exit__` runs on the way out whether the block succeeded or blew up. That is the guarantee you relied on with files on Day 64, now implemented by you. Returning `False` from `__exit__` lets the exception continue to the caller; returning `True` would swallow it, which you should do only with a very good reason.
+
+Finally, the interoperability proof — an unmodified standard-library helper handling your class because of protocols alone:
+
+```python
+from collections.abc import Sequence
+
+class Rack(Sequence):                 # you implement two methods
+    def __init__(self, trays):
+        self._trays = list(trays)
+    def __len__(self):
+        return len(self._trays)
+    def __getitem__(self, i):
+        return self._trays[i]
+```
+
+Real output:
+
+```text
+index: 1 count: 1 reversed: ['c', 'b', 'a'] contains: True
+```
+
+You wrote `__len__` and `__getitem__`; `Sequence` gave you `index`, `count`, `__contains__`, `__reversed__`, and `__iter__` for free. That is the whole argument for protocols in one line of output.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Security.** Inheritance widens the surface area you are trusting. Subclassing a third-party class means your object inherits every method it has, including ones you never read, and a future version of that library can add or change behaviour inside your object without your code changing at all. Composition trusts only the methods you actually call. Dunders carry their own quiet risk: `__eq__`, `__hash__`, `__getitem__`, and `__repr__` run implicitly, so a slow or side-effecting implementation executes in places you never see in the source — a `__repr__` that logs a secret will happily leak it into a traceback. Keep dunders pure, cheap, and free of I/O.
+
+**Privacy.** Because `__repr__` and `__str__` are what appear in logs, error messages, and tracebacks, they are a real privacy control. A `Customer` whose `__repr__` prints an email address will put that address into every log line and crash report that touches the object. Print identifiers, not payloads.
+
+**Performance.** Attribute lookup walks the MRO, so a very deep hierarchy costs a little more per miss; this is almost never your bottleneck and is a bad reason to change a design. What *does* matter: `__hash__` is called on every set and dict operation and `__eq__` on every collision, so an expensive hash over a large structure shows up immediately. Hash a small tuple of identifying fields, not the whole object.
+
+**Scalability.** This is where the composition preference earns its keep across a team. A deep hierarchy is a shared global structure: to add a behaviour, someone edits a base class, and the blast radius is every subclass anyone has written. Composition localises change — a new collaborator object affects only the classes that hold it. Protocols scale further still, because they let independently written code interoperate with no shared base class at all, which is precisely how the Python ecosystem manages to fit together.
+
+**Cost.** The dominant cost is understanding. Reading a well-composed class means reading one file and the small interfaces it calls; reading a class four levels deep with two mixins means reconstructing an MRO in your head. Dunders reduce cost dramatically in the other direction: every protocol you implement is a body of existing code — builtins, `collections.abc`, `sorted`, `DataLoader` — that you now get to use without writing or paying for it.
+
+## Alternatives: free, open source, and commercial
+
+Everything here ships with Python and is free and open source. There is nothing to buy and no paid tier; the choice is about fit. (`attrs` is the one item below that needs `pip`, and it is free and open source too.)
+
+| Approach | Cost | When to choose it |
+| --- | --- | --- |
+| Plain inheritance | Free, built in | A genuine, stable is-a relationship; a framework requires subclassing |
+| Composition + delegation | Free, built in | The default; has-a relationships; anything you want to swap or test in isolation |
+| `abc.ABC` + `@abstractmethod` | Free, built in | You own the hierarchy and want missing methods caught at construction |
+| `typing.Protocol` | Free, built in (3.8+) | You want an interface checked without forcing anyone to inherit |
+| Mixins | Free, built in | One small, orthogonal capability shared by unrelated classes |
+| `functools.total_ordering` | Free, built in | You need full ordering and only want to write `__eq__` and `__lt__` |
+| `collections.abc` base classes | Free, built in | Building a real collection and wanting the derived methods for free |
+| `attrs` | Free, open source (`pip`) | Larger projects wanting generated `__init__`/`__eq__`/`__repr__` with validators |
+
+**Plain inheritance — how, and an example.** Name the base in parentheses, call `super().__init__(...)` first in the child's `__init__`, and override only what differs. The `Appliance` → `HeatingAppliance` → `Oven` chain above is the worked example, and `Oven("Deck oven", 3200, 260, 60).describe()` returns `Deck oven (3200W), 60L`.
+
+**Composition and delegation — how, and an example.** Create collaborators in `__init__` and store them as attributes, then write short forwarding methods. The `Oven` holding a `HeatingElement` and a `Timer` above is the worked example, and `bake(220, 35)` returns `Deck oven: heating to 220C at 3200W; timer set to 35 min`. Choose it whenever you cannot say "is a" out loud without wincing.
+
+**`abc.ABC` — how, and an example.** Subclass `ABC`, decorate the required methods with `@abstractmethod`, and put shared concrete methods alongside them. The `Station`/`GrillStation`/`PastryStation` example is the worked case: the incomplete subclass raises `TypeError: Can't instantiate abstract class PastryStation without an implementation for abstract method 'prepare'` the moment you try to construct it.
+
+**`typing.Protocol` — how, and an example.** Declare the shape, and any class with matching methods satisfies it — *structural typing*, duck typing written down. Nobody inherits anything:
+
+```python
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class Preparer(Protocol):
+    def prepare(self, dish: str) -> str: ...
+
+class Grill:
+    def prepare(self, dish): return f"grilled {dish}"
+
+class Sink:
+    def wash(self, dish): return f"washed {dish}"
+```
+
+Real output: `Grill is a Preparer: True`, `Sink is a Preparer: False`. Choose `Protocol` when you consume objects other people wrote and cannot demand they inherit from you; choose `abc.ABC` when you own the family and want the enforcement. (Those `-> str` annotations are type hints, which you meet properly tomorrow; here they are just documentation.)
+
+**Mixins — how, and an example.** A mixin is a small class providing one capability, never instantiated on its own, mixed in via multiple inheritance:
+
+```python
+class LoggingMixin:
+    def log(self, message):
+        return f"[{type(self).__name__}] {message}"
+
+class Blender(LoggingMixin):
+    def blend(self):
+        return self.log("blending 30s")
+```
+
+Real output: `[Blender] blending 30s`, with `Blender.__mro__` being `Blender, LoggingMixin, object`. Choose a mixin for one orthogonal capability across unrelated classes; if it starts holding state or growing methods, it wants to be a collaborator object instead.
+
+**`functools.total_ordering` — how, and an example.** Decorate the class, define `__eq__` and `__lt__`, and the decorator fills in `<=`, `>`, and `>=`. The `Menu` above is the worked example: writing only `__lt__` gave a working `dinner >= lunch`, which returned `True`.
+
+**`collections.abc` base classes — how, and an example.** Inherit from `Sequence`, `Mapping`, `Set`, or `Iterable` and implement the two or three abstract methods; the base fills in the rest. The `Rack(Sequence)` example above is the worked case — two methods written, five gained.
+
+## Comparison with related concepts
+
+| Concept A | Concept B | Key difference |
+| --- | --- | --- |
+| Inheritance ("is-a") | Composition ("has-a") | Inheritance acquires behaviour implicitly through the MRO and is fixed at class definition; composition holds objects and forwards explicitly, and can be swapped at runtime |
+| Overriding | Extending | Overriding replaces the parent method entirely; extending overrides but calls `super()` so both run |
+| `super()` | The parent class | `super()` is the *next class in this instance's MRO*, which under multiple inheritance can be a class the current one does not inherit from at all |
+| `abc.ABC` | `typing.Protocol` | An ABC requires nominal inheritance and enforces at instantiation; a Protocol is structural — any matching class qualifies, with no inheritance |
+| Duck typing | `isinstance` checking | Duck typing asks "does it have the method"; `isinstance` asks "is it of this family." The `collections.abc` classes bridge them by checking for methods |
+| Mixin | Base class | A mixin adds one capability and is never used alone; a base class models the type and is the primary parent |
+| `__eq__` | `__hash__` | `__eq__` defines equality; `__hash__` defines the bucket. Defining `__eq__` sets `__hash__` to `None`, so define both if the object belongs in a set or dict |
+| `__str__` | `__repr__` | `__str__` is for users and `print`; `__repr__` is the unambiguous developer form used in the interpreter, in containers, and as the fallback for `__str__` |
+| `__getitem__` | `__iter__` | `__getitem__` gives indexing (and a legacy iteration fallback); `__iter__` gives proper iteration and is what you should implement for a `for` loop |
+| `NotImplemented` | `NotImplementedError` | `NotImplemented` is a value you *return* from a comparison to defer to the other operand; `NotImplementedError` is an exception you *raise* from an unfinished method |
+
+## When to use it — and when not to
+
+Reach for **composition by default**. Whenever you catch yourself inheriting to obtain a method rather than to declare a type, stop and hold the other class as an attribute instead. Say the relationship out loud: "an `Oven` **is a** `HeatingAppliance`" sounds true; "an `Oven` **is a** `Timer`" does not, and that mismatch is your signal.
+
+Reach for **inheritance** when the is-a relation is real and the hierarchy is small and stable — two or three levels, one base you control — or when a framework demands it. You will subclass `nn.Module` without hesitation later, and you already subclass `Exception` to define your own error types. Avoid it when the base class belongs to a fast-moving third-party library, when you find yourself overriding most of what you inherit (a sign the relationship is false), and when the hierarchy is already three levels deep.
+
+Reach for **`abc.ABC`** when you are defining a family of interchangeable implementations and want missing methods caught immediately. Skip it for one-off classes, where it is ceremony without benefit, and skip it when you do not own the classes involved — use `typing.Protocol` or plain duck typing there.
+
+Implement **dunder methods** when your class genuinely *is* the thing the protocol describes: `__len__` and `__getitem__` when it is a collection, `__eq__` when value equality is meaningful, `__lt__` when there is a natural order, `__enter__`/`__exit__` when there is a resource to release. Do not implement them for cleverness. A `__add__` on a `Customer` that "adds" two customers will confuse every reader; a method named `merge` will not. The test is whether the syntax would surprise someone reading the call site.
+
+And here is where today points. When you write a PyTorch model, you will subclass `nn.Module` and implement `forward` — inheritance, into a framework, with the template-method shape you saw in `Station.announce`. When you write a dataset, you will implement `__len__` and `__getitem__` and nothing else, and a `DataLoader` written years before your data existed will shuffle, batch, and iterate it — the exact protocol you just implemented on `Menu`, which is why `len(dataset)` and `dataset[i]` are the first two things anyone asks of a dataset class. When you build agents and tools, you will fill in abstract methods on framework base classes and register objects that merely need the right method shape. Today's three ideas — pick composition unless is-a is true, enforce interfaces where you own them, and implement protocols so other people's code can use yours — are not preparation for that work. They *are* that work, learned early on a kitchen you can hold in your head.
+
+## Knowledge check
+
+Try these from memory before looking back:
+
+1. Two classes share behaviour. Give the is-a test and the has-a test you use to decide between inheritance and composition, and name the three concrete costs of choosing inheritance wrongly.
+2. What exactly goes wrong when a subclass defines `__init__` and does not call `super().__init__()` — and why does the error usually appear somewhere other than the constructor?
+3. For `class ToasterOven(Heater, Timer)` where both `Heater` and `Timer` subclass `Appliance`, write out the MRO and justify each position from the two C3 rules.
+4. Why does defining `__eq__` break `set` membership, and what is the fix?
+5. Name the dunder method behind each of `len(x)`, `x[2]`, `for i in x`, `k in x`, and `with x:` — and say what returning `NotImplemented` from `__eq__` causes Python to do next.
+
+## Hands-on exercise
+
+Time to make all of this fail and then work, on purpose. In the Day 68 lab, **Protocols and Hierarchies**, you break inheritance deliberately, derive an MRO before you print it, rebuild the same design with composition, and then build a container class that plain Python builtins accept. Work in the lab directory; every command below is run from there.
+
+First, watch the classic inheritance bug happen for real, then watch the fix:
+
+```bash
+python3 examples/01_inheritance_super.py
+```
+
+Next, predict the MRO of the four-class diamond *on paper*, then check yourself:
+
+```bash
+python3 examples/02_mro_diamond.py
+```
+
+Then compare the two designs of one domain side by side, and write your comparison into the worksheet:
+
+```bash
+python3 examples/03_composition.py
+```
+
+Now the main build. Open `starter/kitchen.py` and complete its six numbered exercises — `__len__`, `__getitem__`, `__iter__`, `__contains__`, `__eq__` with `__hash__`, and `__lt__` — then prove the builtins work on your class:
+
+```bash
+python3 starter/kitchen.py
+```
+
+Finish with the context manager and the abstract base class, then run the suite:
+
+```bash
+python3 examples/05_context_manager.py
+python3 examples/06_abstract_base.py
+bash tests/run_tests.sh
+```
+
+### Expected output
+
+A correct session with the reference files looks exactly like this (abbreviated to the lines that matter):
+
+```text
+$ python3 examples/01_inheritance_super.py
+-- broken: subclass __init__ never calls super().__init__() --
+AttributeError: 'BrokenOven' object has no attribute 'name'
+-- fixed: super().__init__(name, watts) restores the parent's setup --
+Deck oven (3200W), 60L
+
+$ python3 examples/02_mro_diamond.py
+ToasterOven -> Heater -> Timer -> Appliance -> object
+ToasterOven: ready -> Heater: elements warming -> Timer: clock started -> Appliance: power on
+
+$ python3 examples/06_abstract_base.py
+Grill: grilling mackerel over charcoal
+TypeError: Can't instantiate abstract class PastryStation without an implementation for abstract method 'prepare'
+```
+
+The broken constructor fails in `describe`, not in `__init__` — that displacement is the lesson. The diamond's MRO lists `Appliance` exactly once. And the incomplete subclass is refused at construction, by name.
+
+### Validate your work
+
+You are done when you can check every box:
+
+- [ ] `python3 examples/01_inheritance_super.py` prints the `AttributeError` for the broken class and then the working `Deck oven (3200W), 60L`, exiting 0.
+- [ ] You wrote down your predicted MRO *before* running `examples/02_mro_diamond.py`, and it matched `ToasterOven -> Heater -> Timer -> Appliance -> object`.
+- [ ] `starter/kitchen.py` runs with no `NotImplementedError`, and `len()`, indexing, `for`, `in`, `==`, and `sorted()` all work on your `Menu`.
+- [ ] `python3 examples/05_context_manager.py` shows `[service closed]` printing even in the run whose body raises.
+- [ ] `python3 examples/06_abstract_base.py` raises `TypeError` naming `prepare` for the incomplete subclass.
+- [ ] `bash tests/run_tests.sh` ends with `0 failure(s)` and exits `0`.
+
+### Troubleshooting
+
+- **`AttributeError: 'X' object has no attribute 'name'` in a method, not in `__init__`.** The subclass `__init__` replaced the parent's and never called `super().__init__(...)`. Add that call as the first line of the child constructor.
+- **`TypeError: __init__() takes 3 positional arguments but 4 were given`.** You passed the child's argument list to `super().__init__()` unchanged. Pass only the arguments the parent declares.
+- **`TypeError: Cannot create a consistent method resolution order (MRO) for bases ...`.** Your base classes are listed in an order C3 cannot linearise — usually a parent listed before its own child. Reorder the bases so more specific classes come first.
+- **`TypeError: unhashable type` after adding `__eq__`.** Defining `__eq__` sets `__hash__` to `None`. Add a `__hash__` that hashes a tuple of the same fields `__eq__` compares.
+- **`TypeError: '<' not supported between instances of 'Menu' and 'Menu'`.** `sorted()` needs `__lt__`. Define it, or pass a `key=` function.
+- **Comparing to an unrelated type returns a confidently wrong answer.** Your `__eq__` returns `False` instead of `NotImplemented` for unknown types, which blocks the other operand from answering. Return `NotImplemented`.
+
+### Common mistakes
+
+- **Inheriting to borrow a method.** If you cannot say "a `Toaster` is a `Timer`" without wincing, hold a `Timer` as an attribute instead. Inheritance is for substitutability; composition is for reuse.
+- **Assuming `super()` means the parent.** In the diamond, `Heater`'s `super()` reaches `Timer`. Print `__mro__` whenever a `super()` call surprises you.
+- **Defining `__eq__` and stopping.** The unhashable-type crash appears later, in a `set` or a `dict`, far from the class you edited. Define `__hash__` at the same moment, or accept that instances are unhashable on purpose.
+- **Putting side effects in dunders.** `__repr__`, `__eq__`, and `__hash__` are called implicitly in logs, comparisons, and dict operations. Keep them pure, fast, and free of printing, file access, and network calls.
+
+## Practice assignment
+
+Model a small domain of your own twice — once with inheritance, once with composition — and then give it a protocol, keeping everything in your Day 68 lab folder. Choose a domain with real shared behaviour and at least three concrete types: musical instruments (string, wind, percussion), vehicles (car, bicycle, truck), or library items (book, audiobook, magazine). **First**, build the inheritance version: a base class holding the shared state and one shared concrete method, at least two subclasses that each call `super().__init__(...)`, one method genuinely overridden and one *extended* through `super()`, and a printed `__mro__` for one subclass. **Second**, rebuild the identical behaviour with composition: pull the shared behaviour into one or two small collaborator classes, hold them as attributes, and write the forwarding methods by hand. **Third**, write a short comparison in a `comparison.md` file: which version you would keep and why, which specific change would be easier in each, and one concrete change to the base class that would break a subclass in the inheritance version but not in the composition version. **Fourth**, build a container class over your domain — a `Collection` holding your items — implementing `__len__`, `__getitem__`, `__iter__`, `__contains__`, `__repr__`, `__eq__` with a matching `__hash__`, and `__lt__` under `@total_ordering`, and prove it by printing the results of `len(...)`, an index, a `for` loop, an `in` test, `sorted(...)`, and `max(..., key=len)`. **Finally**, add an `abc.ABC` base declaring one `@abstractmethod` that all three concrete types implement, and capture the real `TypeError` you get when you deliberately instantiate an incomplete subclass. Every output you record must come from a run you actually performed.
+
+## Extension challenge
+
+Push the container further, one honest step at a time. **First**, make your `Menu` a real sequence by inheriting from `collections.abc.Sequence` and deleting your hand-written `__contains__` and `__iter__` — confirm with a run that membership, iteration, `reversed()`, `.index()`, and `.count()` all still work, then write one sentence on what you traded away (an inherited base class) for what you gained (five methods). **Second**, add `__add__` so that two menus concatenate into a new one, and `__radd__` so `sum(list_of_menus, Menu("empty"))` works; verify that both return a *new* object rather than mutating either operand. **Third**, add a `__getitem__` that also accepts a dish *name* as a string key, raising `KeyError` with a helpful message when it is missing, and note in a comment why supporting both integers and strings in one dunder is a design smell worth thinking twice about. **Fourth**, write a second context manager class, `ServiceLog`, whose `__exit__` inspects its three parameters and prints a different closing line when the block raised — proving you understand that `__exit__` receives the exception type, value, and traceback, and that returning `True` from it would suppress the error. **Finally**, make one of your classes a `typing.Protocol` implementer rather than a subclass: define a `runtime_checkable` protocol with the two methods your code actually calls, drop the inheritance, and show with a real `isinstance` result that the class still satisfies the interface. You will have built a class that plain Python treats as a first-class citizen, and you will have done it the way the machine-learning libraries in the rest of this course expect you to.

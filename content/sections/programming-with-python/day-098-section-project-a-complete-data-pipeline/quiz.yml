@@ -1,0 +1,72 @@
+questions:
+  - question: 'Your nightly pipeline crashed halfway through, after storing some records but before finishing. Why does making the store idempotent turn this from an incident into a non-event?'
+    options:
+      - 'Because an idempotent store never crashes, so the situation cannot arise'
+      - 'Because the remedy becomes "run it again" — a rerun stores only what is missing, so you do not have to work out how far the failed run got or clean anything up first'
+      - 'Because idempotence rolls the partial run back automatically, restoring the database to its state before the run'
+      - 'Because the crash is retried inside the same process, so the run never actually ends in a failed state'
+    answer_index: 1
+    explanation: 'The value of idempotence is not that it prevents failures; it is that it collapses an enormous class of them into one remedy. Without it, "the run died at 03:14" starts an investigation: how far did it get, which records are already stored, is it safe to run again, do I need to delete something first? Every one of those questions is expensive precisely when you are least equipped to answer them. With it, the answer is "run it again" — and the same answer covers a network blip, a source outage, a bad deploy, a machine that was asleep at 3 a.m., and a schedule you forgot to enable. Option 2 describes a transaction rollback, which is a different and narrower mechanism: a rollback undoes one uncommitted unit of work, whereas idempotence makes a *completed* previous run harmless to repeat. Option 3 confuses retrying a request with rerunning a pipeline.'
+
+  - question: 'A record arrives with reading_id "a-2" that exactly duplicates a record the pipeline already stored. Which stage should reject it, and why?'
+    options:
+      - 'The validation stage, because a duplicate is a data-quality problem like any other'
+      - 'The ingest stage, because it should not have fetched a record it already has'
+      - 'The store stage, because "have I seen this before?" is a question only the store can answer — validation sees one record at a time and has no memory'
+      - 'The report stage, by counting distinct reading ids at query time'
+    answer_index: 2
+    explanation: 'This is the question of which stage a failure belongs to, and the test is what each stage can *see*. The validation gate examines one record in isolation: it can say that a humidity of 155 is impossible, because that is a fact about the record itself. It cannot say that this record is a duplicate, because that is a fact about the record''s relationship to everything already stored, and the gate has no access to that and no memory between records. The store does, and it holds the idempotence key that defines what "the same record" means. Option 1 is wrong for the same reason and also confuses a fetch with a decision — the source is entitled to send you the same record again, and often will, precisely because it does not know what you have. Option 3 is the tempting one: you *can* deduplicate at query time, and then every query for the rest of the system''s life has to remember to, and the one that forgets returns a wrong number with no error. Fix it where it enters.'
+
+  - question: 'Your pipeline fetches from five sources. One returns 503 twice and succeeds on the third attempt; another returns 404 every time. How many attempts should each get, and what decides?'
+    options:
+      - 'Both should get three attempts, because a consistent retry policy is simpler to reason about than a conditional one'
+      - 'The 503 source should be retried and the 404 source attempted once, because a 503 describes a moment and a 404 describes a mistake'
+      - 'Neither should be retried; retries hide real failures and make runs unpredictable'
+      - 'Both should be retried until they succeed, since the pipeline cannot complete without all five sources'
+    answer_index: 1
+    explanation: 'Retry is not a general-purpose safety net; it is a bet that the failure was transient. A 503 or a 500 says the server had a bad moment, and the bet is often good. A 404 says the URL is wrong, and it will be just as wrong in fifty milliseconds — retrying it spends three round trips to learn what the first attempt already told you, and every source behind it waits. So the policy is a set you write down: 429, 500, 502, 503, 504 and connection-level errors are retryable; other 4xx are not. Option 0 sounds disciplined and is just expensive. Option 3 is the most dangerous: unbounded retry converts one broken source into a run that never terminates, and it is also how a client fleet flattens a service that was only briefly unwell. Option 2 overcorrects — a pipeline that gives up on a single 503 will lose data on any normal week.'
+
+  - question: 'Why does the report function take the instant it is reporting as of as a parameter, instead of calling datetime.now?'
+    options:
+      - 'Because calling the clock is slow, and a pipeline stage should avoid system calls in a loop'
+      - 'Because time zones make the current time ambiguous, and a parameter is always in UTC'
+      - 'Purely as a testing convenience; production code would read the clock directly'
+      - 'Because a function that reads the clock produces a different answer every time it runs — which means it cannot be tested, cannot be backfilled, and cannot answer "what did the 3 a.m. run see?"'
+    answer_index: 3
+    explanation: 'Three things come from one small change. **Testability:** a report whose output changes every second has no assertable value, so "is this number right?" has no answer you can write down; with the instant passed in, the whole report becomes a pure function of the stored data and one argument. **Backfill:** asking for last Tuesday''s report is now the same code path, not a special mode. **Incident response:** when somebody asks what the failing 3 a.m. run saw, you can reproduce it exactly. Option 0 is nonsense — one clock read costs nothing. Option 1 confuses two issues: the instant should certainly be timezone-aware, but a clock reading can be too. Option 2 is the belief worth arguing with: the parameter is not a test hack you would remove in production, it is the design, and the default when nobody passes one can still be "now".'
+
+  - question: 'Your pipeline stores readings with a UNIQUE constraint on (station_id, reading_id) and uses INSERT ... ON CONFLICT DO NOTHING. Somebody removes the application-level check for keys the table already holds. What breaks?'
+    options:
+      - 'The reported counts break: the run says it inserted six rows when it inserted none, while the table itself stays correct'
+      - 'Nothing breaks; the constraint and ON CONFLICT together are sufficient, and the pre-check was redundant'
+      - 'The table gets duplicate rows, because ON CONFLICT DO NOTHING only applies to primary keys'
+      - 'The run crashes with an IntegrityError on the first duplicate'
+    answer_index: 0
+    explanation: 'This is the sharpest thing in the day and it was observed rather than argued: with the pre-check removed, the store still holds exactly six rows — the constraint did its job — and the log reports "inserted: 6, duplicates_skipped: 1" when the truth is zero and seven. The data is right and the pipeline is lying about its own work, which is much worse than a loud error, because nobody investigates a run that says it succeeded. Hence two layers with two different jobs: the constraint keeps the *data* correct even when your code is wrong or two copies of the job overlap, and the pre-check keeps the *report* honest. Option 1 is exactly the reasoning that produces this bug. Option 2 is wrong on the mechanism — ON CONFLICT can target any unique index, named through index_elements. Option 3 describes what happens without ON CONFLICT, which is a legitimate alternative design but a different one.'
+
+  - question: 'A station reports 41.3 Celsius five minutes after reporting 15.0 Celsius. Every field is within the ranges your pydantic model declares. What should the pipeline do?'
+    options:
+      - 'Reject it at the validation gate by tightening the temperature range until it is excluded'
+      - 'Drop it silently after storing, so the report is not skewed by a value that is obviously wrong'
+      - 'Store it and flag it, because no field-level rule can see it and a visible anomaly is better than an invisible gap'
+      - 'Overwrite it with the previous reading, since that is the last value known to be plausible'
+    answer_index: 2
+    explanation: 'This is the class of failure a schema structurally cannot catch. The gate looks at one record; 41.3 Celsius is a temperature that exists on Earth, so there is nothing about the record in isolation to object to. Only a rule about the *sequence* — this station, five minutes ago, 26.3 degrees colder — can see it, and that rule needs context the gate does not have. Storing and flagging is the honest answer: somebody has to look, and the flag is how they know to. Option 0 fails on its own terms — tighten the range enough to exclude 41.3 and you start rejecting real readings from real hot places, trading a visible anomaly for silent data loss. Option 1 is the worst of the four: a dropped record leaves a gap that looks like the sensor was simply not reporting, which is indistinguishable from a hundred other causes. Option 3 invents data, which is the one thing a pipeline may never do.'
+
+  - question: 'Nobody in your team ever wrote code to log the API token, yet the token appears in your logs. What is the most likely cause, and what is the fix?'
+    options:
+      - 'A developer logged the whole config object once by mistake; the fix is a code review checklist'
+      - 'The logging library serialises objects too eagerly; the fix is to log only strings'
+      - 'An upstream service echoed the token back inside an error message, and the error message was logged; the fix is a redaction filter inside the logger'
+      - 'The token was committed to the config file in version control; the fix is to move it to an environment variable'
+    answer_index: 2
+    explanation: 'This is a real and extremely common leak, and it is the reason the lab''s fixture server returns "upstream credentials rejected for token demo-token-value" in a 500 body. Nobody logged the secret. The pipeline logged an *error string*, and the error string happened to contain it. Every discipline-based defence — remembering not to log secrets, reviewing for it, naming variables carefully — fails against this, because the code that logged it is not wrong. The fix has to be structural: the logger scans every string value it is about to emit, at any depth inside lists and dicts, for every known secret, and replaces it. One place, no memory required. Option 3 describes a different and also important control (secrets belong in the environment, per the Twelve-Factor App), but moving the token out of version control does nothing about an upstream that quotes it back at you. Option 0 is a real cause and a fix that does not scale. Option 1 misdiagnoses the mechanism.'
+
+  - question: 'Your scheduled pipeline runs hourly. Four of its five sources answered; the fifth has been returning 500 for a week. What should it exit with?'
+    options:
+      - '0, because the run completed and stored everything it could get; anything else would page somebody unnecessarily'
+      - '1, because the run did not do everything it was asked to do'
+      - '3 or some other distinct non-zero code reserved for partial success, so the scheduler can react differently from both a clean run and a total failure'
+      - 'It should not exit at all until the fifth source recovers, so that no run is ever recorded as incomplete'
+    answer_index: 2
+    explanation: 'There are three outcomes, so there need to be three codes. Collapsing partial success into 0 is how a source stays dark for a month: every run looks green, the dashboards are green, and the missing quarter of your data is discovered by somebody who needed it. Collapsing it into 1 is the opposite failure and just as damaging: everything pages, the alert loses meaning, people build filters to hide it, and a genuine total failure arrives inside noise nobody reads. A distinct code lets the scheduler do the sensible thing — record it, count it, alert if it persists — without treating a working pipeline as a broken one. The exit code is the only sentence cron, launchd, systemd and every CI runner can read from your program, so it is worth spending three values on. Option 3 is the anti-pattern that turns an hourly job into a stuck process holding a lock.'

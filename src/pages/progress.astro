@@ -1,0 +1,300 @@
+---
+import Base from '../layouts/Base.astro';
+import { allDays } from '../lib/curriculum';
+
+const days = allDays().map((d) => ({
+  number: d.number,
+  dayId: d.dayId,
+  title: d.title,
+  hasContent: d.hasContent,
+  section: d.sectionTitle,
+}));
+---
+
+<Base title="My progress">
+  <div class="readable">
+    <h1>My reading progress</h1>
+    <p>
+      Days you have marked as read. This is stored in your own browser — nothing leaves your laptop
+      and there is no account to create. <span id="summary"></span>
+    </p>
+
+    {/*
+      There is no server behind this site, so "permanent" has to mean something
+      achievable without one. Two things make it so:
+
+        1. The browser is asked to mark the data persistent, which exempts it
+           from the eviction browsers otherwise apply to storage they consider
+           disposable. Without this a long gap between visits can quietly lose
+           the record.
+        2. The whole record encodes into a short link the reader can bookmark,
+           email themselves, or open on another device. That is what carries
+           progress across machines, and what survives clearing browser data.
+
+      Both are honest about their limits, which the copy below says plainly
+      rather than implying a sync that does not exist.
+    */}
+    <div class="keepbox">
+      <h2>Keep this permanently</h2>
+      <p>
+        Marks live in this browser, so they survive closing the tab, restarting your laptop and
+        coming back months later. What they cannot do on their own is follow you to a second device
+        or survive clearing your browsing data. The link below is the fix: it carries your whole
+        record in the address itself, so bookmarking it — or opening it on your phone — restores
+        everything.
+      </p>
+      <div class="keepbox__row">
+        <button class="btn btn--primary" id="make-link" type="button">Copy my progress link</button>
+        <button class="btn" id="clear" type="button">Clear marks on this device</button>
+      </div>
+      <label class="keepbox__label" for="code"
+        >Your progress link — bookmark it, or paste one here and press Restore:</label
+      >
+      <div class="keepbox__row">
+        <input type="text" id="code" spellcheck="false" placeholder="Paste a progress link here…" />
+        <button class="btn" id="restore" type="button">Restore</button>
+      </div>
+      <p class="keepbox__note" id="note" aria-live="polite"></p>
+    </div>
+
+    <ol class="day-list" id="progress-list"></ol>
+  </div>
+
+  <style>
+    .keepbox {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 20px 22px 18px;
+      margin: 26px 0 32px;
+    }
+    .keepbox h2 {
+      margin: 0 0 8px;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+    }
+    .keepbox p {
+      margin: 0 0 14px;
+      color: var(--text-dim);
+      font-size: 15px;
+    }
+    .keepbox__row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .keepbox__label {
+      display: block;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      margin-bottom: 7px;
+    }
+    .keepbox input {
+      flex: 1 1 24rem;
+      min-width: 0;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text);
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      padding: 11px 13px;
+    }
+    .keepbox input:focus {
+      outline: none;
+      border-color: var(--cyan);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--cyan) 22%, transparent);
+    }
+    .keepbox__note {
+      margin: 0;
+      min-height: 1.2em;
+      font-size: 14px;
+      color: var(--green);
+    }
+    .keepbox__note[data-bad='1'] {
+      color: var(--amber);
+    }
+  </style>
+
+  <script define:vars={{ days }}>
+    const KEY = 'ai-roadmap-read-days';
+    const base = document.querySelector('.brand').getAttribute('href').replace(/\/$/, '');
+    const list = document.getElementById('progress-list');
+    const summary = document.getElementById('summary');
+    const note = document.getElementById('note');
+    const codeField = document.getElementById('code');
+
+    const load = () => {
+      try {
+        return new Set(JSON.parse(localStorage.getItem(KEY) ?? '[]'));
+      } catch {
+        return new Set();
+      }
+    };
+    const save = (read) => {
+      try {
+        localStorage.setItem(KEY, JSON.stringify([...read].sort((a, b) => a - b)));
+      } catch {
+        /* private mode: the page still works, the record just will not persist */
+      }
+    };
+
+    // One bit per day, so 365 days fit in 46 bytes and the link stays short
+    // enough to bookmark or paste into a message. Base64url, because a plain
+    // base64 '+' or '/' does not survive being pasted around.
+    const encode = (read) => {
+      const bytes = new Uint8Array(Math.ceil(days.length / 8));
+      for (const n of read) {
+        const i = n - 1;
+        if (i < 0 || i >= days.length) continue;
+        bytes[i >> 3] |= 1 << (i & 7);
+      }
+      let raw = '';
+      for (const b of bytes) raw += String.fromCharCode(b);
+      return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+
+    const BITMAP_BYTES = Math.ceil(days.length / 8);
+
+    const decode = (text) => {
+      // Accept a whole link or the bare code, so pasting either works.
+      const match = String(text).match(/[?#&]p=([A-Za-z0-9_-]+)/);
+      const raw64 = match ? match[1] : String(text).trim();
+
+      // Both checks are load-bearing. `atob` silently ignores whitespace and
+      // accepts any string over the base64 alphabet, so a paste of ordinary
+      // prose — "this is not a link" — decoded happily and injected 39
+      // arbitrary days over the reader's real record. A code is only valid if
+      // it is pure base64url AND decodes to exactly one bit per day.
+      if (!/^[A-Za-z0-9_-]+$/.test(raw64)) throw new Error('not a progress code');
+
+      let code = raw64.replace(/-/g, '+').replace(/_/g, '/');
+      while (code.length % 4) code += '=';
+      const raw = atob(code); // still throws on a malformed length
+      if (raw.length !== BITMAP_BYTES) throw new Error('wrong length for a progress code');
+
+      const out = new Set();
+      for (let i = 0; i < days.length; i++) {
+        if (raw.charCodeAt(i >> 3) & (1 << (i & 7))) out.add(i + 1);
+      }
+      return out;
+    };
+
+    const say = (message, bad) => {
+      note.textContent = message;
+      if (bad) note.dataset.bad = '1';
+      else delete note.dataset.bad;
+    };
+
+    const render = (read) => {
+      summary.textContent = `${read.size} of ${days.length} days marked read.`;
+      list.replaceChildren();
+      for (const d of days) {
+        const li = document.createElement('li');
+        const num = document.createElement('span');
+        num.className = 'num';
+        num.textContent = `Day ${String(d.number).padStart(3, '0')}`;
+        li.appendChild(num);
+        if (d.hasContent) {
+          const a = document.createElement('a');
+          a.href = `${base}/${d.dayId}`;
+          a.textContent = d.title;
+          li.appendChild(a);
+        } else {
+          const s = document.createElement('span');
+          s.textContent = d.title;
+          li.appendChild(s);
+        }
+        const badge = document.createElement('span');
+        badge.className = read.has(d.number) ? 'badge complete' : 'badge planned';
+        badge.textContent = read.has(d.number)
+          ? 'read'
+          : d.hasContent
+            ? 'unread'
+            : 'not written yet';
+        li.appendChild(badge);
+        list.appendChild(li);
+      }
+    };
+
+    const linkFor = (read) => {
+      const url = new URL(window.location.href);
+      url.hash = '';
+      url.search = `?p=${encode(read)}`;
+      return url.href;
+    };
+
+    let read = load();
+
+    // A link opened on a new device merges rather than replaces: arriving with
+    // an older link should never delete days already marked here.
+    const incoming = window.location.search + window.location.hash;
+    if (/[?#&]p=/.test(incoming)) {
+      try {
+        const before = read.size;
+        for (const n of decode(incoming)) read.add(n);
+        save(read);
+        say(`Restored from the link — ${read.size - before} day(s) added, ${read.size} in total.`);
+        history.replaceState(null, '', window.location.pathname);
+      } catch {
+        say('That link did not contain a readable progress code.', true);
+      }
+    }
+
+    render(read);
+
+    // Ask the browser to treat this as data worth keeping rather than cache it
+    // may drop. It can decline, which is why the copy does not promise it.
+    navigator.storage?.persist?.().catch(() => {});
+
+    document.getElementById('make-link').addEventListener('click', async () => {
+      const link = linkFor(read);
+      codeField.value = link;
+      codeField.select();
+      try {
+        await navigator.clipboard.writeText(link);
+        say('Copied. Bookmark it, or open it on another device to restore these marks.');
+      } catch {
+        say('Copy it from the box below — your browser blocked clipboard access.', true);
+      }
+    });
+
+    document.getElementById('restore').addEventListener('click', () => {
+      if (!codeField.value.trim()) {
+        say('Paste a progress link into the box first.', true);
+        return;
+      }
+      try {
+        const before = read.size;
+        for (const n of decode(codeField.value)) read.add(n);
+        save(read);
+        render(read);
+        say(`Restored — ${read.size - before} day(s) added, ${read.size} in total.`);
+      } catch {
+        say('That is not a valid progress link or code.', true);
+      }
+    });
+
+    document.getElementById('clear').addEventListener('click', () => {
+      if (!read.size) {
+        say('Nothing is marked read on this device yet.', true);
+        return;
+      }
+      const link = linkFor(read);
+      if (!window.confirm(`Clear all ${read.size} marks on this device?`)) return;
+      // The record is offered back as a link first, so a mis-click is
+      // recoverable rather than final.
+      codeField.value = link;
+      read = new Set();
+      save(read);
+      render(read);
+      say('Cleared. The box below still holds a link to what you just cleared, until you leave.');
+    });
+  </script>
+</Base>

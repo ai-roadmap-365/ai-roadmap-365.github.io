@@ -1,0 +1,122 @@
+questions:
+  - question: >-
+      A payload has customers, each with a list of orders. `pandas.json_normalize(customers)` (no
+      `record_path`) gives 3 rows and a total of 1550.0 on the `total_amount_due` column.
+      `pandas.json_normalize(customers, record_path="orders", meta=["total_amount_due"])` gives 6 rows and
+      a total of 2650.0 on the same column. What is the correct explanation?
+    options:
+      - 'The second call has a bug in pandas; the two totals should always agree'
+      - 'The second call sums total_amount_due once per order, so any customer with more than one order has their balance counted multiple times'
+      - 'The first call is wrong because it ignores the orders entirely'
+      - 'The difference is floating-point rounding error accumulated across six rows'
+    answer_index: 1
+    explanation: >-
+      Both calls are correct pandas behaviour, doing exactly what they were asked. record_path with meta
+      carries the parent's fields onto every child row by design, so a customer with two orders has their
+      total_amount_due duplicated twice, and summing it counts that customer's balance twice. The fix is
+      not a bug report -- it is choosing the customer-grain flattening (no record_path) for a
+      customer-level question.
+  - question: >-
+      A customer has an empty `orders: []` list. Which statement about how the two flattening approaches
+      handle this is accurate, as measured on pandas 3.0.5?
+    options:
+      - 'json_normalize(record_path=...) drops the customer (zero rows); DataFrame.explode on an already-flat frame keeps one row with NaN'
+      - 'Both json_normalize(record_path=...) and DataFrame.explode drop the customer entirely'
+      - 'Both keep exactly one row for the customer, with NaN in the exploded or nested column'
+      - 'json_normalize raises a ValueError on an empty list, while explode silently drops the row'
+    answer_index: 0
+    explanation: >-
+      Measured directly: record_path finds nothing to expand from an empty list and contributes zero rows
+      for that customer, so the customer disappears from the order-grain frame. explode, applied to a
+      frame that already has one row per customer, keeps that row and fills the exploded column with NaN.
+      The two functions solve related but different problems and make opposite choices about empty lists.
+  - question: >-
+      A field named `loyalty_tier` is absent from customers on pages 1 and 2 of a paginated API, and
+      present from page 3 onward. After assembling all pages with pandas.concat, what happens to
+      loyalty_tier for the page-1 and page-2 rows?
+    options:
+      - 'pandas raises a KeyError because the column is inconsistent across pages'
+      - 'Those rows get the string "missing" so the gap is visible'
+      - 'Those rows get NaN silently, with no error or warning, because concat aligns columns by name and backfills the rest'
+      - 'Those pages are silently dropped from the assembled frame'
+    answer_index: 2
+    explanation: >-
+      This is the schema-drift bug in its most common shape. pandas.concat is doing exactly what it is
+      supposed to do -- aligning by column name and filling what is missing with NaN -- but nothing in the
+      resulting frame flags that the NaN represents "this field did not exist yet" rather than "this field
+      was checked and found empty." A deliberate schema-drift detector is what turns this into a named,
+      dated finding instead of a mystery discovered weeks later.
+  - question: >-
+      Why does raw-then-transform (persisting each page's raw JSON before any flattening or cleaning)
+      matter for an ingestion pipeline specifically, beyond the general case Day 126 made for cleaning?
+    options:
+      - 'It is required by every API''s terms of service'
+      - 'It makes the API respond faster on subsequent calls'
+      - 'It automatically fixes any schema drift in the stored data'
+      - 'A bug found in your flattening logic can be fixed and re-run against the stored raw copy, touching the network zero more times, instead of re-fetching from a live, possibly rate-limited or already-changed API'
+    answer_index: 3
+    explanation: >-
+      An API is a live system: it can rate-limit you, go down, or -- more subtly -- return a slightly
+      different response the second time you ask, if the underlying data changed between calls. Persisting
+      the raw response first means a transformation bug costs you a bug fix and a replay from disk, never a
+      second round of network calls against a source that may not even be identical to what you first saw.
+  - question: >-
+      Ingesting the same page of results twice should not duplicate rows. What mechanism does this lesson
+      use to guarantee that, and what does "idempotent" mean here precisely?
+    options:
+      - 'A natural key (such as customer_id) plus an upsert that replaces any existing row sharing that key; running the ingestion step twice with the same input produces byte-for-byte identical output both times'
+      - 'A random UUID is generated per row so duplicates are easy to filter out afterward'
+      - 'The API itself guarantees it will never be called twice with the same page'
+      - 'Deduplication runs as a nightly cleanup job separate from ingestion'
+    answer_index: 0
+    explanation: >-
+      Idempotence here is proved, not assumed: the lab runs upsert once, runs it again with the identical
+      incoming data, and asserts the two resulting frames are exactly equal with
+      pandas.testing.assert_frame_equal. The mechanism is a natural key that identifies "the same
+      real-world entity" plus replace-on-conflict logic, which is what makes a retried or rescheduled
+      ingestion job safe to re-run.
+  - question: >-
+      A contract check on an assembled frame raises `ContractViolation("total_amount_due contains a
+      negative balance")` rather than a generic exception. Why does naming the specific broken rule matter?
+    options:
+      - 'It does not matter -- any exception stops the pipeline equally well'
+      - 'It turns "the pipeline broke" into "the pipeline broke because of this specific, checkable rule," which is the difference between a two-minute fix and an open-ended investigation'
+      - 'It is required so the exception can be caught by type in a try/except block'
+      - 'Named exceptions run faster than generic ones in Python'
+    answer_index: 1
+    explanation: >-
+      A contract that raises ValueError("something is wrong") forces whoever sees the failure to
+      re-diagnose from scratch. A contract that names the exact rule -- missing columns, duplicate keys, a
+      non-numeric column, a negative balance, an out-of-range row count -- turns an incident into an
+      immediately actionable fact, which is the entire value of checking at a boundary rather than trusting
+      what arrives.
+  - question: >-
+      An incremental fetch uses a watermark: "give me everything updated since my last watermark." Between
+      an exclusive (`>`) and an inclusive (`>=`) boundary, which does this lesson choose, and why?
+    options:
+      - 'Exclusive (>), because it never re-fetches a record you already have'
+      - 'It does not matter which is chosen, because both are mathematically equivalent over a sorted timestamp column'
+      - 'Exclusive (>), because inclusive boundaries are not supported by most real APIs'
+      - 'Inclusive (>=), because a record sharing the exact same updated_at timestamp as the watermark record would otherwise be silently and permanently skipped, and the resulting harmless duplicate is absorbed for free by the idempotent upsert'
+    answer_index: 3
+    explanation: >-
+      The two conventions fail in opposite directions. Exclusive risks a permanently, silently lost record
+      whenever two records share a timestamp with the watermark. Inclusive risks only a harmless duplicate,
+      which the natural-key upsert this lesson already built absorbs at no cost. Given the asymmetry between
+      "occasionally re-does harmless work" and "occasionally loses data with no symptom," inclusive is the
+      only defensible default.
+  - question: >-
+      Pointed at this lesson's nested customers-with-orders payload, what does pandas.read_json actually
+      do with the orders field, measured directly on pandas 3.0.5?
+    options:
+      - 'It raises a JSONDecodeError because nested arrays are not supported'
+      - 'It automatically calls json_normalize internally and flattens the orders into their own rows'
+      - 'It leaves orders as a column of raw Python list objects, with no flattening at all, and does not error -- which is precisely why it is the wrong tool for this payload'
+      - 'It converts orders into a single concatenated string per customer'
+    answer_index: 2
+    explanation: >-
+      This is the "too blunt" verdict the lesson states plainly rather than assuming: read_json is built
+      for JSON that is already close to tabular, and on a genuinely nested payload it does not fail loudly
+      -- it just does not do the flattening job, leaving nested structure untouched in each cell. That
+      makes it a more dangerous failure mode than an outright error, because the resulting frame looks like
+      it worked.

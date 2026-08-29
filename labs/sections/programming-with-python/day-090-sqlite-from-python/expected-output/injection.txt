@@ -1,0 +1,65 @@
+sandbox: a throwaway database inside day090-injection-jz72qjas/ — deleted on exit
+
+ACT 1 — the string-built query, and what the crafted value does to it
+---------------------------------------------------------------------
+  the ordinary case, input = "Ada Lovelace"
+    statement: SELECT name, email, pin FROM members WHERE name = 'Ada Lovelace'
+    rows: 1  -> [('Ada Lovelace', 'ada@example.invalid', '4417')]
+  ok: the concatenated query looks perfectly fine on ordinary input
+
+  the crafted case, input = "Ada' OR '1'='1"
+    statement: SELECT name, email, pin FROM members WHERE name = 'Ada' OR '1'='1'
+                                                                     ^ the apostrophe inside the value closed the string early
+    rows: 3  -> every member, with address and PIN:
+      ('Ada Lovelace', 'ada@example.invalid', '4417')
+      ('Grace Hopper', 'grace@example.invalid', '9021')
+      ('Alan Turing', 'alan@example.invalid', '1912')
+  ok: one apostrophe changed the statement's meaning: the WHERE clause became name = 'Ada' OR '1'='1', which is true for every row
+    Nothing was escaped, nothing was 'hacked'. The value became CODE
+    because it was inside the string before the parser ever saw it.
+
+ACT 2 — the destructive version meets execute(), which takes one statement
+--------------------------------------------------------------------------
+    statement: SELECT name FROM members WHERE name = 'Ada'; DROP TABLE members; --'
+    raised: ProgrammingError: You can only execute one statement at a time.
+  ok: sqlite3.Connection.execute refuses more than one statement, so this particular attack fails here
+  ok: the members table is still standing after act 2
+    Read that carefully. The attack failed because of a limit in the
+    Python module, NOT because the code was safe. Act 1 already leaked
+    every row through the same hole, and act 3 removes the limit.
+
+ACT 3 — the same string handed to executescript(), which accepts many
+---------------------------------------------------------------------
+    statement: SELECT name FROM members WHERE name = 'Ada'; DROP TABLE members; --'
+    members before: 3 rows
+    members table exists afterwards: False
+    querying it now: OperationalError: no such table: members
+  ok: the table was destroyed by a value that arrived as text
+  ok: and the program that did it contained no DROP anywhere
+
+ACT 4 — the identical inputs, bound as parameters
+-------------------------------------------------
+    leak attempt     value = "Ada' OR '1'='1"
+                     statement: SELECT name, email, pin FROM members WHERE name = ?
+                     rows returned: 0
+  ok: leak attempt: bound as a value, it matched no member name
+    destroy attempt  value = "Ada'; DROP TABLE members; --"
+                     statement: SELECT name, email, pin FROM members WHERE name = ?
+                     rows returned: 0
+  ok: destroy attempt: bound as a value, it matched no member name
+  ok: the members table is untouched
+  ok: and still holds all three rows
+    The statement was compiled with a '?' in it BEFORE any value
+    existed. Binding cannot change a compiled statement's shape, so
+    the apostrophe is just a character in a string that no member is
+    called. The engine compared it and moved on.
+
+SUMMARY
+-------
+    concatenated + crafted input  -> 3 private rows leaked, then a table dropped
+    parameterised + same input    -> 0 rows, no error, nothing changed
+    the difference is one character: ? instead of an f-string.
+
+0 failure(s) in this demonstration.
+
+sandbox removed. Nothing outside it was ever opened.

@@ -1,0 +1,530 @@
+---
+day: 70
+title: 'Modeling a Domain with Objects'
+---
+
+## Why this matters
+
+For six days you have been collecting parts. You learned to read and write files, to survive real-world CSV and JSON, to raise and catch exceptions on purpose, to define classes with state and behaviour, to choose composition over inheritance and to implement the dunder protocols, and to write compact record types with dataclasses and type hints. Every one of those is a technique. Today you learn the *judgment* that decides which of them to use, in what shape, for a particular problem — how to look at a messy human activity like "keeping track of what I spend" and turn it into a small set of objects whose rules the computer will not let you break.
+
+The stakes are practical and immediate. A program built from loose dicts and floats and strings has its rules scattered everywhere and enforced nowhere: the check that an amount is positive lives in the import script, and also in the report, and also — forgotten — in the correction path, which is the one that lets a negative rent through at midnight. A program built from a domain model has each rule written once, in the object that owns it, and cannot be bypassed, because there is no way to construct an invalid object in the first place. The difference shows up as money. Represent an amount as a float and you will eventually ship a report whose per-category totals do not add up to the total, and spend an afternoon proving it is not your arithmetic. Represent a category as a plain string and a single misspelling silently creates a fifth category that no report ever shows.
+
+This is also the day Week 10 becomes one thing instead of seven. The **Expense Tracker** you build as this week's project is exactly the model developed in this lesson, at one size larger. And the same discipline is what separates a maintainable AI application from a script that dies in a notebook — which is where this lesson ends.
+
+## The idea in plain language
+
+A **domain** is the slice of the real world your program is about: gym memberships, expenses, patient appointments, a document search index. A **domain model** is a set of objects and rules that mirror that slice closely enough that the code reads like the problem. When the model is good, you can hand a printout of your class definitions to the person who described the problem to you, and they can read it.
+
+That last sentence is the whole test, and it has a name: **ubiquitous language**. You use the domain expert's words, spelled the way they spell them. If the gym owner says *member*, *plan*, *tier*, and *check in*, your code says `Member`, `Plan`, `PlanTier`, and `check_in` — not `UserRecord`, `type_string`, and `process_event`. Every translation you introduce between their words and yours is a place where a misunderstanding can hide, and a tax you pay at every conversation for as long as the program lives.
+
+A domain model has three ingredients:
+
+- **Types that mean something.** Not `float`, `str`, and `dict`, but `Money`, `Category`, and `Expense`. A type is a place to put a rule.
+- **Rules that live with the data they constrain.** "An expense amount is positive" belongs inside the thing that holds the amount, not in whatever code happens to build one.
+- **A boundary.** The model itself touches no files, no screen, no clock. Everything that does is pushed to the outside, where it can be swapped without disturbing the rules.
+
+Today's method turns those three ingredients into eight repeatable steps, demonstrated end to end on one running example.
+
+## Historical background
+
+Objects were invented to model the world. **Simula 67**, designed by Ole-Johan Dahl and Kristen Nygaard at the Norwegian Computing Center in Oslo, introduced classes and objects for the specific purpose of writing *simulations* — of ships in a harbour, of customers in a queue. The point of an object was never encapsulation for its own sake; it was that a thing in the program could stand for a thing in the world. Dahl and Nygaard received the Turing Award in 2001 for that idea. Alan Kay, whose Smalltalk work at Xerox PARC in the 1970s carried the idea further, made the same argument in a different vocabulary: objects as independent entities that model something and communicate by messages.
+
+The vocabulary this lesson uses was assembled by **Eric Evans** in *Domain-Driven Design: Tackling Complexity in the Heart of Software* (Addison-Wesley, 2003). That book named the patterns practitioners had been circling for years: **ubiquitous language**, the shared vocabulary between developers and domain experts; **entities**, objects with identity and a life cycle; **value objects**, objects defined entirely by their attributes; and **repositories**, objects that hide how a model is stored. Also in 2003, **Martin Fowler** published a short piece named "AnemicDomainModel", warning about the very common failure mode where classes hold data and nothing else while all the behaviour drifts into a separate layer of procedures — an object-oriented design, he argued, with the object-orientation removed. **Alistair Cockburn** described the complementary structural idea in 2005 as *hexagonal architecture*, or ports and adapters: an application core surrounded by interchangeable adapters, with all dependencies pointing inward.
+
+Python gained purpose-built tools for this style relatively late. Enumerations arrived in Python 3.4 through PEP 435, giving closed sets a first-class representation. Type hints arrived in Python 3.5 through PEP 484. Dataclasses arrived in Python 3.7 through PEP 557, and it is `dataclass(frozen=True)` that makes a proper value object a three-line affair rather than a page of boilerplate. Everything in this lesson is an old idea meeting a modern, concise expression of it.
+
+## What it is — and what it is not
+
+Modelling a domain with objects is the practice of turning stated rules into types that cannot represent an invalid state, arranging those types so the rules live with the data they constrain, and drawing a boundary so the rules can be exercised without touching the outside world.
+
+It is **not** "using classes." You can write a hundred classes and have no model — that is what the god object and the anemic model both are. It is **not** an architecture ceremony: the whole model in this lesson is about a hundred and eighty lines. It is **not** a database schema. A schema describes how bytes are stored; a model describes what is true. They often disagree, and a repository exists precisely to translate between them. And it is **not** a promise of completeness: a model deliberately leaves out everything the stated rules do not mention. Modelling lockers, trainers, and refunds when nobody asked for them is the fastest way to make a small model unmaintainable.
+
+| Common misconception | The reality |
+| --- | --- |
+| "A domain model is what you do on big enterprise systems." | The payoff arrives at about a hundred lines. A single script with money in it already benefits from a `Money` type. |
+| "Classes are just dicts with dots." | A dict cannot refuse to be wrong. A class with a validating initializer can, which is the entire point. |
+| "Getters and setters make it object-oriented." | Behaviour makes it object-oriented. A class with fields and no rules is an anemic model with extra typing. |
+| "Model the database tables and you have a model." | Storage shape and rule shape differ. Model the rules; let a repository translate to whatever the tables need. |
+| "More inheritance means better design." | Inheritance earns its keep roughly once per small model. Composition and plain functions carry the rest. |
+
+## Why it was created and what problems it solves
+
+Each element of the method defeats a specific failure.
+
+Without meaningful types you get **primitive obsession**: money as a float, a date as a string, a category as a string. Then `0.1 + 0.2` is `0.30000000000000004`, `"2026-13-01"` parses fine as text and blows up three functions later, and `"grocerys"` becomes a silently valid category. Nothing is validated because there is nowhere to put the validation. Real types solve this by giving each rule a home.
+
+Without rules living inside the objects you get the **anemic model**: data classes plus a sprawl of loose functions, each of which must remember to re-check what the others check. Every new caller is a new chance to forget. Behaviour on the object solves this, because the only way to obtain an `Expense` is through the code that validates one.
+
+Without a boundary you get a model you cannot test. If computing a monthly total requires a file on disk, then every test needs fixtures, tests get slow, slow tests get skipped, and untested rules quietly rot. A pure core solves this: a test is one call in and one value — or one refusal — out.
+
+Without a repository, storage decisions leak everywhere. Change from CSV to SQLite and you edit forty places. One class that owns persistence solves this: you edit one.
+
+And without domain errors you get a program that reports its problems in the language of the machinery — a `KeyError` from a dict three layers down — instead of the language of the problem. A small exception hierarchy solves this: the outer layer catches one base class and says something a human can act on.
+
+## How it works
+
+Here is the shape you are building toward. Read the arrows: they all point the same way, and that is the design.
+
+![Diagram: a domain model and its boundaries — a pure domain core of value objects, closed sets, entities and domain errors in the middle, surrounded by an adapter ring holding the command-line interface, the repository, its CSV, JSON and SQLite file formats, and the test harness, with every dependency arrow pointing inward](./assets/domain-model-architecture.svg)
+
+The method that gets you there has eight steps. The running example throughout is a small **spending tracker**, because that is what the Week 10 project asks you to build.
+
+### 1. Write the domain in plain sentences
+
+Before any code, write down what is true, in the words of whoever knows. For the tracker:
+
+1. A tracker records what you spent, when, and on what.
+2. An expense has a reference, a date, an amount, a category, and a note.
+3. An amount is money: whole cents in one currency, never negative, and you never add euros to dollars.
+4. A category is one of a fixed set: groceries, transport, rent, fun.
+5. A ledger holds many expenses, in one currency, and can total them, total them per category, and report a period.
+6. A period is a start date and an end date; it never ends before it starts.
+7. Anything the rules forbid is refused with a clear error.
+
+### 2. Underline the nouns and the verbs
+
+Nouns are candidate types; verbs are candidate methods, and the noun nearest a verb usually owns it.
+
+- Nouns: tracker, expense, reference, date, amount, money, cents, currency, category, note, ledger, period, error.
+- Verbs: record, total, total per category, report a period, refuse.
+
+`record` is something a *ledger* does. `total` is something a *ledger* does. Adding is something *money* does. Already the methods have homes.
+
+### 3. Separate entities from value objects
+
+This is the decision that shapes everything else, and two questions settle it every time. *Would I still call it the same thing after every one of its values changed?* If yes, it has identity — it is an **entity**. *Would two of them with identical values be interchangeable?* If yes, it is a **value object**.
+
+| | Entity | Value object |
+| --- | --- | --- |
+| Identified by | an identity field that never changes | all of its values together |
+| Equality | same identity means same thing | same values means same thing |
+| Mutability | changes over a life cycle | immutable — frozen |
+| Hashing | hash the identity | hash the values |
+| In this model | `Expense`, `Ledger` | `Money`, `DateRange`, `Category` |
+| Python spelling | `@dataclass(eq=False)` plus explicit equality | `@dataclass(frozen=True)` |
+
+`Money` is the archetype. It is frozen, it compares by value, it stores whole cents as an integer, and it refuses to add two currencies:
+
+```python
+@dataclass(frozen=True)
+class Money:
+    cents: int
+    currency: str
+
+    def __post_init__(self):
+        if not isinstance(self.cents, int) or isinstance(self.cents, bool):
+            raise InvalidMoney(f"money is whole cents, got {self.cents!r}")
+        if self.cents < 0:
+            raise InvalidMoney(f"money cannot be negative, got {self.cents}")
+        if len(self.currency) != 3 or not self.currency.isupper():
+            raise InvalidMoney(f"currency must be a code like EUR, got {self.currency!r}")
+
+    def __add__(self, other):
+        if not isinstance(other, Money):
+            return NotImplemented
+        if other.currency != self.currency:
+            raise CurrencyMismatch(f"cannot add {other.currency} to {self.currency}")
+        return Money(self.cents + other.cents, self.currency)
+```
+
+Two behaviours worth seeing directly, both from a real run:
+
+```text
+Money(4215,'EUR') == Money(4215,'EUR') -> True
+Money(4215,'EUR') == Money(4215,'USD') -> False
+assigning to a frozen value object -> FrozenInstanceError: cannot assign to field 'cents'
+```
+
+Why integer cents rather than a float? Not because every float sum drifts — `sum(0.10 for _ in range(10))` really is exactly `1.0`. The problem is that you cannot predict *which* sums drift. In the same interpreter, `0.1 + 0.2` is `0.30000000000000004`. A representation whose correctness depends on which particular numbers a user happens to enter is not a representation you can defend in a report. Integers always add exactly, so the question never arises.
+
+`Expense`, by contrast, is an entity. Its reference identifies it; everything else can change:
+
+```text
+same reference, all values changed -> True 1
+```
+
+That is `a == b` being `True` and a set containing both landing on one element, even though the amount, the category, and the note all differ.
+
+### 4. Name the invariants and choose where each is enforced
+
+An **invariant** is a sentence that must be true of a valid model at all times. Write each one in one sentence, then name the exact place that refuses to let it break. If you cannot name the place, the rule is not enforced — it is a hope.
+
+| Invariant | Enforced where | Error raised |
+| --- | --- | --- |
+| An amount is whole cents, never negative | `Money.__post_init__` | `InvalidMoney` |
+| Two currencies are never added | `Money.__add__` | `CurrencyMismatch` |
+| An expense amount is strictly positive | `Expense.__post_init__` | `InvalidMoney` |
+| A category is one of the four | `Expense.__post_init__`, and `Category` itself | `UnknownCategory`, `ValueError` |
+| A period never ends before it starts | `DateRange.__post_init__` | `InvalidPeriod` |
+| Every expense in a ledger shares its currency | `Ledger.record` | `CurrencyMismatch` |
+| A period's total equals the sum of its expenses | `Ledger.total`, by construction | — |
+
+Notice the three enforcement points. `__post_init__` is where a dataclass validates values that are already assembled. A plain initializer is where a non-dataclass does the same. And a **service method** on the object that owns the collection — `Ledger.record` — is where a rule that spans more than one object lives, because no single value object can see enough to check it. The last row is a different kind of rule: it is not checked, it is made unbreakable by only ever computing the total one way.
+
+### 5. Draw the boundary
+
+Split the code in two. The **core** holds the types and the rules and imports nothing that touches the world: no `json`, no `pathlib`, no `open`, no `print`, no `input`, no `os`. The **adapters** hold everything else — the command-line front end, the repository, the report printing. Dependencies point inward only: adapters import the core; the core imports no adapter.
+
+This is Day 63's functional core and imperative shell, promoted from functions to types. The payoff is the same and larger: the entire rulebook can be exercised from an empty directory, with no fixtures, in milliseconds. If a test of a rule needs a file, the boundary has leaked.
+
+### 6. Model relationships with composition — and use inheritance once
+
+A `Ledger` **has** many expenses. That is composition, and it is the right answer for nearly every relationship in a small model. Give the container the dunder protocols so it behaves like the collection it is:
+
+```python
+@dataclass
+class Ledger:
+    currency: str
+    expenses: list = field(default_factory=list)
+
+    def record(self, expense):
+        if expense.amount.currency != self.currency:
+            raise CurrencyMismatch(
+                f"ledger is in {self.currency}, expense is in {expense.amount.currency}"
+            )
+        self.expenses.append(expense)
+        return expense
+
+    def __len__(self):
+        return len(self.expenses)
+
+    def __iter__(self):
+        return iter(self.expenses)
+```
+
+There is exactly one place in this model where inheritance genuinely earns its keep: **reports**. Several reports share a rendering procedure and differ only in a title and a list of lines. That is the classic template-method shape, and a base class expresses it without repetition:
+
+```python
+class Report:
+    def title(self):
+        raise NotImplementedError
+
+    def lines(self):
+        raise NotImplementedError
+
+    def render(self):
+        return "\n".join([self.title()] + [f"  {line}" for line in self.lines()])
+```
+
+`MonthlyReport` and `LargestReport` each supply a title and lines and inherit `render`. The honest alternative is a plain function, `render(title, lines)`, called by two independent classes or even two functions — and for two reports that is entirely defensible. The base class starts paying only when the shared procedure grows (widths, totals, a footer) or when a fourth and fifth report arrive. Write the function first; promote it to a base class when the third subclass shows up, not before.
+
+### 7. Persistence is a boundary concern
+
+Storage belongs in one class — a **repository** — with two public operations, `save` and `load`, plus private translators between domain shape and file shape. Everything the file format knows lives there.
+
+The crucial detail is on the way back in: `load` rebuilds every value through the domain constructors, so a hand-edited file is refused rather than silently poisoning the model. Here is a real round trip through a CSV repository, then the same file with one amount edited to a negative number:
+
+```text
+reference,spent_on,cents,currency,category,note
+E-001,2026-04-02,4215,EUR,groceries,weekly shop
+E-003,2026-04-05,95000,EUR,rent,April rent
+reloaded total: 992.15 EUR | same as original: True
+hand-edited bad file -> InvalidMoney: money cannot be negative, got -95000
+```
+
+Swapping CSV for JSON or SQLite now means writing a second repository class with the same two methods. The core never learns that anything changed.
+
+### 8. Errors are part of the model
+
+Give the domain its own exception hierarchy with one base class, as you learned on Day 66:
+
+```python
+class SpendError(Exception):
+    """Any rule of the spending domain that was refused."""
+
+class InvalidMoney(SpendError): ...
+class CurrencyMismatch(SpendError): ...
+class InvalidPeriod(SpendError): ...
+class UnknownCategory(SpendError): ...
+```
+
+Now the outermost adapter catches one thing and translates it. `except SpendError` means "a rule was broken" — a message and exit code 1. `except OSError` means "the disk or the path is wrong" — a different message and a different exit code. Anything else is a bug, and should be allowed to crash loudly.
+
+![Flowchart: the modelling method in seven steps — write the domain in plain sentences, underline the nouns and verbs, classify each noun as an entity or a value object, name every invariant and its enforcement point, draw the boundary between the pure core and its adapters, write the classes, and test the core with no files present](./assets/noun-to-model-flow.svg)
+
+## An everyday analogy
+
+An architect does not start with bricks. She starts with drawings, and the drawings come in three kinds, which map exactly onto the three things you have just built.
+
+The **floor plan** is your entities and their relationships: these rooms exist, this one contains those, the corridor connects them. It says what the building *is* before anyone argues about paint. Your `Ledger` containing many `Expense` objects, each holding a `Money` and a `Category`, is a floor plan.
+
+The **building code** is your invariants: a stair riser is at most this high, a bedroom has a window of at least this area, a beam over this span is at least this deep. Nobody negotiates with the building code on site at four in the afternoon — it is checked before the pour, at the one place where it can still be enforced cheaply. Your `__post_init__` methods are the inspection, and they happen at construction, before anything is built on top.
+
+The **utilities connections** — water, power, drains — enter at the edges of the plan, at marked points. The rooms do not each drill their own hole to the street. Your adapters are those connections: the repository at one edge, the command line at another. Change from a septic tank to mains drainage and you re-plumb the connection, not the bedrooms.
+
+The analogy carries one more way, and it is the one people miss. You can draw a floor plan for a building that has not been built, and show it to the client, and they can tell you it is wrong — cheaply, on paper. That is what step 1 to step 4 of the method buys you: the chance to be wrong on a worksheet instead of in three hundred lines of code.
+
+## Examples in practice
+
+Here is the finished core driven end to end. The output below is a real run, not a sketch.
+
+```python
+ledger = Ledger("EUR")
+rows = [
+    ("E-001", date(2026, 4, 2), 4215, Category.GROCERIES, "weekly shop"),
+    ("E-002", date(2026, 4, 3), 275, Category.TRANSPORT, "bus"),
+    ("E-003", date(2026, 4, 5), 95000, Category.RENT, "April rent"),
+    ("E-004", date(2026, 4, 11), 1850, Category.FUN, "cinema"),
+    ("E-005", date(2026, 4, 18), 3790, Category.GROCERIES, "market"),
+    ("E-006", date(2026, 5, 2), 4400, Category.GROCERIES, "weekly shop"),
+]
+for ref, day, cents, cat, note in rows:
+    ledger.record(Expense(ref, day, Money(cents, "EUR"), cat, note))
+
+april = DateRange(date(2026, 4, 1), date(2026, 4, 30))
+print(MonthlyReport(ledger, april).render())
+print(LargestReport(ledger, 3).render())
+```
+
+```text
+Spending 2026-04-01 .. 2026-04-30
+  fun        18.50 EUR
+  groceries  80.05 EUR
+  rent       950.00 EUR
+  transport  2.75 EUR
+  total      1051.30 EUR
+
+Largest 3 expenses
+  2026-04-05 950.00 EUR rent — April rent
+  2026-05-02 44.00 EUR groceries — weekly shop
+  2026-04-02 42.15 EUR groceries — weekly shop
+
+expenses recorded: 6
+whole-ledger total: 1095.30 EUR
+```
+
+Check the arithmetic yourself: April's groceries are 42.15 plus 37.90, which is 80.05; the April total is 80.05 plus 2.75 plus 950.00 plus 18.50, which is 1051.30; and the whole ledger adds May's 44.00 to reach 1095.30. Every one of those sums is integer addition on cents, so it is exact by construction, not by luck.
+
+Now the more interesting half — the model refusing to be wrong. Each line below is a real exception message produced by breaking one rule on purpose:
+
+```text
+Rules the model refuses to break
+  a negative amount: InvalidMoney: money cannot be negative, got -500
+  an amount as a float: InvalidMoney: money is whole cents, got 42.15
+  a zero-value expense: InvalidMoney: an expense must be positive, got 0.00 EUR
+  adding dollars to euros: CurrencyMismatch: cannot add USD to EUR
+  a backwards period: InvalidPeriod: period 2026-04-30..2026-04-01 ends before it starts
+  a dollar expense in a euro ledger: CurrencyMismatch: ledger is in EUR, expense is in USD
+  a misspelled category: ValueError: 'groserys' is not a valid Category
+```
+
+That last line is the argument for `enum.Enum` in a single frame. A closed set — the categories, the plan tiers, the order states, the message roles — must be a type. With a plain string, `"groserys"` is accepted, stored, written to the file, and shows up months later as a category no report displays and no total includes. With an enum, the typo raises at the moment it is written, and the legal values are listed in exactly one place.
+
+Which brings us to the failure catalogue. Every one of these is common, and every one of them is easy to spot once it has a name.
+
+| Anti-pattern | What it looks like | Why it hurts | The fix |
+| --- | --- | --- | --- |
+| God object | One class — `Tracker` — that parses CSV, validates, totals, formats, and prints | Cannot be named in one sentence, cannot be tested in parts, every change touches it | Split by responsibility; give the core the rules and the adapters the world |
+| Anemic model | Field-only classes plus loose functions holding every rule | Each new caller can forget a check; rules drift out of sync | Move the rule to the object that owns the data — validate at construction |
+| Primitive obsession | `float` for money, `str` for dates and categories | Nowhere to put validation; silent wrong values | `Money`, `date`, `Category` — a type per concept |
+| Premature inheritance | An abstract base with exactly one subclass | Indirection with no payoff; harder to read than the function it replaced | Write the function; promote it when the third case appears |
+| Stringly typed | Status, tier, role, and category all plain strings | A typo travels far from where it was made | `enum.Enum` for every closed set |
+| Leaky boundary | `import json` or a `print` inside the core | Rules can no longer be tested without files or captured output | Move it to an adapter; assert the core's import list in a test |
+
+One honest qualification on the anemic model, because Python is not Java. A module of plain frozen dataclasses plus a handful of pure functions that operate on them is a perfectly good design — it is close to how functional languages model domains, and it is often *clearer* than methods for pure calculations over data you do not own. The failure is not "functions exist." The failure is when nothing enforces the invariants at construction, so an invalid object can exist at all. Keep validation in the type; put calculation wherever it reads best.
+
+Finally, three questions that tell you whether a model is good. **Can you state each rule in one sentence, and point at the line that enforces it?** **Does a change to one rule touch exactly one place?** **Can the whole core be tested with no files anywhere?** Three yeses is a good model. A no is a precise instruction about what to fix.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Security.** Validation at construction is a security control, not just a tidiness habit. When the only way to obtain an `Expense` is through code that checks the amount, the category, and the currency, a hostile CSV cannot inject a negative rent or a category that no report displays. The boundary helps twice over: a core that imports nothing capable of I/O physically cannot delete a file, open a socket, or spend money, whatever input it is handed. Every dangerous capability is confined to a few readable lines in the adapter ring, which is the part you audit.
+
+**Privacy.** A model makes data flow legible. Personal data enters through one adapter, is transformed by a pure core that cannot log or transmit anything, and leaves through another adapter. That is what lets you answer "where does this person's spending history go?" by reading two small files instead of grepping a codebase. It also makes redaction implementable: a `__repr__` on a value object is the single place to mask an account number.
+
+**Performance.** Objects cost more than tuples — every `Money` is an allocation, and `Ledger.total` builds one new `Money` per expense. For thousands of records this is irrelevant; for millions in a hot loop it is measurable, and the standard remedies are to compute over the raw cents inside one method and wrap the result once, or to use `slots=True` on the dataclass to cut per-instance memory. Do that when a measurement says so, never before. The far larger performance fact is that a pure core is testable in milliseconds, so its tests actually run.
+
+**Scalability.** Scalability here means *of change*, and that is what the repository buys. Moving from a CSV file to SQLite to a service is one new class implementing `save` and `load`. Adding a report is one subclass. Adding a category is one enum member and one line in whatever maps file values to it. A model scales in team size too: two people can work on the core and the adapters simultaneously because the seam between them is explicit.
+
+**Cost.** The dominant cost of software is change, and a model concentrates change. The counter-cost is real and worth naming: modelling something with three fields and no rules is over-engineering, and every unnecessary type is a thing to read, name, and maintain forever. The sweet spot is the smallest set of types that gives every stated rule a home — no more.
+
+## Alternatives: free, open source, and commercial
+
+There are five mainstream ways to hold and persist a domain model in Python. All five are free to use; the split that matters is between what ships with Python and what you install with `pip`.
+
+| Approach | What it is | When to choose it | Cost |
+| --- | --- | --- | --- |
+| Dataclasses plus a repository | Frozen and mutable dataclasses for the model, one class owning CSV or JSON storage | The default for a small program with a few hundred to a few thousand records; what this lesson and the Week 10 project use | Free, in the standard library |
+| `sqlite3` | Python's built-in bindings to an embedded SQL database, one file on disk | When you need queries, indexes, transactions, or concurrent readers, but no server | Free, in the standard library |
+| An object-relational mapper such as SQLAlchemy | A library that maps classes to database tables and generates SQL | Real database schemas, migrations, relationships across many tables, several backends | Free and open source, installed with `pip`; commercial hosting of the database is separate |
+| pydantic | A library that validates and coerces data against typed models at a boundary | Validating untrusted input — request bodies, config files, model responses — where you want structured errors | Free and open source, installed with `pip` |
+| `enum` and `NamedTuple` | Standard-library types for closed sets and tiny immutable records | Closed sets always; `NamedTuple` for a small value with no rules to enforce | Free, in the standard library |
+
+**Dataclasses plus a repository — how, with an example.** Model with `@dataclass(frozen=True)` for values and `@dataclass` for entities, validate in `__post_init__`, and put all file knowledge in one class. The worked example is the CSV round trip shown earlier: `save` writes six columns, `load` rebuilds every field through the domain constructors, and a hand-edited negative amount is refused with `InvalidMoney` rather than loaded.
+
+**`sqlite3` — how, with an example.** Connect, create a table, and use parameter placeholders — never string formatting — so the values stay data. This is a real run against an in-memory database:
+
+```python
+import sqlite3
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE expense (reference TEXT PRIMARY KEY, spent_on TEXT, "
+            "cents INTEGER, currency TEXT, category TEXT)")
+con.execute("INSERT INTO expense VALUES (?,?,?,?,?)",
+            ("E-001", "2026-04-02", 4215, "EUR", "groceries"))
+print(con.execute("SELECT reference, cents, category FROM expense").fetchall())
+```
+
+```text
+[('E-001', 4215, 'groceries')]
+```
+
+The shape of the swap is the point: this becomes a `SqliteLedgerRepository` with the same `save` and `load`, and the core is untouched.
+
+**An ORM such as SQLAlchemy — how, with an example.** You declare mapped classes and let the library generate the SQL, then work in objects and sessions rather than rows. Sketched, the declaration reads like this (not run here, since the library is not part of the standard library):
+
+```python
+class ExpenseRow(Base):
+    __tablename__ = "expense"
+    reference: Mapped[str] = mapped_column(primary_key=True)
+    cents: Mapped[int]
+    currency: Mapped[str]
+```
+
+Choose it when the schema is real and relational. The trap to avoid is letting the mapped classes *become* your domain model: keep them as the storage shape and translate, or your rules start depending on your tables.
+
+**pydantic — how, with an example.** Define a model with type annotations and validators; it parses untrusted data and raises structured errors listing every bad field at once. Choose it at a boundary — an API request, a config file, a model's JSON response — and keep it out of the core, so the core stays dependency-free:
+
+```python
+class ExpenseIn(BaseModel):
+    reference: str
+    cents: int = Field(gt=0)
+    currency: str
+```
+
+**`enum` and `NamedTuple` — how, with an example.** Use an enum for every closed set, always. Use `NamedTuple` when you want an immutable, tuple-compatible record with no validation to perform:
+
+```python
+class Point(NamedTuple):
+    cents: int
+    currency: str
+```
+
+```text
+Point(cents=4215, currency='EUR') True 4215
+```
+
+That real run shows value equality and attribute access. The reason this lesson still reaches for a frozen dataclass is `__post_init__`: a `NamedTuple` has nowhere clean to enforce a rule.
+
+## Comparison with related concepts
+
+| Concept A | Concept B | Key difference |
+| --- | --- | --- |
+| Entity | Value object | An entity has an identity that survives every value changing; a value object *is* its values and is frozen |
+| Domain model | Database schema | The model says what is true; the schema says how bytes are stored. A repository translates between them |
+| Repository | Data access scattered in place | A repository puts every storage decision in one class; scattered access spreads them through the program |
+| Domain exception | Built-in exception | A domain exception names a broken *rule*; a `KeyError` names a broken *mechanism*. Adapters translate the first into human sentences |
+| Composition | Inheritance | Composition says "has a" and is almost always right; inheritance says "is a" and earns its place when several classes share a real procedure |
+| Enum | String constant | An enum makes an illegal value impossible at the moment it is written; a string makes it possible forever |
+| Domain model | Anemic model | Both have classes. In a model the rules live with the data; in an anemic model the classes are field bags and the rules float free |
+
+## When to use it — and when not to
+
+Reach for a domain model whenever the problem has *rules*. Money, dates, quantities, statuses, quotas, limits, states with legal transitions — the moment a sentence in the requirements starts with "must", "never", or "at most", you have an invariant that needs a home. Reach for it when a program will outlive the afternoon, when more than one person will touch it, or when getting a value wrong costs something real. The Week 10 project is precisely this case, which is why the modelling worksheet is its first step rather than an afterthought.
+
+Do not reach for it when the data has no rules. A script that reads a CSV, sums one column, and prints the answer should read the CSV, sum the column, and print the answer. Wrapping three values in two classes to do that is over-engineering — the same failure as the god object, approached from the other side. Nor should you model the whole world: build only the types the stated rules mention, and add the seventh type when the seventh rule arrives.
+
+There is a middle case worth naming, because you will meet it constantly: a program with one rule. Almost always the right move is one value object — usually `Money` — and plain functions around it. That is the entire method, correctly scaled down.
+
+This is the last day of Week 10, and the week now connects. Day 64 gave you files, Day 65 gave you CSV and JSON, and today those became the repository at one edge. Day 66 gave you exceptions, which became the domain error hierarchy. Day 67 gave you classes, Day 68 gave you composition and the dunder protocols, which became the `Ledger` that has many expenses and answers `len` and iteration. Day 69 gave you dataclasses and type hints, which became the frozen value objects. And Day 63, from the week before, gave you the pure core and the thin shell, which today grew from functions into types. The **Expense Tracker** project takes this exact model and adds the CSV import, the atomic save, and the command-line front end.
+
+And here is where it points. Every serious AI application is a domain with rules, and the ones that survive are the ones that were modelled. You will work with **documents** and the **chunks** split from them; **embeddings** that must match their model and dimension or the comparison is meaningless; **conversations** made of **messages** with a role from a closed set; **tools** with names and typed arguments; **eval runs** with a dataset, a metric, and a score. Every one of those is an entity or a value object with invariants — a chunk belongs to exactly one document, an embedding's dimension never changes, a message's role is one of a fixed few, a token count is a non-negative integer, a cost is money. Model them, and a change to the chunking strategy touches one class. Skip the modelling, and you get the script everyone recognises: prompts, model calls, parsing, retries, and storage tangled into one function that nobody can test without spending money. The pure-core-and-adapters split is exactly how you keep prompt construction and scoring — pure, testable, free to run — apart from the model calls and the database, which are the slow, costly, mockable edges. The discipline you practise today on a gym and a spending tracker is the same discipline, unchanged, at the scale of the systems you are heading toward.
+
+## Knowledge check
+
+Try these from memory before looking back:
+
+1. State the two questions that decide whether a noun is an entity or a value object, and answer them for `Money` and for `Expense`.
+2. Name three places an invariant can be enforced, and give an example rule for each.
+3. Why is a category an `enum.Enum` rather than a string? Give the concrete failure the string version allows.
+4. What does a repository buy you, and what would you have to change to move from JSON to SQLite?
+5. Explain the anemic model in one sentence, then say when field classes plus plain functions are nonetheless a fine design in Python.
+6. Why must the domain core import no module that performs input or output?
+
+## Hands-on exercise
+
+Time to model a domain from nothing but a page of sentences. In the Day 70 lab you build the membership model for **Northside Gym** — deliberately a different domain from the lesson's spending tracker, so the Week 10 project stays a fresh exercise. The lab gives you eleven plain-English rules from the gym's owner, a worksheet to model on, and a starter with six exercises. Work in the lab directory; every command below is run from there.
+
+First read the rules, then fill in the worksheet **before writing code** — the nouns and verbs, the entity-versus-value-object classification, the invariants and their enforcement points, and the boundary table:
+
+```bash
+cat examples/domain-rules.md
+open starter/domain-worksheet.md   # or your editor of choice
+```
+
+Now drive the finished reference so you know the target — the roster, the monthly revenue, a save-and-reload round trip, and every rule being refused in turn:
+
+```bash
+python3 examples/demo.py club.json
+```
+
+Call the pure core directly, with no files and no adapter, to see why the boundary matters:
+
+```bash
+PYTHONPATH=examples python3 -c "import gym_core as g; print(g.Money(2900, 'EUR') + g.Money(4900, 'EUR'))"
+```
+
+Then open `starter/gym_core.py` and complete its six numbered exercises — the `MembershipNumber` and `Money` value objects, `DateRange`, `Plan`, the `Member` entity with identity-based equality and its check-in limit, and the `Club` that refuses duplicates and unknown members — followed by the repository exercise in `starter/gym_repository.py`. Finally, run the suite:
+
+```bash
+bash tests/run_tests.sh
+```
+
+### Expected output
+
+The reference run produces exactly this (a real captured session):
+
+```text
+Northside Gym — roster
+  GYM-0001  Ada    joined 2026-01-15  plan basic (29.00 EUR)  April check-ins: 4
+  GYM-0002  Grace  joined 2026-02-01  plan plus (49.00 EUR)  April check-ins: 15
+  GYM-0003  Ada    joined 2026-03-09  plan basic (29.00 EUR)  April check-ins: 0
+  monthly revenue: 107.00 EUR
+
+Saved to club.json and reloaded — round trip intact: True
+
+Rules the model refuses to break
+  a membership number that is not GYM-####: InvalidMembershipNumber: membership number must look like GYM-0001, got '0007'
+  a negative price: InvalidMoney: money cannot be negative, got -100 cents
+  adding dollars to euros: CurrencyMismatch: cannot add USD to EUR
+  enrolling a number twice: DuplicateMember: GYM-0001 is already a member of Northside Gym
+  a member the club never met: UnknownMember: GYM-9999 is not a member of Northside Gym
+  a 13th basic check-in in one month: CheckInLimitExceeded: GYM-0003 is on the basic plan and already used all 12 check-ins in 2026-04
+```
+
+The test suite prints one line per check and ends with `33 checks, 0 failure(s).` while the starter is still unfinished.
+
+### Validate your work
+
+1. `python3 examples/demo.py club.json` exits 0 and reports `round trip intact: True`.
+2. The two members both named Ada have different membership numbers and are treated as different people, while the roster is ordered by number.
+3. The monthly revenue is `107.00 EUR` — check it by hand: 29.00 plus 49.00 plus 29.00.
+4. Grace, on the plus plan, records fifteen April check-ins without complaint; the third member's thirteenth basic check-in is refused.
+5. `bash tests/run_tests.sh` ends with `33 checks, 0 failure(s).` and exits 0.
+6. Searching your own `starter/gym_core.py` for `json`, `open`, `print`, `Path`, and `input` finds nothing — the test suite checks this too.
+7. Every row of the worksheet is filled in, including the anti-pattern checklist, in sentences rather than single words.
+
+### Troubleshooting
+
+The lab's `troubleshooting.md` covers the full list. The four you are most likely to meet: `NotImplementedError` from the starter, which is expected until you finish an exercise; `FrozenInstanceError` when you try to assign to a field of a frozen dataclass, which means the value object is working exactly as designed and you should build a new one instead; `TypeError: unhashable type` when you put an entity in a set after defining `__eq__` without `__hash__`; and a `ModuleNotFoundError` for `gym_core`, which means you ran a file from the wrong directory or forgot `PYTHONPATH=examples`.
+
+### Common mistakes
+
+- **Writing the classes before the worksheet.** The worksheet is the design; the classes are the transcript. Skipping it produces a model shaped like your first guess.
+- **Making an entity frozen, or a value object mutable.** A member has to change; a price must not.
+- **Defining `__eq__` on an entity and forgetting `__hash__`.** Python then sets the hash to `None`, and the object cannot go in a set or be a dict key.
+- **Letting a `print` or an `import json` into the core.** It works, and it destroys the property that made the core testable.
+- **Storing the price as a float.** It looks fine on three examples and then produces a revenue total ending in a long tail of digits.
+- **Using a string for the plan tier.** The typo will not surface until a report quietly omits a member.
+
+## Practice assignment
+
+Take a domain you actually know — a book club, a bus timetable, a chore rota, a five-a-side league — and write it up the way the gym owner did: numbered plain-English sentences, ten to twelve of them, including at least three that say "must", "never", or "at most", and a short vocabulary list. Then run the full method on it. Fill in a worksheet: nouns and verbs; each noun classified as an entity or a value object with a one-sentence justification; every invariant in one sentence with its enforcement point named; and a boundary table saying which module owns which responsibility. Finally, implement the core in a single file — frozen dataclasses for the values, an enum for every closed set, a domain exception hierarchy — and write a small test script that exercises every invariant from an empty directory, with no files present. Your deliverable is three files: the rules, the worksheet, and the core with its tests, plus the captured output of the test run.
+
+## Extension challenge
+
+Extend the gym model in the lab three ways, each of which forces a genuine modelling decision rather than more typing.
+
+**Add a third tier.** Introduce a `STUDENT` tier at a lower price with a monthly check-in limit of its own. Count how many files you had to change; if it was more than the enum, the limits table, and the plan construction, the closed set had leaked somewhere and you have just found where.
+
+**Add a second repository.** Write a `CsvClubRepository` with the same `save` and `load` methods as the JSON one, storing one row per member with the check-ins in a separate file or a single quoted field. Then prove the swap is free: run the demo against each repository in turn and confirm the roster, the revenue, and the round-trip check are identical. If the core needed even one edit, the boundary was not where you thought.
+
+**Model billing.** Add a `BillingPeriod` report using the existing `DateRange`, producing the amount due for one member over one period, and decide deliberately — writing your reasoning down — whether it belongs on `Member`, on `Club`, or in a separate report class inheriting from a small `Report` base. Then state the invariant your answer implies, in one sentence, and name the line that enforces it. That final sentence is the skill this whole day exists to build.

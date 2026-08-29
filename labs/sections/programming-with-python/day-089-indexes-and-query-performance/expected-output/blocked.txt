@@ -1,0 +1,105 @@
+events.db: 400,000 rows
+Indexes present for all of the below: ix_trace(trace_id), ix_run(run_id)
+The value being looked for: trace_id = 'tr-407080-72'
+
+------------------------------------------------------------------------------
+0. The baseline: plain equality on an indexed column
+------------------------------------------------------------------------------
+  WHERE trace_id = ?
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_trace (trace_id=?)
+    time : best     0.003 ms | median     0.004 ms | spread   0.008 ms   rows: 1
+
+------------------------------------------------------------------------------
+1. A function wrapping the column
+------------------------------------------------------------------------------
+  WHERE lower(trace_id) = ?   — the index holds trace_id, not lower(trace_id)
+    plan : [SCAN] SCAN events USING COVERING INDEX ix_trace
+    time : best    24.608 ms | median    24.930 ms | spread   0.823 ms   rows: 1
+  the fix: CREATE INDEX ix_lower_trace ON events(lower(trace_id))
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_lower_trace (<expr>=?)
+    time : best     0.004 ms | median     0.004 ms | spread   0.016 ms   rows: 1
+
+  An expression index stores the answer to lower(trace_id) for every
+  row and sorts THAT. The rule is exact: the expression in the query
+  must match the expression in the index, character for character in
+  meaning. upper() will not use an index built on lower().
+
+------------------------------------------------------------------------------
+2. An expression on the column
+------------------------------------------------------------------------------
+  WHERE substr(trace_id, 4) = ?   — asking about part of the value
+    plan : [SCAN] SCAN events USING COVERING INDEX ix_trace
+    time : best    12.946 ms | median    13.131 ms | spread   0.325 ms   rows: 1
+
+  Same cause, and the same two fixes: an expression index, or —
+  usually better — store the part you actually query as its own
+  column. If you keep asking half a question, keep half a column.
+
+------------------------------------------------------------------------------
+3. LIKE with a leading wildcard
+------------------------------------------------------------------------------
+  WHERE trace_id LIKE '%080-72'
+    plan : [SCAN] SCAN events USING COVERING INDEX ix_trace
+    time : best    13.384 ms | median    13.678 ms | spread   0.709 ms   rows: 4
+
+  There is no fix, and that is worth saying plainly. A B-tree finds
+  things by their beginning; '%abc' says the beginning is unknown.
+  If you genuinely need it: index a reversed copy of the column when
+  the wildcard is always leading, or reach for full-text search —
+  SQLite ships FTS5 for exactly this. Do not add an ordinary index
+  and hope.
+
+------------------------------------------------------------------------------
+4. LIKE with a trailing wildcard
+------------------------------------------------------------------------------
+  WHERE trace_id LIKE 'tr-40708%'   — a prefix, which a B-tree could find
+    plan : [SCAN] SCAN events USING COVERING INDEX ix_trace
+    time : best     9.447 ms | median     9.494 ms | spread   0.147 ms   rows: 4
+  the rewrite: WHERE trace_id >= 'tr-40708' AND trace_id < 'tr-40709'
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_trace (trace_id>? AND trace_id<?)
+    time : best     0.004 ms | median     0.004 ms | spread   0.009 ms   rows: 4
+  or: PRAGMA case_sensitive_like = ON, then the same LIKE
+    plan : [SEEK] SEARCH events USING COVERING INDEX ix_trace (trace_id>? AND trace_id<?)
+    time : best     0.007 ms | median     0.007 ms | spread   0.003 ms   rows: 4
+
+  This one surprises people, so read the three plans above together.
+  A prefix LIKE is bracketable in principle, but SQLite's LIKE is
+  case-insensitive by default while the index is sorted in binary
+  order — and a case-insensitive match cannot be answered from a
+  case-sensitive ordering. Turn LIKE case-sensitive and the planner
+  rewrites it into exactly the range shown above, all by itself.
+
+------------------------------------------------------------------------------
+5. OR across different columns
+------------------------------------------------------------------------------
+  WHERE run_id = ? OR trace_id = ?   — BOTH columns indexed
+    plan : [SEEK] MULTI-INDEX OR / INDEX 1 / SEARCH events USING INDEX ix_run (run_id=?) / INDEX 2 / SEARCH events USING INDEX ix_trace (trace_id=?)
+    time : best     0.019 ms | median     0.019 ms | spread   0.010 ms   rows: 101
+  WHERE run_id = ? OR score > ?      — score has no index
+    plan : [SCAN] SCAN events
+    time : best    12.896 ms | median    13.128 ms | spread   0.526 ms   rows: 100
+  the rewrite: UNION of two indexed halves
+    plan : [SEEK] MERGE (UNION) / LEFT / SEARCH events USING COVERING INDEX ix_run (run_id=?) / RIGHT / SEARCH events USING COVERING INDEX ix_trace (trace_id=?)
+    time : best     0.018 ms | median     0.020 ms | spread   0.031 ms   rows: 101
+
+  The honest version of the folklore: OR is not automatically fatal.
+  When EVERY branch has an index, SQLite runs each one and merges —
+  that is the MULTI-INDEX OR plan above. One unindexed branch and the
+  whole thing collapses to a scan, because a row failing the indexed
+  test might still pass the other one. An OR is only as indexed as
+  its worst branch.
+
+------------------------------------------------------------------------------
+What the five cases have in common
+------------------------------------------------------------------------------
+  In every failing case the index was present and the column was
+  named. What was missing was that the query asked about something
+  the sorted order does not contain: a transformed value, a match
+  with an unknown beginning, or a condition that cannot be bracketed.
+
+  For scale, the plain indexed lookup at the top: best     0.003 ms | median     0.004 ms | spread   0.008 ms
+  Everything in sections 1 to 3 was hundreds of times slower than
+  that, with the index sitting right there unused.
+
+------------------------------------------------------------------------------
+Indexes dropped. The table is back to how generate.py left it.

@@ -1,0 +1,74 @@
+
+1. Inserting 500 rows the naive way: add() and flush() in the loop
+------------------------------------------------------------------
+500 cursor execution(s), 500 parameter set(s), 0 of them batched
+    INSERT INTO loans (id, book_id, member_id, borrowed_on, due_on, returned) VALUES (?, ?, ?, ?, ?, ?)
+    ... and 499 more identical statements
+  One round trip per row. This is the mistake, and it is a mistake
+  about WHERE the flush goes, not about the ORM.
+
+2. Inserting 500 rows with add_all() and ONE flush
+--------------------------------------------------
+1 cursor execution(s), 500 parameter set(s), 1 of them batched
+  The unit of work sorted the pending objects by table and batched
+  them into a single executemany. Still the ORM: every object is
+  tracked, every identity registered, every default applied.
+
+3. Inserting 500 rows through Core
+----------------------------------
+1 cursor execution(s), 500 parameter set(s), 1 of them batched
+    INSERT INTO loans (id, book_id, member_id, borrowed_on, due_on, returned) VALUES (?, ?, ?, ?, ?,...
+
+4. What the insert numbers actually say
+---------------------------------------
+    add() + flush() per row    500 execution(s)    500 row(s)
+    add_all() + one flush        1 execution(s)    500 row(s)
+    Core insert(), one call      1 execution(s)    500 row(s)
+
+  Read that carefully, because it contradicts the usual advice.
+  On this version, batched ORM inserts and Core inserts issue the
+  SAME number of cursor executions. The dramatic gap is between the
+  naive loop and everything else — it is 500 against 1.
+
+  So 'drop to Core for speed' is not what the execution count shows.
+  What Core actually saves here is Python-side work the counter
+  cannot see: no Loan instances are constructed, nothing enters the
+  identity map, and the unit of work has no dependency graph to
+  sort. That is real, and it is a memory and CPU argument rather
+  than a round-trip argument. Measure it before you claim it.
+
+5. Updating every open loan — where Core genuinely wins
+-------------------------------------------------------
+ORM, object by object : 2 cursor execution(s), 14 parameter set(s), 1 of them batched
+                        13 Loan objects built in memory
+     1. SELECT loans.id, loans.book_id, loans.member_id, loans.borrowed_on, loans.due_on, loans.returned FROM loans...
+     2. UPDATE loans SET returned=? WHERE loans.id = ?
+Core UPDATE           : 1 cursor execution(s), 1 parameter set(s), 0 of them batched
+                        0 Loan objects built, 13 rows changed
+     1. UPDATE loans SET returned=? WHERE loans.returned IS 0
+  Note the shape of the difference. The ORM had to SELECT the rows
+  first, because it changes objects and it has no objects until it
+  loads them. Core changes rows, so it never reads them.
+
+6. That difference grows with the row count; the insert one does not
+--------------------------------------------------------------------
+ORM with ~1000 more open loans : 2 cursor execution(s), 1014 parameter set(s), 1 of them batched
+                                 1013 Loan objects built in memory
+Core with the same rows        : 1 cursor execution(s), 1 parameter set(s), 0 of them batched
+                                 0 Loan objects built, 1013 rows changed
+  The execution counts barely move. The object count moves by a
+  thousand. THAT is the bulk-operation argument, stated in the
+  units it is actually true in.
+
+7. The honest summary
+---------------------
+  * Never flush inside a loop. That is the only order-of-magnitude
+    round-trip win available here, and it is free.
+  * A batched ORM insert costs the same round trips as Core. Choose
+    Core for it when you do not want the objects, not for the count.
+  * A bulk UPDATE or DELETE is different: the ORM must load rows to
+    change them and Core does not, so Core avoids work that scales
+    with the number of matching rows.
+  * The price of Core is that no Python-level default, validator or
+    event of yours runs, because no object was ever created. That is
+    a design decision, not an optimisation.

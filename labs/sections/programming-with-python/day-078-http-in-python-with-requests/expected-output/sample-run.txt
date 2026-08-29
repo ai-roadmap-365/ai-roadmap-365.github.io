@@ -1,0 +1,207 @@
+$ python3 examples/raw_socket_demo.py
+
+1. The request, typed out by hand
+=================================
+  Four parts: a request line, some headers, a blank line, and
+  (for a GET) no body. Every line ends with carriage return +
+  line feed, and the blank line is what says 'headers finished'.
+
+  bytes sent (147 bytes)
+  ----------------------
+    GET /api/readings?station=ALPHA HTTP/1.1\r\n
+    Host: 127.0.0.1:55272\r\n
+    User-Agent: day078-raw-socket/1.0\r\n
+    Accept: application/json\r\n
+    Connection: close\r\n
+    \r\n          <- the blank line: headers finished
+
+2. The response, exactly as it arrived
+======================================
+  Three parts: a status line, some headers, a blank line, then
+  the body. The body here is JSON, but HTTP neither knows nor
+  cares — Content-Type is what says so.
+
+  status line and headers (142 bytes)
+  -----------------------------------
+    HTTP/1.1 200 OK\r\n
+    Server: DayLab/1.0\r\n
+    Date: Sun, 19 Jul 2026 13:30:25 GMT\r\n
+    Content-Type: application/json; charset=utf-8\r\n
+    Content-Length: 255\r\n
+    \r\n          <- the blank line: headers finished
+
+  body (255 bytes)
+  ------------------
+    {"station":"ALPHA","count":4,"query_seen":{"station":["ALPHA"]},"readings":[{"station":"ALPHA","hour":0,"celsius":12.0},{"station":"ALPHA","hour":6,"celsius":14.0},{"station":"ALPHA","hour":12,"celsius":20.0},{"station":"ALPHA","hour":18,"celsius":22.0}]}
+
+3. Reading the pieces back
+==========================
+    HTTP version : HTTP/1.1
+    status code  : 200
+    reason phrase: OK
+    header       : Server = DayLab/1.0
+    header       : Date = Sun, 19 Jul 2026 13:30:25 GMT
+    header       : Content-Type = application/json; charset=utf-8
+    header       : Content-Length = 255
+
+  That is the entire protocol. Everything `requests` adds is
+  convenience on top of these bytes: building the request line,
+  encoding the query string, pooling the connection, decoding
+  the body, and turning a status code into an exception.
+
+$ python3 examples/demo.py
+
+
+1. A request and a response, in the pieces that matter
+======================================================
+  request method   : GET
+  request path     : /api/readings?station=ALPHA
+  request headers  : 4 sent
+  status code      : 200 OK
+  content type     : application/json; charset=utf-8
+  .content is      : bytes, 255 bytes
+  .text is         : str, 255 characters
+  .json() is       : dict with keys ['count', 'query_seen', 'readings', 'station']
+  elapsed          : 0.0010s
+
+2. params= versus gluing strings together
+=========================================
+  station value    : 'ALPHA ONE&station=BRAVO'
+  params=          : /api/search?station=ALPHA+ONE%26station%3DBRAVO
+    server parsed  : {'station': ['ALPHA ONE&station=BRAVO']}
+  f-string         : /api/search?station=ALPHA%20ONE&station=BRAVO
+    server parsed  : {'station': ['ALPHA ONE', 'BRAVO']}
+  the f-string smuggled a second parameter in. params= encoded it.
+
+3. Status codes: a 404 is a successful response
+===============================================
+  the call itself  : returned normally, no exception
+  status_code      : 404
+  bool(response)   : False   <- False for 4xx and 5xx
+  described        : HTTP 404 (your request was rejected) — no such station
+  raise_for_status : HTTPError: 404 Client Error: Not Found
+  the client raises: StationNotFound: no station named 'NOWHERE'
+
+4. A redirect, followed and unfollowed
+======================================
+  final status     : 200
+  final url path   : readings
+  history          : [301]
+  unfollowed       : 301, Location: /api/readings
+  301 is permanent — a client may cache it. 302 is temporary.
+
+5. The timeout that is not there by default
+===========================================
+  asked for        : 3 seconds of server work
+  read timeout     : 0.5s
+  raised after     : 0.50s — ReadTimeout
+  with no timeout= at all, that call waits for the full 3s, and
+  against a server that never answers it waits forever.
+
+6. Retry with backoff — and what must never be retried
+======================================================
+  server sent      : 429, 429, then 200
+  final status     : 200 on attempt 3
+  waits requested  : [1.0, 1.0]  (Retry-After: 1 overrode the schedule)
+  real time taken  : 0.002s — the sleep was injected
+  schedule alone   : [0.5, 1.0, 2.0, 4.0]
+  with half jitter : [0.25, 0.5, 1.0, 2.0]
+  404 retryable?   : False
+  a 404 will be a 404 on the tenth try. Retrying it is a bug.
+
+7. Session and connection reuse
+===============================
+  5 calls, one Session      : 1 TCP connection(s)
+  5 calls, requests.get()   : 5 TCP connection(s)
+  each extra connection is a handshake — and, over TLS, several.
+
+8. Streaming a large body instead of loading it
+===============================================
+  bytes written    : 524288
+  chunks read      : 64 of at most 8192 bytes
+  peak held        : one chunk, not 524288 bytes
+  sha256           : 918b1e0da676100095229452e431e466...
+  and the summary  : {'count': 4.0, 'min': 12.0, 'max': 22.0, 'mean': 17.0}
+
+$ python3 examples/stdlib_demo.py
+
+
+1. urllib.request — a GET with a query string
+=============================================
+  status      : 200 OK
+  content type: application/json; charset=utf-8
+  count       : 4
+  first row   : {'station': 'ALPHA', 'hour': 0, 'celsius': 12.0}
+  note        : you encoded the query, decoded the bytes, and
+                parsed the JSON yourself. requests does all three.
+
+2. urllib.request — a 404 is an EXCEPTION, not a status
+=======================================================
+  raised      : HTTPError
+  status      : 404
+  detail      : no such station
+  note        : this is the big behavioural difference. urllib
+                raises on 4xx and 5xx; requests returns a
+                response and lets you decide.
+
+3. urllib.request — a POST with a JSON body
+===========================================
+  status      : 201
+  server saw  : method=POST bytes=43
+  server saw  : content_type=application/json
+  echoed json : {'station': 'ALPHA', 'note': 'hand rolled'}
+
+4. http.client — the layer underneath both
+==========================================
+  status      : 200 OK
+  headers     : 4 of them
+  body bytes  : 164
+  count       : 2
+  connections : 1 opened for those 2 requests
+  note        : http.client speaks the protocol and nothing
+                more — no redirects, no pooling, no decoding.
+
+5. What each layer costs you
+============================
+  http.client     : the protocol, exactly. You manage everything.
+  urllib.request  : redirects and a bit of convenience; verbose,
+                    and it raises on 4xx/5xx.
+  requests        : params=, .json(), Session pooling, retries via
+                    an adapter, streaming. One pip install away.
+
+$ python3 examples/httpx_demo.py
+
+httpx 0.28.1
+
+1. The requests-shaped API, unchanged
+=====================================
+  status        : 200
+  path sent     : /api/readings?station=ALPHA
+  count         : 4
+  .text / .content / .json() all exist, same as requests
+
+2. The default timeout — the difference that matters
+====================================================
+  httpx.Client() default timeout : Timeout(timeout=5.0)
+  requests has no default timeout at all. A missing timeout=
+  in requests hangs; in httpx it gives up after 5 seconds.
+
+3. raise_for_status, and a 404
+==============================
+  status        : 404
+  is_success    : False
+  raised        : HTTPStatusError
+
+4. Streaming
+============
+  bytes         : 262144 in 32 chunk(s)
+
+5. What httpx adds
+==================
+  * a default timeout;
+  * the same API in sync and async (httpx.AsyncClient);
+  * HTTP/2 support, if you install the extra: pip install 'httpx[http2]'
+    and pass http2=True. Without that extra it speaks HTTP/1.1,
+    exactly like requests.
+  * a strict URL and header model, which catches some mistakes
+    requests would let through.

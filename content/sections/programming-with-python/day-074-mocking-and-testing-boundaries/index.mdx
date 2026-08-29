@@ -1,0 +1,888 @@
+---
+day: 74
+title: 'Mocking and Testing Boundaries'
+---
+
+## Why this matters
+
+Three days ago you wrote your first test. Two days ago you learned to share setup with fixtures and to run one test body over many cases. Yesterday you wrote the test before the code. Every one of those days had a quiet assumption baked into it: that the thing you were testing was a function you could call, hand some values, and check the answer of. Reverse a string, split a CSV row, total a ledger. Call it, look at what came back, assert.
+
+Today that assumption breaks, because real programs talk to things. They ask what time it is. They call a service across a network. They write a file. They generate a random identifier. They read an environment variable, launch a subprocess, and — this is where the course is heading — send a prompt to a model that costs money and answers differently every time.
+
+Each of those is a **boundary**, and each one poisons a test in its own way. A test that reads the clock passes today and fails on the first of the month. A test that calls a network passes on your machine and fails in continuous integration, then passes again when you rerun it, which is worse. A test that writes a file passes on its own and fails when run alongside another test that wrote the same file. A test that calls a metered API costs a fraction of a cent, which sounds like nothing until it runs two hundred times on every commit by every person on the team.
+
+The standard answer is **mocking**: replace the real thing with a stand-in that answers instantly and identically every time. It works, and it is genuinely necessary. It is also the most misused technique in testing, and this lesson is going to be honest about that in a way that a lot of tutorials are not. Overused, mocking produces the worst kind of test suite there is: hundreds of green tests, run in two seconds, that break every time somebody renames a method and do not break when the system stops working. That suite costs more than no suite at all, because it consumes maintenance effort while providing false confidence.
+
+So today has two halves. The first half teaches mocking properly — the five kinds of test double, `unittest.mock` in real depth, the patching rule that trips everybody, and one demonstration you will not forget of how a badly built mock can be green while production is broken. The second half makes the argument that the first half is usually the wrong tool, and that the better move is almost always to **move the boundary**: pass the clock in, pass the client in, pass the repository in — exactly as Day 70's domain core did — so that the code you care about needs no mocks at all.
+
+The payoff arrives later in the course, and it is large. A model call is a boundary with all three bad properties at once: slow, expensive, and non-deterministic. You cannot assert on its output in a unit test, and you should stop trying. What you can do — deterministically, for free, in milliseconds — is test the prompt you build, the reply you parse, the retry you perform, and the error you raise. Today is how.
+
+## The idea in plain language
+
+A **unit test** is supposed to answer one question quickly and repeatably: given these inputs, does this piece of code produce that result? For that question to have a stable answer, the code has to be a function of its inputs and nothing else. The moment it also depends on the time, the network, or what happens to be on disk, "given these inputs" stops describing the situation.
+
+A **test double** is a stand-in object you pass to your code in place of the real dependency, so the code's behaviour becomes a function of its inputs again. The name is borrowed from film: a stunt double stands in for the actor when the scene is dangerous, and nobody in the audience notices. A test double stands in for the network when the test would otherwise be slow, and nobody in the assertion notices.
+
+There are five kinds, and they answer different questions. Everybody calls all five "mocks", which is why arguments about mocking so often go nowhere — two people say the word and mean two different objects.
+
+**Patching** is the other technique. Instead of handing the double to your code, you reach into the module your code lives in, and — for the duration of one test — rebind a name so it points at your double instead of the real thing. Then you put it back. Patching lets you test code that was not designed to be tested. That is its power and also its whole problem: it works on code that gave you no way in, which means it removes the pressure that would otherwise have made you build a way in.
+
+And the third idea, the one the day actually argues for, is **dependency injection**: instead of a function reaching out for the clock and the client, the caller hands them to it. Nothing about that phrase is complicated. It means "pass it as an argument". A function that takes its dependencies as arguments has a **seam** — a place where a test can substitute something else without any machinery at all.
+
+Here is the whole lesson in four lines:
+
+```python
+def write_report(station):              # untestable: reaches out
+    day = datetime.date.today()
+    readings = fetch_readings(station, day.isoformat())
+
+def build_report(station, *, clock, client):   # testable: takes them in
+    day = clock()
+    readings = client.fetch_readings(station, day.isoformat())
+```
+
+The first needs two patches and a temporary directory. The second needs two arguments. Everything below is the detail behind that difference.
+
+## Historical background
+
+The vocabulary of this subject was assembled over about a decade, mostly by practitioners writing down what they had found the hard way.
+
+The term **mock object** was introduced in a paper called "Endo-Testing: Unit Testing with Mock Objects", by Tim Mackinnon, Steve Freeman and Philip Craig, presented at the XP2000 conference in Sardinia. Their motivation was specific and worth knowing, because it is the opposite of how mocks are often used today: they were not primarily trying to make slow tests fast. They were using mocks as a **design tool**. If writing the test forced you to build an awkward mock, that awkwardness told you something about the design of the code, and you were meant to change the code. Freeman later developed this at length with Nat Pryce in *Growing Object-Oriented Software, Guided by Tests* (Addison-Wesley, 2009), where mocks drive the discovery of interfaces between objects.
+
+The five-way taxonomy comes from **Gerard Meszaros**, in *xUnit Test Patterns: Refactoring Test Code* (Addison-Wesley, 2007). Meszaros needed an umbrella term for "any object you substitute for a real one in a test", found that "mock" had already been claimed for something narrower, and coined **test double** — explicitly by analogy with a stunt double. Under that umbrella he named the dummy, the stub, the spy, the mock and the fake. Those five names are the ones this lesson uses, and they are worth learning precisely because everyday speech has collapsed them.
+
+**Martin Fowler**'s essay "Mocks Aren't Stubs" is the other standard reference, and it names the distinction that sits underneath the taxonomy: **state verification** — run the code, then look at the resulting values — versus **behaviour verification** — run the code, then check which calls it made. He also names two camps, the classicists who prefer real objects and state verification, and the mockists who prefer doubles and behaviour verification. This lesson is honest about sitting closer to the classical end, and tells you why. Fowler also gave the name **dependency injection** to the pattern of handing a component its collaborators rather than letting it find them, in his writing on inversion-of-control containers.
+
+Python's side of the story is shorter. **Michael Foord** wrote a library called `mock`, which became popular enough that it was adopted into the standard library in **Python 3.3** through **PEP 417**, as `unittest.mock`. That is why nothing in this lesson needs installing: `Mock`, `MagicMock`, `patch` and `create_autospec` have shipped with Python for over a decade. pytest's `monkeypatch` fixture arrived from the other direction — a small, deliberately limited tool for setting and restoring attributes and environment variables, with automatic undo built in.
+
+One more thread, because it is the thread this lesson pulls hardest. **Alistair Cockburn**'s hexagonal architecture (ports and adapters, 2005) and **Gary Bernhardt**'s "functional core, imperative shell" talk (2012) both make the same structural argument from different directions: put the logic in the middle where it depends on nothing, and push everything that touches the world to a thin edge. Day 63 taught you the functional core. Day 70 taught you the domain core with its repository at the edge, and proved the point by running the whole model from an empty directory. Today is what that architecture was *for*.
+
+## What it is — and what it is not
+
+Mocking is the practice of substituting a controlled stand-in for a real dependency during a test, so that the code under test becomes deterministic, fast, and independent of the outside world.
+
+It is **not** a way to make bad code testable and then leave it bad — although that is what it is most often used for. It is **not** a substitute for testing the real integration, which still has to happen somewhere. It is **not** free: every double encodes an assumption about how the real thing behaves, and every assumption can silently go stale. And it is emphatically **not** the same as verifying that your code is correct, because a mock will confirm whatever belief you built into it.
+
+| Common misconception | The reality |
+| --- | --- |
+| "Mock everything that is not the function under test." | Mock what crosses a boundary. Mocking your own pure helper functions couples the test to the shape of your code, and every refactor breaks it. |
+| "A green suite full of mocks means the system works." | It means each unit behaves as you *believed* its neighbours would. The most common production outage in a well-mocked codebase is two components that each pass their own tests and disagree about the interface. |
+| "`Mock()` is a safe default." | It is the least safe object in this lesson. It accepts every attribute name and every argument list. Use `create_autospec` or a hand-written fake. |
+| "Patching is how you do mocking in Python." | Patching is how you do mocking to code you cannot change. Code you *can* change should take its dependencies as arguments, and then no patching is needed. |
+| "Mocking makes tests fast." | Removing the boundary makes tests fast. Mocking is one way to remove it; injection is a better one, because it also improves the code. |
+| "If it is hard to mock, mock harder." | If it is hard to mock, that is information. The original mock-objects paper treated mocking difficulty as a design smell, and they were right. |
+
+## Why it was created and what problems it solves
+
+Each problem is concrete. Take them one at a time.
+
+**Slow.** A network call takes tens to hundreds of milliseconds. A database query takes a few. A file write takes a fraction of one, and a `time.sleep` in a retry loop takes exactly as long as it says. None of that matters for one test; all of it matters for a suite. A suite that takes four seconds gets run on every save. A suite that takes four minutes gets run before lunch, which means bugs are found hours after they were written, when the context is gone. The economics of testing are entirely about that feedback loop, and boundaries are what stretch it.
+
+**Flaky.** A **flaky test** is one that passes and fails on the same code. It is a uniquely corrosive thing to have in a suite, because the correct response to a red build — stop and investigate — becomes irrational. People start rerunning. Then they start ignoring. Then a real failure gets ignored too. A single unreliable dependency reached through a test is enough to start that spiral.
+
+**Non-deterministic.** The clock, the random number generator, dictionary ordering across processes, and a model's sampling all produce a different answer each time you look. You cannot assert equality against a moving value, so people assert something weaker — that it is not `None`, that it has a length — and end up with a test that would pass against almost any implementation, including a broken one.
+
+**Expensive and irreversible.** Some boundaries charge money. Some send email. Some place an order. A test suite that can charge a card or notify a customer is a test suite people are afraid to run, and a suite people are afraid to run is not doing its job.
+
+**Hard to arrange.** Some states are painful to produce for real: a server returning a 503, a disk that is full, a token that expired four seconds ago, a model that returns malformed JSON. Your error handling is exactly the code least likely to be exercised by accident and most likely to be wrong. A double lets you produce those states on demand, in one line, which is often the single best reason to reach for one.
+
+**Not yours yet.** Sometimes the other side does not exist. Someone else is building the service, and you agreed on the interface this morning. A double lets you build and test against the agreed shape today — which is exactly the design-tool use the original paper had in mind.
+
+## How it works
+
+### The boundaries, named
+
+![Diagram: the architecture of a testable program — a pure core in the middle holding the logic, surrounded by the five boundaries that make tests slow, flaky or non-deterministic (the clock, the network, the filesystem, randomness, and the environment and other processes), each one arriving as a parameter with a hand-written test double attached where the arrow enters the core](./assets/boundaries-architecture.svg)
+
+Six things reach outside your process. Learn to see them, because seeing them is most of the skill.
+
+| Boundary | What it looks like in code | What it does to a test |
+| --- | --- | --- |
+| The clock | `datetime.now()`, `time.time()`, `date.today()` | Non-deterministic. Also produces the famous test that only fails on 29 February, or at 23:59 on the last day of a month. |
+| The network | an HTTP client, a database driver, a message queue, a model API | Slow, flaky, often metered, and unavailable in continuous integration. |
+| The filesystem | `open`, `Path.write_text`, `os.remove` | Shared mutable state. Makes tests order-dependent and leaves debris between runs. |
+| Randomness | `random`, `uuid4`, `secrets`, a model's sampling | Non-deterministic by design. The whole point of it is that you cannot predict it. |
+| The environment | `os.environ`, config files, command-line arguments, the working directory | Different on every machine. The classic "works on my laptop". |
+| Other processes | `subprocess`, `time.sleep`, signals, threads | Slow, platform-specific, and a rich source of race conditions. |
+
+Note that `time.sleep` sits in the last row. A retry loop that sleeps between attempts turns a three-line test into a three-second one, and people therefore stop testing their retry logic — which is a shame, because retry logic is subtle and frequently wrong.
+
+### The five test doubles
+
+Meszaros's five, from least to most involved. All five are demonstrated as real code in this lesson's lab, and every output below is captured from an actual run.
+
+**A dummy** is passed only to fill a parameter slot. It is never used, and it should shout if it is:
+
+```python
+class DummyClient:
+    def fetch_readings(self, station, day):
+        raise AssertionError("the dummy client was called — the test was wrong about the path taken")
+```
+
+You use a dummy when a function requires an argument on a path that must never reach it. It converts a silent assumption into a loud failure.
+
+**A stub** returns canned answers and records nothing:
+
+```python
+def frozen_clock(day):
+    return lambda: day
+
+class StubSensorClient:
+    def __init__(self, readings):
+        self._readings = list(readings)
+    def fetch_readings(self, station, day):
+        return list(self._readings)
+```
+
+Two lines and five lines. A stub is the workhorse: most of the time, all you need is for the dependency to hand back something predictable.
+
+**A spy** answers like a stub and additionally records how it was used:
+
+```python
+class RecordingSleep:
+    def __init__(self):
+        self.waits = []
+    def __call__(self, seconds):
+        self.waits.append(seconds)
+```
+
+That is the entire reason a retry test can finish in microseconds while still proving the backoff schedule. The test asserts `waits.waits == [0.5, 1.0]`, and nothing waited.
+
+**A mock** is a double with an expectation built into it: it knows what it should be called with, and the test fails if it is not. In Python this is any `unittest.mock` object you finish by calling `assert_called_once_with`. The distinction from a spy is about where the assertion lives — a spy records and lets the test check afterwards; a mock carries the check.
+
+**A fake** is a real, working implementation, simplified. An in-memory repository instead of a database. A dictionary instead of a filesystem. A scripted client instead of a service:
+
+```python
+class FakeSensorClient:
+    def __init__(self, script):
+        self._script = list(script)
+        self.calls = []
+    def fetch_readings(self, station, day):
+        self.calls.append((station, day))
+        if not self._script:
+            raise ReadingsUnavailable(f"the fake ran out of scripted responses at call {len(self.calls)}")
+        item = self._script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return list(item)
+```
+
+Fifteen lines. Notice what those fifteen lines bought: it answers the stub's question (what does the client return?), the spy's question (what was it asked?), and the mock's question (was it called correctly?) — all at once, in code a reader can understand without knowing anything about a mocking library. Hold on to that observation; it is the design argument this lesson ends on.
+
+| Double | Answers | Records | Asserts | Typical size |
+| --- | --- | --- | --- | --- |
+| Dummy | never called | — | fails loudly if used | 3 lines |
+| Stub | canned value | no | no | 2–6 lines |
+| Spy | canned value | yes | test asserts afterwards | 5–10 lines |
+| Mock | configured value | yes | the double asserts | 1 line with a library |
+| Fake | computed value | usually | no | 10–30 lines |
+
+### `unittest.mock`, properly
+
+`Mock()` is an object that creates whatever you ask it for. Accessing any attribute returns a new `Mock`; calling it returns a `Mock`; and every call is recorded. That is the whole design. `MagicMock` is the same thing with the dunder protocols pre-configured, so it can be used where `len()`, `bool()`, iteration or `with` are involved. Here is the difference, from a real run:
+
+```text
+plain Mock len(): TypeError: object of type 'Mock' has no len()
+MagicMock len(): 0 | bool: True | iter: []
+```
+
+Use `MagicMock` when the code under test treats the dependency as a container or a context manager; `Mock` otherwise. `patch` gives you a `MagicMock` by default, which is why most people never notice the distinction.
+
+**`return_value`** sets what a call gives back, on every call:
+
+```text
+return_value: 7 7 2
+```
+
+That is `s()` and `s(1, 2)` both returning `7` — arguments are recorded, not consulted — and `s.call_count` being `2`.
+
+**`side_effect`** is the more interesting knob, and it does three quite different jobs depending on what you assign to it.
+
+Assign a **list**, and successive calls return successive elements — the way to script a sequence of responses:
+
+```text
+side_effect sequence: 1 2 3
+side_effect exhausted -> StopIteration
+```
+
+That `StopIteration` is worth remembering: it means the code under test called your double more times than you scripted. It is a message about the code, not a bug in the double.
+
+Assign an **exception instance or class**, and the call raises it. This is the single most valuable use of a mock, because it is how you exercise error handling that is otherwise almost impossible to trigger:
+
+```text
+side_effect exception: TimeoutError: upstream did not answer
+```
+
+Assign a **callable**, and it is called with the same arguments and its result returned — for when the answer must depend on the question:
+
+```text
+side_effect callable: 5
+```
+
+**Inspecting the calls.** Every mock records what happened, and four attributes get you at it:
+
+```text
+call_args: call('ALPHA', day='2026-04-12')
+call_args.args: ('ALPHA',) | kwargs: {'day': '2026-04-12'}
+call_args_list: [call('ALPHA', day='2026-04-12'), call('BRAVO')]
+call_count: 2
+```
+
+`call_args` is the most recent call, `call_args_list` is all of them, and both compare against `call(...)` objects. The assertion helpers wrap the same data: `assert_called_once_with` (exactly one call, with these arguments), `assert_any_call` (at least one such call), `assert_has_calls` (this sequence appears), `assert_not_called`. When one fails, the message is specific:
+
+```text
+assert_called_once_with after 2 calls -> Expected 'fetch' to be called once. Called 2 times.
+```
+
+### The demonstration that matters most: `spec` and `autospec`
+
+Everything above is mechanics. This part is judgment, and it is the single most valuable thing in the lesson.
+
+A bare `Mock()` answers yes to every question. Ask it for a method that does not exist, and it invents one. Call a method with arguments the real object would reject, and it accepts them. Which means a test built on a bare `Mock` agrees with whatever the code under test happens to do — including the parts that are wrong.
+
+Here is a function with a real bug in it. The client's method is `fetch_readings`; somebody typed `fetch_radings`:
+
+```python
+def latest_average(client, station, day):
+    readings = client.fetch_radings(station, day)
+    return round(sum(readings) / len(readings), 1)
+```
+
+Now here is the test somebody writes for it. They read the function, saw the call, and stubbed exactly that — which is the natural thing to do:
+
+```python
+def test_latest_average_with_a_bare_mock():
+    client = Mock()
+    client.fetch_radings.return_value = [10.0, 20.0, 30.0]
+    assert latest_average(client, "ALPHA", "2026-04-12") == 20.0
+```
+
+```text
+$ pytest examples/test_autospec_naive.py -q
+.                                                                        [100%]
+1 passed in 0.00s
+```
+
+Green. Now the same function, three ways — captured from one real run:
+
+```text
+  typo_under_test.latest_average calls client.fetch_radings(...)
+  with a bare Mock (this is what the green test does)
+      -> 20.0
+  with create_autospec (this is what a good test does)
+      -> AttributeError: Mock object has no attribute 'fetch_radings'
+  with the REAL SensorClient (this is production)
+      -> AttributeError: 'SensorClient' object has no attribute 'fetch_radings'
+```
+
+Read those three lines again. The test passes. Production raises `AttributeError` on its first request. The only thing standing between the two is which object the test used, and building the right one costs one line.
+
+`spec=` and `autospec=` fix it, at two different levels:
+
+```text
+  bare Mock: an attribute that does not exist
+      -> <Mock name='mock.fetch_radings' id='4465297120'>
+  bare Mock: a call with an argument the real method has never heard of
+      -> <Mock name='mock.fetch_readings()' id='4465299472'>
+
+  Mock(spec=SensorClient): the misspelled attribute
+      -> AttributeError: Mock object has no attribute 'fetch_radings'
+  Mock(spec=SensorClient): but the SIGNATURE is still unchecked
+      -> <Mock name='mock.fetch_readings()' id='4465301488'>
+
+  create_autospec: the misspelled attribute
+      -> AttributeError: Mock object has no attribute 'fetch_radings'
+  create_autospec: a missing argument
+      -> TypeError: missing a required argument: 'day'
+  create_autospec: an argument that does not exist
+      -> TypeError: got an unexpected keyword argument 'retries'
+```
+
+`spec=SomeClass` restricts which *attributes* exist. `create_autospec(SomeClass)` — or `patch(..., autospec=True)` — also checks the *signature* of every call, because it builds the double by inspecting the real thing. Autospec is strictly better and costs nothing. Make it your default, and treat a bare `Mock()` the way you would treat a bare `except:`.
+
+There is exactly one typo Python guards for you, and it is worth knowing so you do not over-trust it:
+
+```text
+AttributeError: 'assert_called_once_wiht' is not a valid assertion. Use a spec for the mock if 'assert_called_once_wiht' is meant to be an attribute.
+```
+
+A misspelled `assert_` method raises rather than silently passing. That special case exists precisely because so many people lost hours to it. Every *other* misspelled attribute is still invented on demand.
+
+### `patch`: aim at where the name is looked up
+
+![Flowchart: how patch resolves a target, step by step — at import time a from-import binds one function object to two names; patch splits its target string at the last dot and replaces an attribute on the named module; naming the module where the function was defined reaches nobody and the real function still runs, while naming the module that looks the name up replaces what the code under test actually calls; on exit the original attribute is always put back](./assets/patch-resolution-flow.svg)
+
+This is the rule that costs everybody an afternoon, exactly once.
+
+`patch("a.b.c")` splits the string at the last dot, imports `a.b`, and does the equivalent of `setattr(a.b, "c", the_double)`. On exit it does the reverse. That is all it does — it is `setattr` with an undo.
+
+So the question is never "where does this function live?" It is **"which name will the code under test look up?"**
+
+Suppose `report_v1.py` begins:
+
+```python
+from sensor_service import fetch_readings
+```
+
+That line ran once, at import time, and copied a reference into `report_v1`'s own namespace. Two names now point at one function object. The call inside `report_v1` looks up `report_v1.fetch_readings` and never consults `sensor_service` again. So:
+
+```python
+patch("sensor_service.fetch_readings")   # replaces a name nobody looks at
+patch("report_v1.fetch_readings")        # replaces the name that is used
+```
+
+Both are legal. Only one has any effect. Here are both, run for real, with the timing that gives it away:
+
+```text
+  patch('report_v1.fetch_readings')
+      -> mean     17.0   [0.00s — the stub was used]
+  patch('sensor_service.fetch_readings')
+      -> mean     8.6   [0.40s — the REAL service was used]
+```
+
+The wrong target does not raise. It patches something successfully; it just patches something irrelevant. Your test then quietly calls the real network. **The tell is always the clock**: if a unit test takes longer than a few milliseconds, something real is still running.
+
+Change the import style and the answer flips. If `report_v1.py` said `import sensor_service` and called `sensor_service.fetch_readings(...)`, then the lookup happens at call time through the module object, and `patch("sensor_service.fetch_readings")` becomes correct. Read the import, then choose the target. That is the whole rule, and the lab has you flip it both ways so it sticks.
+
+One piece of good news: `patch` *does* check that the attribute exists before replacing it, so a typo in the target string is caught immediately:
+
+```text
+AttributeError: <module 'report_v1' from '...'> does not have the attribute 'fech_readings'
+```
+
+Note the asymmetry, because it is the day in miniature. `patch` validates the name you *aim at*. A bare `Mock` does not validate the names you *use*.
+
+### Three ways to spell it, and `monkeypatch`
+
+`patch` comes in three forms, and they differ only in ergonomics:
+
+```python
+# 1. Decorator — the double is injected as an argument, bottom-up if stacked
+@patch("report_v1.fetch_readings", return_value=READINGS)
+def test_one(fetch): ...
+
+# 2. Context manager — scoped to the block; this is the clearest form
+with patch("report_v1.fetch_readings", return_value=READINGS) as fetch: ...
+
+# 3. Manual — you are responsible for stopping it
+patcher = patch("report_v1.fetch_readings")
+fetch = patcher.start()
+patcher.stop()          # if this is skipped, the patch leaks into every later test
+```
+
+Prefer the first two. Both undo themselves even if the test raises. The third does not, and a leaked patch produces the worst debugging experience in testing: a test that fails only because of a test that ran before it.
+
+pytest offers a fourth, smaller tool: the **`monkeypatch`** fixture. It is not a mocking library — it sets and deletes things, and undoes every change at teardown automatically. Its four everyday methods:
+
+```python
+def test_env(monkeypatch):
+    monkeypatch.setenv("REPORT_REGION", "eu-west")   # and delenv to remove one
+def test_attr(monkeypatch):
+    monkeypatch.setattr(settings, "RETRIES", 1)      # and delattr
+def test_cwd(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)                      # working directory
+def test_path(monkeypatch):
+    monkeypatch.syspath_prepend("/some/dir")         # import path
+```
+
+The automatic undo is the point, and it is worth proving rather than asserting. This suite pairs each change with a test that checks it is gone, and all seven pass:
+
+```text
+$ pytest test_mp.py -q
+.......                                                                  [100%]
+7 passed in 0.01s
+```
+
+Use `monkeypatch` for environment variables, the working directory, and simple attribute swaps; use `patch` when you want a recording double; use neither when you can pass the thing in.
+
+### The design move: stop patching, move the boundary
+
+Everything so far treats the boundary as fixed and works around it. Now invert that.
+
+Here is the function that started this lesson, with the boundaries hard-coded:
+
+```python
+def write_daily_report(station, out_dir):
+    day = datetime.date.today()                          # the clock
+    readings = fetch_readings(station, day.isoformat())  # the network
+    body = render(station, day, summarise(readings))     # the logic
+    path = Path(out_dir) / f"{station}-{day.isoformat()}.txt"
+    path.write_text(body + "\n", encoding="utf-8")       # the filesystem
+    return path
+```
+
+Four responsibilities, one of them worth testing, and no way to reach it. And here is the same behaviour with the seams opened:
+
+```python
+def build_report(station, *, clock, client, attempts=3, sleep=lambda seconds: None,
+                 backoff_seconds=0.5):
+    day = clock()
+    for attempt in range(1, attempts + 1):
+        try:
+            readings = client.fetch_readings(station, day.isoformat())
+        except ReadingsUnavailable as exc:
+            last_reason = str(exc)
+            if attempt < attempts:
+                sleep(backoff_seconds * attempt)
+            continue
+        return summarise(station, day, readings)
+    raise ReportUnavailable(f"... after {attempts} attempts: {last_reason}")
+```
+
+Four things changed, and each one removed a boundary:
+
+1. The clock became a parameter — any zero-argument callable returning a date.
+2. The client became a parameter — any object with `fetch_readings(station, day)`.
+3. `sleep` became a parameter, defaulting to a callable that does nothing. Tests never wait; the adapter passes the real `time.sleep`.
+4. The file write left entirely. `build_report` returns a value; something else decides where to put it.
+
+The module is now pure in exactly the sense Day 70 meant. Ask it what it imports and it tells you:
+
+```text
+  report_v1.py   imports ['datetime', 'pathlib', 'sensor_service']
+  report_v2.py   imports ['dataclasses', 'datetime']
+```
+
+Two ways of writing a value down, and nothing else. Which means the tests need no patching, no fixtures, and no files — and they can be run from a directory that contains nothing at all, which is precisely the proof Day 70 used for its domain core.
+
+The cost is real and you should name it: `build_report` has six parameters where `write_daily_report` had two. That is the trade. For a program this size it is plainly worth it; for a five-line script it would not be. The judgment is yours, and the lab's final exercise asks you to write it down.
+
+### Fakes beat mocks, most of the time
+
+Compare two tests of the same behaviour.
+
+With mocks — four assertions about interactions:
+
+```python
+client = create_autospec(SensorClient, instance=True)
+client.fetch_readings.side_effect = [ServiceError("t"), ServiceError("t"), READINGS]
+report = build_report("ALPHA", clock=frozen_clock(DAY), client=client, attempts=3)
+assert client.fetch_readings.call_count == 3
+client.fetch_readings.assert_called_with("ALPHA", "2026-04-12")
+```
+
+With a fake — one object, and the assertions are about values:
+
+```python
+client = FakeSensorClient([ReadingsUnavailable("t"), ReadingsUnavailable("t"), READINGS])
+report = build_report("ALPHA", clock=frozen_clock(DAY), client=client, attempts=3)
+assert report.mean == 17.0
+assert client.calls == [("ALPHA", "2026-04-12")] * 3
+```
+
+The second is shorter, reads as ordinary Python, and — crucially — survives refactoring. If tomorrow `build_report` calls a different method on the client to achieve the same result, the mock version breaks and the fake version does not, because the fake asserts what came out rather than how it was obtained.
+
+The rule of thumb: **assert on results, not on calls, unless the call *is* the result.** Sending an email, charging a card, publishing a message — for those, the interaction is the outcome and asserting on it is correct. For "did it fetch the readings before summing them", it is not; the sum is the outcome, and asserting the sequence just freezes today's implementation into a test.
+
+### The anti-patterns
+
+Three failure modes, each with a name and a fix.
+
+**Mocking what you do not own.** You write a double for a third-party HTTP client, encoding your beliefs about how it behaves. Your beliefs are a snapshot, taken once, and never checked again. The library tightens a validation rule in the version you upgrade to, your double does not, and the suite stays green while production breaks. The honest fix is a **contract test**: one set of assertions run against both the real dependency and your double, so drift is detected rather than assumed away. Run the real half deliberately — nightly, or in a separate suite — rather than on every commit. The general principle, from Freeman and Pryce, is to write a thin adapter that you *do* own, mock that, and contract-test the adapter against the real thing.
+
+**Asserting on call sequences.** `assert_has_calls([...])` freezes the order and shape of internal calls. Every harmless refactor — extracting a helper, batching two requests into one, caching a lookup — turns the suite red without any behaviour changing. Tests like these make refactoring expensive, which is the exact opposite of what tests are for. Assert on the outcome instead, and reserve call assertions for the cases where the call is genuinely the observable effect.
+
+**The mock-heavy suite that is green while the system is broken.** This is the endgame of the first two. Every unit passes against its neighbours' doubles; no test ever exercises two real components together; the interfaces drift; the system stops working and the suite says everything is fine. The fix is proportion, not purity: keep a small number of tests that use real components — a real in-memory database, a real file in a temporary directory, a real HTTP round trip against a local stub server — and let mocks handle the cases those cannot reach cheaply.
+
+### Time and randomness, specifically
+
+These two come up constantly, so here are the concrete answers.
+
+**Time.** Best: inject a clock, as above. `clock=frozen_clock(date(2026, 4, 12))` is a lambda. Second best: `monkeypatch.setattr(module, "now", lambda: fixed)`. Third: a library like `freezegun`, which patches the `datetime` module globally for a block. Never: `time.sleep` in a test to wait for something — inject the sleep and assert on what was requested, as the lab does:
+
+```text
+  attempts made: 3   backoff requested: 1.5s
+  wall-clock time actually spent: 0.02 ms
+```
+
+**Randomness.** Best: inject the generator (`rng=random.Random(0)`), which keeps the rest of the program unaffected. Second: seed the module-level generator with `random.seed(0)` in a fixture — simple, but it is global state, so it interacts badly with parallel test runners. For identifiers, inject an id factory rather than calling `uuid4()` inline. And in numerical work, remember the seed is not always enough: on a GPU, floating-point reductions can be non-deterministic regardless of seed, which is why serious pipelines assert on tolerances rather than equality.
+
+## An everyday analogy
+
+Think about how a film gets made, because that is where the vocabulary came from and the mapping is unusually exact.
+
+A scene calls for a car to skid across a wet street at night. Shooting that for real, with the lead actor, on a public road, is slow, dangerous, expensive, and different on every take. So the production substitutes.
+
+In the far background of the shot there are figures in parked cars. They are **mannequins** — nobody looks at them, they do nothing, they are there so the frame is not empty. That is your **dummy**: present because the composition requires something in that slot, and if a mannequin ever had to deliver a line the whole take would be ruined, which is why the dummy shouts if it is used.
+
+The phone the actor picks up is a **prop**. It always shows the same screen, every take. It cannot make a call and nobody needs it to. That is your **stub**: a canned answer, identical every time, with no memory of having been used.
+
+Beside the camera sits the **continuity supervisor**, writing down exactly what happened in each take — which hand held the phone, how full the glass was. She does not intervene. She keeps a record, and afterwards somebody consults it. That is your **spy**.
+
+The **director** is different. He is not recording; he is holding an expectation, and if the actor says the wrong line he stops the take then and there. That is your **mock**: the assertion lives inside the double, and it fires at the moment of the mismatch.
+
+And the car itself is a **fake**. It is a real car — it drives, it steers, it skids — but it is a stripped stunt vehicle on a soundstage with a rain machine overhead, not the character's actual car on an actual road. It genuinely does the job, in a controlled place, at a fraction of the cost. That is an in-memory repository, a scripted client, a dictionary standing in for a filesystem.
+
+Now the part of the analogy that carries the lesson's real argument. There is a limit to substitution, and every director knows where it is. If you shoot *everything* on the soundstage — every street, every crowd, every skid — you get a film that is technically finished and looks like nothing. At some point the production goes outside and shoots on a real road, once, carefully, at expense. That trip is your integration test, and no amount of soundstage work replaces it.
+
+And one more, which is the design argument in costume. The very best productions do not just substitute for the dangerous scene — they *rewrite the scene* so it does not need the stunt at all. Cut to the aftermath. Show the skid in a reflection. The scene gets better and cheaper at the same time. That is what dependency injection is: not a cleverer stand-in for the boundary, but a rewrite that means the boundary was never in the shot.
+
+## Examples in practice
+
+Here is the lab's story end to end, all captured from real runs.
+
+**First, what the boundary actually costs.** Two calls to a service that simulates latency and failure — no socket is opened, but the two properties are the real ones:
+
+```text
+1. What a boundary costs
+========================
+  call 1: 0.41s  24 readings, first three [1.3, 1.0, 8.0]
+  call 2: 0.41s  24 readings, first three [7.3, 4.3, 25.4]
+  slow, and different every time. Multiply by a suite of 200 tests.
+```
+
+Two calls, 0.82 seconds, two different answers. Two hundred tests at that rate is eighty seconds, and no assertion about the values is possible at all.
+
+**Second, the patch, aimed both ways.** Same test, one string different:
+
+```text
+2. report_v1 under patch — target matters
+=========================================
+  report_v1.py says: from sensor_service import fetch_readings
+  so the name lives in report_v1's namespace, not sensor_service's.
+  patch('report_v1.fetch_readings')
+      -> mean     17.0   [0.00s — the stub was used]
+  patch('sensor_service.fetch_readings')
+      -> mean     8.6   [0.40s — the REAL service was used]
+```
+
+And what that costs in the test file: two patches, one of them replacing an entire module object because `report_v1` says `import datetime` and therefore looks up nothing smaller; plus a temporary directory, because the function insists on writing a file.
+
+```python
+with (
+    patch("report_v1.fetch_readings", return_value=READINGS) as fetch,
+    patch("report_v1.datetime") as fake_datetime,
+):
+    fake_datetime.date.today.return_value = FIXED_DAY
+    path = report_v1.write_daily_report("ALPHA", str(tmp_path))
+fetch.assert_called_once_with("ALPHA", "2026-04-12")
+```
+
+It works. It also has to be explained, and the explanation is about `unittest.mock` rather than about reports.
+
+**Third, the refactored version.** No patch, no fixture, no directory:
+
+```python
+def test_build_report_uses_the_injected_clock_and_client():
+    client = StubSensorClient(READINGS)
+    report = build_report("ALPHA", clock=frozen_clock(DAY), client=client)
+    assert report.day == DAY
+    assert report.mean == 17.0
+```
+
+```text
+$ pytest examples/test_report_v2_fakes.py -q
+..........                                                               [100%]
+10 passed in 0.01s
+```
+
+Ten tests in a hundredth of a second, covering the happy path, the empty-input refusal, the retry, the backoff schedule, the give-up error, and the guard that fires before the client is touched. The whole file contains zero `patch` calls.
+
+**Fourth, the proof.** The core is run from a directory created with `mktemp -d` containing no files whatsoever:
+
+```text
+station ALPHA — 2026-04-12
+  readings 24
+  minimum  12.0
+  maximum  22.0
+  mean     17.0
+```
+
+Check the arithmetic: the readings are `[12.0, 14.0, 20.0, 22.0]` repeated six times, and `(12 + 14 + 20 + 22) / 4 = 17` exactly. That is the same proof Day 70 used, applied to a different property.
+
+**Fifth, the AI connection, made concrete.** A model call is a boundary, so it becomes a parameter — any object with `complete(prompt) -> str`:
+
+```python
+def classify_day(report, *, model, attempts=2, sleep=lambda seconds: None):
+    prompt = build_prompt(report)
+    for attempt in range(1, attempts + 1):
+        try:
+            return parse_verdict(model.complete(prompt))
+        except (ModelUnavailable, MalformedResponse) as exc:
+            last_reason = f"{type(exc).__name__}: {exc}"
+            if attempt < attempts:
+                sleep(float(attempt))
+    raise ModelError(f"no usable answer after {attempts} attempts — last was {last_reason}")
+```
+
+In production, `model` wraps a real API client. In tests it is this:
+
+```python
+class ScriptedModel:
+    def __init__(self, script):
+        self._script = list(script)
+        self.prompts = []
+    def complete(self, prompt):
+        self.prompts.append(prompt)
+        item = self._script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+```
+
+And now look at what becomes testable — deterministically, for nothing, in milliseconds:
+
+```text
+  the prompt your code builds (this is the testable part):
+    | Classify one day of weather station data.
+    | Answer with exactly three lines: label, confidence, note.
+    | The label must be one of: cold, mild, warm, hot.
+    |
+    | station: ALPHA
+    | date: 2026-04-12
+    | readings: 24
+    | minimum: 12.0
+    | maximum: 22.0
+    | mean: 17.0
+  one scripted reply -> Verdict(label='mild', confidence=0.82, note='a calm spring day')
+  unavailable, then malformed, then good -> mild after 3 calls
+  the same prompt was resent each time: True
+  backoff requested [1.0, 2.0]s, cost 0 currency units, took no time
+```
+
+```text
+$ pytest examples/test_model_boundary.py -q
+..............                                                           [100%]
+14 passed in 0.01s
+```
+
+Fourteen tests of code that calls a language model, without a language model. They check that the prompt contains the right numbers; that the list of labels in the prompt matches the list the parser accepts (drift there makes every reply malformed); that a chatty preamble still parses; that a label outside the allowed set is refused; that a confidence of `1.4` is refused; that a malformed reply causes a retry with the *same* prompt; and that giving up names the last failure.
+
+Not one of them asserts that the model is any good. That question is real and it has a different answer: an **evaluation suite**, run deliberately against a dataset, reporting a score rather than pass or fail. Keeping those two activities apart is the discipline. Unit tests for your logic, run on every commit, free and deterministic; evaluations for the model's behaviour, run on a schedule, costed and tracked over time.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Security.** A mock-heavy suite is a weak security signal, and it is worth being blunt about why. Authentication, authorisation, TLS verification, input sanitisation at a real parser, rate limiting — these are exactly the things a double will happily pretend to have done. Green tests full of mocks prove that your code calls what you believed it should call; they prove nothing about what the real dependency does with those calls. Two habits follow. Never mock away the check you are relying on — and if you must, also write the *refusal* case, stubbing the verifier to fail and asserting your code fails with it. And keep a small number of tests that exercise the real component, run deliberately.
+
+`autospec` is itself a small security control: a double built from the real class cannot accept a method that no longer exists, so a dependency's rename surfaces as a test failure rather than a production `AttributeError`. It costs one line.
+
+**Privacy.** Injection makes data flow legible, which is what makes privacy questions answerable. When the client is a parameter, you can read one signature and know that this function talks to exactly one outside thing. It also means test data stays synthetic: a suite that needs no real service needs no real records, so production data never has to be copied into a test fixture — which is where a surprising share of data leaks begin. Recorded-response tools (`responses`, and HTTP cassette libraries generally) are the exception to watch: a recorded fixture can contain a real token or a real customer name, and it goes into version control. Redact before committing.
+
+**Performance.** This is the whole economic argument. In this lab the same behaviour is tested two ways: through the real boundary it takes about 0.4 seconds per call; through a stub it is unmeasurable. Ten tests run in 0.01 seconds. That difference decides whether a suite runs on every save or before lunch, and that in turn decides whether bugs are found while the context is still in your head. There is a second-order effect too: fast suites can afford more cases, so parametrized edge cases become free.
+
+The counter-pressure is honest: mocks make a suite fast but not necessarily *informative*, and a fast wrong signal is worse than a slow right one. Optimise for the fastest suite that still tells you the truth.
+
+**Scalability.** Scalability of change, again. A suite that asserts on results survives refactoring; a suite that asserts on call sequences must be rewritten every time the implementation moves. That difference compounds over a codebase's life, and it is the single largest determinant of whether a test suite is an asset or a tax. Injection also scales in team size: a seam is a documented interface, so two people can work on either side of it without coordinating.
+
+**Cost.** Direct cost first: a test that calls a metered API costs money on every run, and multiplied by every commit by every engineer, that becomes a real line item. A stubbed suite costs nothing. Indirect cost is larger: the maintenance burden of brittle tests, and the debugging cost of a flaky suite that trained people to ignore red builds. And there is a cost to the discipline itself — writing a fake takes fifteen minutes that a one-line mock does not. Spend it where the interface is stable and used by many tests; skip it where you need one stubbed error and nothing else.
+
+## Alternatives: free, open source, and commercial
+
+Five ways to handle a boundary in a Python test. **All five are free and open source**; the split that matters is between what ships with Python and what you install with `pip`, and between a library and no library at all.
+
+| Approach | What it is | When to choose it | Cost |
+| --- | --- | --- | --- |
+| `unittest.mock` | `Mock`, `MagicMock`, `patch`, `create_autospec` in the standard library | The default when you need a double for code you cannot restructure; the only choice if you refuse dependencies | Free, ships with Python since 3.3 |
+| `pytest-mock` | A thin pytest plugin wrapping the same library behind a `mocker` fixture | Same jobs, in a pytest codebase, when you want automatic teardown and no nesting | Free and open source, installed with `pip` |
+| `responses` / `requests-mock` | HTTP-layer doubles that intercept `requests` calls and return registered responses | Testing code that speaks HTTP through `requests`, when you want to assert on URLs and bodies rather than on Python calls | Free and open source, installed with `pip` |
+| `freezegun` | Patches the `datetime` module globally so "now" is a value you chose | Legacy code that calls `datetime.now()` in many places and cannot be restructured today | Free and open source, installed with `pip` |
+| Hand-written fakes | Ordinary classes you write yourself. No library | Most of the time, and especially for an interface used by many tests | Free, and no dependency at all |
+
+**`unittest.mock` — how, with an example.** Import it, build the double with a spec, hand it in or patch it in, and assert. Everything in the "How it works" section above is captured from real runs of this library. The one habit that matters:
+
+```python
+client = create_autospec(SensorClient, instance=True)
+client.fetch_readings.return_value = READINGS
+```
+
+Choose it when you cannot change the code under test, when you need to force an error that is hard to produce for real, or when you genuinely need to assert that a call was made. Its weakness is the bare `Mock()`, which is the default and is unsafe.
+
+**`pytest-mock` — how, with an example.** It provides a `mocker` fixture with the same API as `unittest.mock`, and undoes every patch at teardown, so nothing nests and nothing leaks:
+
+```python
+def test_report(mocker):
+    fetch = mocker.patch("report_v1.fetch_readings", return_value=READINGS)
+    ...
+    fetch.assert_called_once_with("ALPHA", "2026-04-12")
+```
+
+Choose it when your codebase is pytest-first and you have several patches per test — the flattening is a genuine readability win. It is a wrapper, not a different engine: `mocker.patch` calls the same `unittest.mock.patch`. This lesson's lab does not use it, because it does not need it. *(This example is written from the library's documented API; it was not run on the authoring machine, since only pytest is installed here. Everything shown from `unittest.mock` and pytest above **was** run.)*
+
+**`responses` / `requests-mock` — how, with an example.** These work one layer lower: instead of replacing your function, they intercept the HTTP call itself, so your real client code, headers, retries and JSON parsing all execute:
+
+```python
+@responses.activate
+def test_fetch():
+    responses.add(responses.GET, "https://sensors.example/readings",
+                  json={"readings": [12.0, 14.0]}, status=200)
+    assert client.fetch_readings("ALPHA", "2026-04-12") == [12.0, 14.0]
+```
+
+Choose these for testing the adapter itself — the layer that builds the URL, sets the headers, checks the status code and parses the body. That is the one place where HTTP details are the subject, and a Python-level mock would skip exactly the code you meant to test. **Day 78 works with `requests` directly**, and this is the tool that belongs beside it. Do not use them for your business logic; that is what injection is for. *(Documented API, not run here.)*
+
+**`freezegun` — how, with an example.** A decorator or context manager that makes the whole `datetime` module report a time you chose:
+
+```python
+@freeze_time("2026-04-12")
+def test_report():
+    assert write_daily_report("ALPHA", out).name == "ALPHA-2026-04-12.txt"
+```
+
+Choose it when a large existing codebase calls `datetime.now()` in dozens of places and restructuring is not today's job. It is a genuinely useful rescue tool. Be aware of what it costs: it is a global patch of a core module, it can interact badly with libraries that cache time, and it removes the pressure that would have led to a `clock` parameter. Injecting a clock is two lines and no dependency. *(Documented API, not run here.)*
+
+**Hand-written fakes — how, with an example.** Write a class. The `FakeSensorClient` earlier in this lesson is fifteen lines and does everything the alternatives do for this program, plus it can be read by somebody who has never used a mocking library:
+
+```python
+client = FakeSensorClient([ReadingsUnavailable("timeout"), READINGS])
+report = build_report("ALPHA", clock=frozen_clock(DAY), client=client, attempts=2)
+assert report.mean == 17.0 and len(client.calls) == 2
+```
+
+**Be honest about this one: it is usually the best of the five.** It has no dependency, no import, no teardown, no target string, and no autospec footgun. It is a real object, so it fails the way a real object fails. Its costs are equally real: you write it, you maintain it, and it can drift from the thing it doubles — which is exactly what a contract test is for. Use a fake when an interface is stable and several tests need it; reach for `unittest.mock` for one-off error injection and for code you cannot restructure.
+
+## Comparison with related concepts
+
+| Concept A | Concept B | Key difference |
+| --- | --- | --- |
+| Stub | Mock | A stub supplies an answer and asserts nothing; a mock carries an expectation and fails the test when it is not met |
+| Spy | Mock | Both record. A spy lets the test assert afterwards; a mock asserts itself, at the moment of the call |
+| Fake | Stub | A fake computes a real (simplified) answer; a stub returns a canned one. A fake can be used by many tests, a stub is usually per-test |
+| Mocking | Dependency injection | Mocking works around a hard-coded dependency; injection removes it. Injection changes the code, which is the point |
+| `patch` | `monkeypatch` | `patch` builds a recording double and needs a target string; `monkeypatch` sets a value you supply and undoes it automatically. `monkeypatch` is simpler and safer where it fits |
+| `spec=` | `autospec=` | `spec` restricts which attributes exist; `autospec` also checks the signature of every call. Autospec is strictly stronger |
+| Unit test | Integration test | A unit test replaces the boundaries; an integration test crosses them. You need both, in very different quantities |
+| Test double | Test fixture | A double stands in for a collaborator; a fixture (Day 72) prepares the environment a test runs in. `tmp_path` is a fixture, not a double |
+| Unit test of a model call | Evaluation suite | The unit test checks your prompt, parsing, retry and errors deterministically; the evaluation scores the model's answers on a dataset. Different cadence, different verdict, different tooling |
+| Contract test | Mock | A mock asserts your belief about a dependency; a contract test checks that belief against the real thing |
+
+## When to use it — and when not to
+
+**Reach for a double when the code crosses a boundary you cannot afford to cross in a test.** A network call, a clock, a paid API, a subprocess. Reach for one when a failure mode is otherwise impossible to arrange — a timeout, a malformed response, a full disk. Reach for one when the real dependency does not exist yet, and you and the other team have agreed the interface. And reach for `unittest.mock` specifically when the code is not yours to restructure — a third-party library's internals, or a large legacy function you are stabilising *before* refactoring it, which is a completely legitimate and common use.
+
+**Do not reach for a double when you can pass the thing in instead.** This is the default, and the whole argument of the day. If you own the code, a parameter beats a patch every time: it is checked by the interpreter, visible in the signature, and it improves the design rather than working around it.
+
+**Do not mock your own pure functions.** If a helper takes values and returns values, call it. Mocking it couples the test to your current decomposition, so extracting a function — the safest refactor there is — turns the suite red.
+
+**Do not mock what you do not own without a contract test.** Write a thin adapter you *do* own, double that, and check the adapter against the real thing on a schedule.
+
+**Do not assert on call sequences unless the sequence is the observable behaviour.** Sending, charging, publishing: yes. "Fetched before summing": no.
+
+**Do not build a suite entirely from doubles.** Somewhere, real components must meet. Aim for a large base of fast unit tests with injected boundaries, a smaller layer of integration tests that cross real seams — a temporary directory, an in-memory database, a local stub server — and a handful of end-to-end tests. If you have never once run the real path, you do not know that it works.
+
+And a rule for the day you find yourself fighting: **if a test is hard to write, that is a fact about the code, not about the testing library.** Four patches in one test means four boundaries in one function. The original mock-objects paper treated that as the signal to change the design, and thirty years of practice have not improved on the advice.
+
+This is Day 4 of Week 11 and the week now has a spine. Day 71 gave you the runner and the assertion; Day 72 gave you fixtures and parametrization, which is where `tmp_path` and `monkeypatch` came from; Day 73 gave you the discipline of writing the failing test first. Today gives you the thing that decides whether all of that is possible on real code — because the honest reason people stop writing tests is not laziness, it is that the code they are working on cannot be tested without a fight, and nobody taught them that the fight is optional.
+
+Which points directly at where this course is going. Every AI system you build will be an ordinary program wrapped around a small number of extraordinary boundaries: a model that costs money and answers differently every time, a vector store, an embedding service, a scraper. The parts that will break are almost never the model — they are the prompt you assembled from the wrong field, the parser that assumed the JSON was well formed, the retry that hammered a rate-limited endpoint, the cost guard that never fired. Every one of those is your code, and every one of them is deterministically testable the moment the model is a parameter instead of an import. Put the boundary in the signature, script the responses, and test your own logic to death. Then judge the model separately, on a dataset, with an evaluation suite — which is the subject of a later course, and which will make a great deal more sense because of today.
+
+## Knowledge check
+
+Try these from memory before looking back.
+
+1. Name the six boundaries listed in this lesson, and say for each whether it makes a test slow, non-deterministic, or both.
+2. Define dummy, stub, spy, mock and fake in one sentence each, and say which one a `FakeSensorClient` that records its calls is closest to — and why the answer is arguable.
+3. A module contains `from sensor_service import fetch_readings`. Which patch target works, and what exactly happens when you use the other one? Now change the import to `import sensor_service` and answer again.
+4. What does an un-specced `Mock()` do when you access an attribute the real object does not have? Give the concrete production failure that follows, and the one-line fix.
+5. Explain the difference between `spec=` and `autospec=`, with an example of a mistake only the second one catches.
+6. What are the three things you can assign to `side_effect`, and what does each do?
+7. Why does `monkeypatch` not need a teardown step, and name two things it is better suited to than `patch`.
+8. Give two concrete reasons to prefer a hand-written fake to a mock, and one concrete reason not to.
+9. A test asserts `client.fetch.assert_has_calls([call("A"), call("B")])`. Name a refactor that changes no behaviour and breaks this test.
+10. You are testing a function that sends a prompt to a language model. List four things you can assert deterministically, and one thing you must not try to assert in a unit test.
+
+## Hands-on exercise
+
+Time to feel the difference rather than read about it. In the Day 74 lab, **Test the Logic, Stub the World**, you are handed a function that cannot be tested — it reads the clock, calls a remote service, and writes a file, all in one body — and you fix it twice: once by patching around it, and once by moving the boundaries out. Then you write down which you would rather maintain.
+
+Work in the lab directory; every command below is run from there. Install the one dependency first:
+
+```bash
+cd labs/sections/programming-with-python/day-074-mocking-and-testing-boundaries
+python3 -m venv .venv
+.venv/bin/pip install -r requirements/requirements.txt
+.venv/bin/pytest --version
+```
+
+Now see the whole story in one run, then meet the five doubles, then watch a bare `Mock` accept a misspelled method:
+
+```bash
+python3 examples/demo.py
+python3 examples/doubles_demo.py
+python3 examples/autospec_demo.py
+```
+
+Run the four suites that pass, and then the three that are interesting — one that passes and should not, and two that fail on purpose:
+
+```bash
+.venv/bin/pytest examples/test_patch_right_target.py examples/test_report_v2_fakes.py examples/test_model_boundary.py -q
+.venv/bin/pytest examples/test_autospec_naive.py -q
+.venv/bin/pytest examples/test_autospec_specced.py -q
+.venv/bin/pytest examples/test_patch_wrong_target.py -q
+```
+
+Then complete the six exercises: the patch tests in `starter/test_report_v1.py`, the refactor in `starter/report_v2.py`, the six hand-written doubles in `starter/fakes.py`, the fake-based tests in `starter/test_report_v2.py`, and the written comparison in `starter/NOTES.md`. Finally:
+
+```bash
+bash tests/run_tests.sh
+```
+
+### Expected output
+
+The autospec demonstration is the part to read twice. This is a real captured run:
+
+```text
+The bug this hides, in three lines
+==================================
+  typo_under_test.latest_average calls client.fetch_radings(...)
+  with a bare Mock (this is what the green test does)
+      -> 20.0
+  with create_autospec (this is what a good test does)
+      -> AttributeError: Mock object has no attribute 'fetch_radings'
+  with the REAL SensorClient (this is production)
+      -> AttributeError: 'SensorClient' object has no attribute 'fetch_radings'
+```
+
+And the patch-target comparison, with the timing that gives the wrong answer away:
+
+```text
+  patch('report_v1.fetch_readings')
+      -> mean     17.0   [0.00s — the stub was used]
+  patch('sensor_service.fetch_readings')
+      -> mean     8.6   [0.40s — the REAL service was used]
+```
+
+The test suite prints one line per check and ends with `49 checks, 0 failure(s).` while the starter is unfinished, and `39 checks, 0 failure(s).` once every exercise is complete — the count drops because ten structural checks are replaced by four behavioural ones.
+
+### Validate your work
+
+1. `python3 examples/demo.py` exits 0, and section 2 shows the right target at about `0.00s` and the wrong target at about `0.40s`.
+2. `pytest examples/test_autospec_naive.py -q` reports `1 passed` and `pytest examples/test_autospec_specced.py -q` reports `2 failed`. Both outcomes are correct, and the test suite asserts both.
+3. `pytest examples/test_patch_wrong_target.py -q` reports `1 failed` in about 0.4 seconds. Change its one patch target to `report_v1.fetch_readings`, rerun, watch it pass in about 0.01 seconds, and change it back.
+4. `grep -cE 'patch\(' examples/test_report_v2_fakes.py` prints `0`, and that file's ten tests still cover the retry, the backoff schedule, and the give-up error.
+5. Your finished `starter/report_v2.py` imports `datetime` and `dataclasses` and nothing else — the suite checks this by parsing the file, not by searching its text.
+6. Your core builds a complete report from a directory created with `mktemp -d` that contains no files at all.
+7. Your backoff test asserts `[0.5, 1.0]` and the whole file still runs in hundredths of a second.
+8. Every row of `starter/NOTES.md` is filled in with counted numbers, and every question answered in sentences.
+9. `bash tests/run_tests.sh` reports `0 failure(s).` and exits 0.
+
+### Troubleshooting
+
+The lab's `troubleshooting.md` covers the full list. The five you are most likely to meet: a patch that appears to do nothing, which always means you aimed at where the function was *defined* rather than where the name is *looked up* — and the tell is that the test suddenly takes 0.4 seconds; `AttributeError: <module ...> does not have the attribute`, which is the good case, because `patch` checks the target exists; `AttributeError: Mock object has no attribute 'fetch_radings'`, which means your specced double is doing its job and the bug is in the code under test; `StopIteration` from a `side_effect` list, meaning the code called your double more times than you scripted; and `ModuleNotFoundError: No module named 'report_v2'`, which means pytest was pointed at a test file outside the directory holding the modules.
+
+### Common mistakes
+
+- **Patching where the function was defined.** The single most common error in this entire subject. Read the import statement in the module under test, then choose the target.
+- **Using a bare `Mock()`.** It accepts every attribute name and every argument list. Use `create_autospec(SomeClass, instance=True)` as your default and treat `Mock()` the way you treat a bare `except:`.
+- **Leaving a patch running.** `patcher.start()` without `stop()` leaks into every later test, and the failure appears somewhere unrelated. Use the decorator or the `with` block.
+- **Asserting on call sequences.** `assert_has_calls` freezes today's implementation into the test. Assert on what came out unless the call itself is the observable effect.
+- **Mocking your own pure functions.** If it takes values and returns values, call it. Mocking it means extracting a helper breaks your suite.
+- **Sleeping in a test.** Inject the sleep and assert on what was requested. `waits == [0.5, 1.0]` proves the schedule and costs nothing.
+- **Reading the clock twice in one operation.** A report built from two `today()` calls can straddle midnight. Read it once, at the edge, and pass the value down. The lab's `SpyClock` exists to catch exactly this.
+
+## Practice assignment
+
+Take a piece of code you have already written in this course — the Day 56 data-driven CLI or the Day 63 program design exercise are both good candidates — and audit it for boundaries. Write a short table listing every place it reaches the clock, the filesystem, the environment, randomness, or another process, and say for each whether it makes a test slow, non-deterministic, or both.
+
+Then pick the single function with the most boundaries and test it twice. First, without changing a line of it, write a test using `unittest.mock.patch` — get it green, and count the patches, the target strings, and the fixtures you needed. Second, refactor the function so every boundary arrives as a parameter, write hand-written doubles for each (at least one stub, one spy and one fake), and test the same behaviour again. Measure both files with `pytest --durations=0`.
+
+Your deliverable is four things: the boundary table, both test files, the two timings, and a one-page written comparison that answers three questions — which file is shorter, which file would survive an internal refactor of the function, and which one you would want to be looking at in two years when the test fails at four in the afternoon. Finish with one sentence you would put in a code review when you see a test with four patches in it.
+
+## Extension challenge
+
+Three extensions, each of which forces a real judgment rather than more typing.
+
+**Write a contract test.** The lab has two implementations of the same client interface: `LiveSensorClient` in `adapters.py`, which wraps the real service, and `FakeSensorClient` in `fakes.py`. Write one parametrized test that runs the same assertions against both — that a successful call returns a list of floats, that a failure raises `ReadingsUnavailable` and not the underlying service's own exception type. Mark the live case so it is skipped by default, and document how to run it deliberately. Then break the contract on purpose: make the fake raise `ServiceError` instead of `ReadingsUnavailable` and confirm your contract test catches the drift. This is the honest answer to "mocking what you do not own", and writing one is the fastest way to understand why it matters.
+
+**Freeze time three ways, and rank them.** Take the report's date and make it fixed by (a) injecting a clock, (b) `monkeypatch.setattr` on the module attribute, and (c) patching `datetime` wholesale as the lab's `report_v1` test has to. Write all three, then rank them on four axes: lines of test code, what breaks if the module's import style changes, what breaks if a second function starts reading the clock, and whether a reader who has never used `unittest.mock` can understand it. Write the ranking down with your reasoning — the reasoning is the deliverable, not the ranking.
+
+**Build the boundary you will actually need.** Sketch the interface for a language-model client with three methods — `complete(prompt)`, `embed(text)`, and `token_count(text)` — and write a fake for it that is scripted, records every prompt, and accumulates a running cost from a made-up price per token. Then write five tests of a small function that uses it: one that asserts the prompt contains a required field, one that asserts a malformed reply is retried, one that asserts a second retry is not attempted, one that asserts the accumulated cost stays under a budget you set, and one that asserts the function refuses to run at all when the budget is already spent. You have just written the test suite for a cost guard — the control that separates an AI feature you can afford to ship from one you cannot — and you wrote it without spending anything.

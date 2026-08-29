@@ -1,0 +1,256 @@
+Pillow 12.3.0, NumPy 2.5.2
+
+1. The convention: Pillow's coefficients run OUTPUT to INPUT
+==================================================================
+  Image.transform(size, AFFINE, (a, b, c, d, e, f)) means
+
+      input_x  =  a * output_x  +  b * output_y  +  c
+      input_y  =  d * output_x  +  e * output_y  +  f
+
+  -- the inverse of the effect you see. Day 102 confirmed the
+  DIRECTION by experiment. Here it is again, in one line, because a
+  convention you have not checked today is a convention you are
+  guessing at.
+
+    a single bright pixel at input x = 3
+    coefficients (1, 0, 1, 0, 1, 0), so c = +1
+    the bright pixel comes out at x = 2
+    the content moved LEFT by 1 when c said +1.
+
+  That is the output-to-input direction, confirmed. If you want the
+  picture to move right, you pass a NEGATIVE c -- or, better, you
+  build the matrix you mean and let `to_pillow_coefficients` invert
+  it for you, which is what this lab does everywhere below.
+
+    to_pillow_coefficients(translation(1, 0)) = (1.0, 0.0, -1.0, 0.0, 1.0, 0.0)
+    -- the c is -1, because the coefficients are read off the
+    INVERSE of the matrix you asked for.
+
+2. The open question from Day 102: where is the sample taken?
+==================================================================
+  Two candidate rules. Both agree on integer translations, which is
+  why Day 102 could not tell them apart and said so rather than
+  guessing:
+
+    A (pixel centres):  source = floor(a*(x + 0.5) + b*(y + 0.5) + c)
+    B (integer corners): source = floor(a*x + b*y + c + 0.5)
+
+  A scale factor separates them in one measurement. Take the row
+  0, 10, 20, ..., 70 and halve the image with a = 2:
+
+    input             [0, 10, 20, 30, 40, 50, 60, 70]
+    Pillow observed   [10, 30, 50, 70, 32, 32, 32, 32]
+    rule A predicts   [10, 30, 50, 70, 32, 32, 32, 32]
+    rule B predicts   [0, 20, 40, 60, 32, 32, 32, 32]
+
+    matches rule A?  True
+    matches rule B?  False
+
+  Rule A. Pillow evaluates the affine at the output pixel's CENTRE,
+  (x + 0.5, y + 0.5), and takes the input pixel whose unit square
+  contains the result. That is the answer Day 102 deferred, and it
+  explains the shear puzzle exactly:
+
+    a vertical line at x = 4, with b = 2 (a shear in the
+    output-to-input direction):
+      row 0: line now at x = 3    shift predicted by rule A: 1
+      row 1: line now at x = 1    shift predicted by rule A: 3
+      row 2: line now at x = None shift predicted by rule A: 5
+
+    Row 0 MOVED, by one pixel, even though the shear term is
+    multiplied by y and row 0 is 'at y = 0'. It is not at y = 0.
+    Its centre is at y = 0.5, and 2 * 0.5 = 1. There is nothing
+    mysterious left in it.
+
+  `warp.py` uses the same rule -- see SAMPLE_OFFSET = 0.5 -- which is
+  why the comparison below can be exact rather than approximate.
+
+3. Ours against theirs, on 510 affine transformations
+==================================================================
+  500 random rotate-scale-shear-translate combinations plus 10
+  deliberate edge cases, each handed to both implementations as the
+  identical six numbers. Nearest-neighbour, same fill colour, same
+  output size.
+
+    transformations compared:            510
+    transformations matching EXACTLY:    510
+    worst case, pixels differing:        0
+    stated tolerance for this comparison: 0 (exact equality)
+
+  Every pixel of every one of them. Not 'close enough' -- identical.
+  Twenty-odd lines of arithmetic in `warp_nearest_with_inverse` and a
+  library maintained since 2010 produce byte-for-byte the same array.
+
+4. Where the agreement DOES break, and why
+==================================================================
+  It would be easy to stop at the line above. It would also be
+  misleading. Sweep every whole-degree rotation about the centre --
+  360 transformations chosen to be nothing like random -- and the
+  picture changes:
+
+    rotations compared:                 360
+    identical, pixel for pixel:         352
+    disagreeing in at least one pixel:  8
+    worst case, pixels differing:       2 of 81
+    the angles: [30, 60, 120, 150, 210, 240, 300, 330]
+
+  Eight angles out of 360, never more than 2 pixels out of 81. Now the
+  useful part -- every single disagreeing sample landed within
+  2.220e-15 of a pixel BOUNDARY:
+
+  30 degrees about the centre, the smallest failing case.
+  coefficients passed to Pillow: (0.8660254037844387, 0.49999999999999994, -1.647114317029974, -0.49999999999999994, 0.8660254037844387, 2.852885682970025)
+
+  ours                    Pillow
+    ~~.####~~                ~~.####~~
+    ~.##..##~                ~.##..##~
+    ..##....#                ..##....#
+    .###.....                .###.....
+    #####....                ###.#....
+    ##.......                ##.......
+    ##.......                ##.......
+    ~.......~                ~.......~
+    ~~.....~~                ~~.....~~
+
+    output pixel (row 4, column 3): ours 255, Pillow 0
+      our source y = 4.999999999999999
+      floor of that = 4; Pillow took row 5
+
+  The source row is 4.999999999999999. The exact answer is 5. Ours
+  floors to 4, Pillow's arithmetic reaches 5.0 or a hair above and
+  floors to 5. Neither is wrong: the true sample sits exactly on the
+  boundary between two pixels, and which one you get is decided by the
+  ORDER the floating-point additions happen in. Pillow's C loop walks
+  along each output row accumulating the source coordinate step by
+  step; our Python evaluates the whole expression per pixel. Same
+  formula, different rounding in the last bit.
+
+  Look at WHICH angles failed: 30, 60, 120, 150, 210, 240, 300, 330.
+  Every one of them is a 'nice' angle whose sine or cosine is exactly
+  0.5 or exactly half the square root of 3. Nice angles are precisely
+  the ones that put samples on boundaries. The angles nobody would
+  choose for a test -- 37 degrees, 113 degrees -- all agreed. That is
+  the opposite of the usual intuition and it is worth remembering:
+  round numbers are where floating-point ties live.
+
+  This is the real shape of the result, and it is more useful than
+  'they always agree' would have been:
+    * for a transformation whose numbers are not special, the two
+      implementations are byte-for-byte identical -- 510 of 510;
+    * for transformations that place samples exactly on pixel
+      boundaries, they can differ by a pixel, and 8 of the 360 whole-
+      degree rotations do;
+    * the disagreement is never larger than the rounding step, and it
+      is a property of floating point, not of either implementation.
+
+  If you need bit-identical output across libraries, do not rely on
+  ties breaking the same way. Use angles and offsets that keep samples
+  away from boundaries, or accept a one-pixel tolerance and say so.
+
+  And a non-square output, to check that the two agree about which
+  way round a size tuple goes -- Pillow takes (width, height) and
+  NumPy reports (height, width), which is one more place the two
+  orderings can be swapped without any error being raised:
+    ours   shape (9, 18)
+    Pillow shape (9, 18)
+    identical:   True
+
+5. A full turn: exact, and Pillow agrees it is exact
+==================================================================
+  rotation(2*pi) as ONE matrix:
+    ours   differs from the original in 0 pixels
+    Pillow differs from the original in 0 pixels
+
+  Exactly zero, in both. Not 'within a tolerance' -- exact, and the
+  reason is worth being precise about. The matrix is not exactly the
+  identity: cos(2*pi) is 1.0 but sin(2*pi) is -2.449294e-16,
+  not 0. The residual displacement is around 1e-15 of a pixel, and
+  nearest-neighbour rounds to a whole pixel, so an error fifteen
+  orders of magnitude below the rounding step cannot change the
+  answer. The float error is real and it is absorbed.
+
+  Twelve 30-degree passes is a different story, and script 03 measured
+  it: 16 of 81 pixels lost. Same 360 degrees, resampled twelve times
+  instead of once. Both implementations lose about the same amount,
+  because the loss is in the METHOD and not in either of them:
+    ours   differs from the original in 16 pixels
+    Pillow differs from the original in 17 pixels
+    ours and Pillow differ from each other in 3 pixels
+
+  16 against 17, and the two results differ from EACH OTHER in 3
+  pixels. That is section 4 compounding: 30 degrees is one of the
+  eight tie-prone angles, so each of the twelve passes can take a
+  different branch, and twelve passes of a one-pixel difference is
+  three pixels apart at the end rather than one. A single pass agreed
+  exactly. Repeated resampling does not just lose information -- it
+  amplifies the disagreements too. One more reason to compose.
+
+6. Bilinear: where the agreement stops, stated plainly
+==================================================================
+  Nearest-neighbour picks the closest pixel. Bilinear averages the
+  four surrounding pixels, weighted by distance -- which is what you
+  want when the inverse-mapped position lands between pixels, because
+  it usually does.
+
+  The visible difference: nearest-neighbour gives hard, stair-stepped
+  edges and keeps every value exactly as it was; bilinear gives smooth
+  edges and INVENTS intermediate values that were not in the input.
+
+    distinct values, input:              [0, 96, 255]
+    distinct values, nearest-neighbour:  [0, 96, 255]
+    distinct values, bilinear:           5 different levels
+
+  Now the honest part. Our bilinear does NOT reproduce Pillow's
+  bilinear pixel-for-pixel, and the lab says so rather than quietly
+  loosening a tolerance until it passes.
+
+  The split turns out to be clean, and it is worth stating exactly
+  rather than as 'roughly agrees'. Separate the output pixels into
+  those whose four contributing input pixels are ALL inside the
+  image, and those where at least one contributor lies outside it.
+
+    transformation                all 4 inside    anywhere
+    translate (0.25, 0.25)               0.938      63.750
+    rotate 30 about the centre           1.000     118.346
+    rotate 17 about the centre           1.000     104.540
+    scale 1.5 about the centre           1.000       1.000
+    shear x by 0.4                       1.000      32.000
+
+    worst difference where all four contributors are inside: 1.000
+    worst difference anywhere:                               118.346
+
+  So the claim this lab makes is precise, and it is a better claim
+  than 'they agree' would have been:
+
+    * NEAREST-NEIGHBOUR: identical to Pillow, 510 of 510 random and
+      edge cases, zero differing pixels; and identical on 352 of the
+      360 whole-degree rotations, the other 8 differing by at most 2
+      pixels at floating-point ties.
+
+    * BILINEAR: wherever all four contributing pixels are inside the
+      image, the two agree to within 1 grey level --
+      which is exactly the rounding of a float average back into a
+      byte, and cannot be improved on. Wherever a contributor lies
+      OUTSIDE the image, they diverge by up to 118 levels,
+      because they extrapolate differently: ours averages the fill
+      value in, Pillow does not.
+
+  The border behaviour was measured, not assumed, and it was not
+  chased further. Naming the boundary of what agrees is more useful
+  than widening a tolerance until a test goes green.
+
+7. Through a real file, and cleaned up afterwards
+==================================================================
+  Everything above happened in memory. One round trip through an
+  actual PNG, to show that the file format is not where information
+  is lost -- PNG is lossless, so the array survives byte for byte.
+
+    written, 89 bytes on disk for 81 pixels
+    reloaded array identical to the original?  True
+    temporary directory removed?  True
+
+  The file lived in the operating system's temporary directory and is
+  gone. This lab writes no image into its own tree, which is why there
+  is nothing to commit and nothing to clean up by hand.
+
+06_against_pillow.py: every assertion held.

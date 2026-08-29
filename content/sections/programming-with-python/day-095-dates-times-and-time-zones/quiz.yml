@@ -1,0 +1,72 @@
+questions:
+  - question: 'Your service stores every event timestamp as ISO 8601 text in UTC — for example 2026-10-25T01:30:00Z — in a database with no date type, and orders reports with a plain text ORDER BY. Why does that give the right chronological order?'
+    options:
+      - 'Because the database recognises the format and silently parses it into a date before comparing'
+      - 'Because ISO 8601 puts the fields in most-significant-first order at fixed widths and the offset is identical on every row, so comparing the characters left to right gives the same answer as comparing the instants'
+      - 'Because UTC has no daylight saving, and any format at all sorts correctly once daylight saving is out of the picture'
+      - 'Because text comparison in most databases falls back to numeric comparison when both operands look like numbers'
+    answer_index: 1
+    explanation: 'Two properties do the work together, and both are required. The format is fixed-width and most-significant-first — year, then month, then day, then hour — so the first character where two strings differ is the most significant place where the instants differ, which is exactly what a chronological comparison needs. That is a deliberate design choice in the standard rather than a happy accident. And the offset is the same on every row, so no row needs adjusting before the comparison. Option 2 is the tempting near-miss and is false: the lab sorts the same four events as local text WITH their offsets attached, which is unambiguous, lossless, daylight-saving-free per row, and still comes out in the wrong order — because the sort compares the digits left to right and never reaches the offset on the end. Losslessness and sortability are different properties, and UTC ISO text is the format that has both. Option 0 is wrong: a text column is compared as text. Option 3 describes a coercion that does not apply here and would not help if it did.'
+
+  - question: 'A job takes just over an hour, starting at 01:50 BST on 25 October 2026 in London and ending twenty real minutes later. Your monitoring measures duration by subtracting two readings of the local clock. What does it report, and which clock should it have used?'
+    options:
+      - 'Twenty minutes, correctly — daylight saving cancels out over a short interval'
+      - 'Eighty minutes, and it should have used datetime.now(timezone.utc) at both ends'
+      - 'Minus forty minutes, and it should have used time.monotonic()'
+      - 'It raises an exception, because the two local datetimes are not comparable'
+    answer_index: 2
+    explanation: 'The clocks went back at 01:00 UTC, so the local clock read 01:50 at the start and 01:10 at the end: subtracting gives minus forty minutes for twenty minutes of real work, and the lab prints exactly that. Nothing raises, which is the problem — a retry loop written as `while elapsed < timeout` never terminates on a negative elapsed, and a latency metric computed this way goes into the dashboard as a negative number once a year. The fix is time.monotonic(), which time.get_clock_info reports as monotonic and NOT adjustable: it only moves forward, it is never corrected by NTP or by daylight saving, and it has no relationship to any calendar. Option 1 names a real improvement — UTC instants at both ends would give the right answer here — but it is still the wrong tool, because a UTC wall clock is still adjustable and an NTP correction between the two readings still corrupts the measurement. The rule is short: wall clock for WHEN, monotonic for HOW LONG.'
+
+  - question: 'In Europe/London, what is the difference between 2026-10-25 01:30 and 2026-03-29 01:30 as wall-clock readings?'
+    options:
+      - 'The October one names two instants an hour apart; the March one names no instant at all'
+      - 'Both name two instants, but only the October one can be disambiguated with fold'
+      - 'The October one is invalid and Python raises; the March one is merely ambiguous'
+      - 'Neither is unusual — both are ordinary readings, and fold only matters for zones outside Europe'
+    answer_index: 0
+    explanation: 'October is the repeated hour: the clocks went back at 02:00 local, so 01:30 arrived, an hour passed, and 01:30 arrived again. Those are two instants — epoch 1792888200 and 1792891800, exactly 3600 seconds apart — and fold=0 selects the earlier while fold=1 selects the later. March is the deleted hour: the clocks jumped from 01:00 to 02:00 and no clock in the country ever showed 01:30. Python builds that object anyway and raises nothing, because a wall reading plus a zone name is a request rather than a fact; the failure only shows in the round trip, where converting to UTC and back returns 02:30+01:00 instead of what you asked for. Both cases have two folds and both give two different instants, which is why `!=` cannot distinguish them and the ORDER can: an ambiguous reading gives the earlier instant at fold=0, a nonexistent one gives the later. Option 2 is a common expectation and simply is not what the library does.'
+
+  - question: 'You attach Europe/London to 2026-10-25 01:30 twice, once with fold=0 and once with fold=1, then compare the two aware datetimes with ==. What happens?'
+    options:
+      - 'False, because they represent instants an hour apart'
+      - 'A TypeError, because objects with different fold values cannot be compared'
+      - 'True, because Python normalises both to the fold=0 instant before comparing'
+      - 'True, because two aware datetimes with the same tzinfo are compared by their wall-clock fields and fold is ignored'
+    answer_index: 3
+    explanation: 'This is documented and it surprises everybody once. When both operands are aware and carry the same tzinfo attribute, the documentation says the tzinfo and fold attributes are ignored and the base datetimes are compared — that is, the wall-clock fields. So two objects naming instants exactly one hour apart test equal, while their timestamp() values differ by 3600 and their UTC conversions are plainly different. The practical consequence is bigger than the curiosity: anything that sorts, deduplicates, groups by, or uses aware datetimes as dictionary keys inherits this, and it will behave correctly for 363 days a year. The habit that removes the whole class of problem is to convert to UTC at the boundary of your system and compare instants, never wall clocks. Option 2 describes a normalisation Python does not perform, and if it did it would still be lossy.'
+
+  - question: 'A container image built two years ago runs a scheduler and has never been rebuilt. A government has since moved its country''s daylight-saving date by two weeks. What happens, and what does it tell you about zone rules?'
+    options:
+      - 'Nothing — Python computes daylight saving from an algorithm, so it is always current'
+      - 'The scheduler fires an hour out for those two weeks, because zoneinfo reads a tzdata database that is data on disk and the image''s copy is stale'
+      - 'zoneinfo raises ZoneInfoNotFoundError once the stored rules expire, so the failure is loud'
+      - 'Only historical timestamps are affected; future ones are recomputed from the current rules at runtime'
+    answer_index: 1
+    explanation: 'Python contains no time zone rules at all. zoneinfo is a reader for the IANA database that the operating system installs, and zoneinfo.TZPATH lists exactly where it looks — on the authoring machine, /usr/share/zoneinfo, holding version 2026c. That database is public-domain, maintained collaboratively, released several times a year, and updated whenever a legislature changes its mind, sometimes with a few weeks'' notice. A two-year-old image holds a two-year-old opinion about the future and will be confidently, silently wrong for exactly the window the rules moved. This is why the lesson insists that a FUTURE local time is a prediction rather than a fact: 09:00 next March in a given city is a promise about what a government will have decided, and the only thing that can keep that promise current is updating the data. Option 2 would at least be loud; the actual failure is silent, which is worse.'
+
+  - question: 'A meeting invitation says "every Tuesday at 09:00, Europe/Paris", and it must survive the next daylight-saving change. What should the system store?'
+    options:
+      - 'The next occurrence as a UTC instant, and recompute the following one after each occurrence, storing the local time and the zone name'
+      - 'A list of the next fifty-two occurrences precomputed as UTC instants'
+      - 'The local wall-clock time 09:00 with no zone, and let each attendee''s client interpret it'
+      - 'The UTC offset that applies today, +02:00, stored alongside 09:00'
+    answer_index: 0
+    explanation: 'This is the case where UTC alone is not enough, and it is worth being precise about why. The user''s intent is a wall-clock intent — nine in the morning in Paris, whatever the offset happens to be that week — so the durable record has to be the local time plus the ZONE NAME, from which the next instant is computed. Storing the next occurrence as a UTC instant is right for the scheduler, because that is what fires exactly once; recomputing after each occurrence is what makes it survive both the transition and a later database update. Option 1 fails precisely at the transition: fifty-two precomputed instants encode today''s rules, and every one after a rule change is an hour out with nothing to correct it. Option 3 is the same mistake in miniature — an offset is a property of a zone at a moment, not of the zone. Option 2 gives up on identifying an instant at all, which is fine for an alarm clock and useless for a meeting between cities.'
+
+  - question: 'What does datetime.strptime("2026-10-25 01:30:00 BST", "%Y-%m-%d %H:%M:%S %Z") do, and what is the general lesson?'
+    options:
+      - 'Returns an aware datetime in Europe/London, since BST identifies that zone'
+      - 'Returns a naive datetime and discards the zone name'
+      - 'Raises ValueError on this machine, because %Z accepts almost nothing — and even where it succeeds it returns a naive datetime, because an abbreviation cannot identify a zone'
+      - 'Returns an aware datetime with a fixed +01:00 offset that will be wrong in winter'
+    answer_index: 2
+    explanation: 'Run it and it raises ValueError: %Z matched only UTC and GMT on the authoring machine and rejected both BST and EST. That is the small trap. The large one is what happens when it succeeds — parsing "UTC" works and yields a datetime whose tzinfo is None, so the zone information you carefully included has been read and thrown away, leaving a naive value that looks parsed and is not located. And this is not a Python defect so much as an honest reflection of reality: an abbreviation cannot identify a zone, because IST is India, Ireland and Israel, and CST is used by at least three places. The abbreviation is a display label, never an identifier. Use %z with a numeric offset when you must parse legacy text, prefer fromisoformat on RFC 3339 text, and store the IANA zone NAME whenever you need to know where somebody was.'
+
+  - question: 'A fraud model is trained on events from three regions. The training-and-validation split is made at "midnight on 1 June" using timestamps that each region recorded in its own local time. Validation accuracy is excellent; production accuracy is not. What is the most likely cause?'
+    options:
+      - 'The model is overfitting, and the split should be random rather than by time'
+      - 'The regions have different fraud rates, so the validation set is not representative'
+      - 'The split is a different instant in each region, so hours of post-cutoff events leaked into training — a time-zone bug producing textbook temporal leakage'
+      - 'Daylight saving added a duplicate hour of events, and the duplicates inflated the training set'
+    answer_index: 2
+    explanation: 'One boundary expressed as a local wall clock is three different instants. "Midnight on 1 June" in three zones can be many hours apart, so events that came AFTER the cutoff in one region were filed as before it — and the model was trained on some of the future it was then asked to predict. The evaluation is measuring memorisation of leaked labels, so it reports a number the model cannot reproduce on live data, and nothing in the pipeline errors. Option 0 gets the diagnosis exactly backwards: a random split would be worse, because for time-ordered data it leaks the future everywhere rather than at one seam. Option 3 names a real phenomenon of the wrong size — a duplicated hour is one hour, not the multi-hour skew described here — though it is worth knowing that the same night genuinely produces duplicate wall-clock labels, and a pipeline keyed on local time will silently overwrite one hour with another. The rule that removes all of it: store instants in UTC, cut at an instant, and compute every feature strictly as of that instant.'

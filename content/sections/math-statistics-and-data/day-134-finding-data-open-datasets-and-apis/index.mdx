@@ -1,0 +1,268 @@
+---
+day: 134
+title: 'Finding Data: Open Datasets and APIs'
+---
+
+## Why this matters
+
+Two public datasets both have a column called `unemployment_rate`. One counts anyone not working. The other counts only people actively seeking work in the last four weeks, and excludes everyone who gave up. Both numbers are correct. Both are documented, somewhere. Neither file's header tells you they disagree.
+
+Join the two into one series — a national survey for the early years, an administrative claims index once the survey was discontinued — and you get a chart with a step change at the seam. It looks like a labour-market shock. It is a definition change wearing the costume of one. Nothing mechanical would have caught it: the column names match, the dtypes match, the ranges overlap. Run the check most people actually run — same type, overlapping range — and it passes cleanly on both.
+
+The only thing that would have caught it is a sentence you had to go and read. Each source's data dictionary states, in prose, what it means by "unemployed." One says *actively seeking work in the last four weeks and available to start within two.* The other says *not currently employed, counted regardless of whether they are searching.* Those are not two measurements of the same thing with different noise. They are two different things that happen to share a column name, a unit, and a plausible-looking range.
+
+**Read the dictionary before the data.** That is the whole thesis of this day, and it is worth stating as bluntly as the lesson title suggests, because everything else here — where to look, what to check, when to trust a bulk file versus an API, what a licence actually permits — is in service of one habit: never join two sources on a shared concept without checking that both sources define the concept the same way.
+
+You already know how HTTP, REST, authentication, and rate limits work — Days 22 through 28 covered the mechanics in full, and nothing here repeats them. What you have not yet built is the judgement layer sitting on top: given a source you have never seen before, how do you decide in five minutes whether it deserves the rest of your afternoon? This day builds that judgement, plus the small set of client behaviours — following pagination to exhaustion, backing off a rate limit instead of hammering it, caching a response so a re-run costs nothing — that separate a client that works from a client that gets you rate-limited, or worse, quietly wrong.
+
+Day 135 picks up immediately after this one and turns whatever JSON you have assembled into a tidy DataFrame. Day 138 goes deep on ethics, bias and provenance. This day sits between "I found something" and "I have a table" — it is entirely about whether the something you found is worth turning into anything at all.
+
+## The idea in plain language
+
+Before you download a single byte, you are answering one question with several parts: **is this source what it claims to be, and can I prove that to someone else later?**
+
+"What it claims to be" breaks into pieces you can check in about five minutes, in this order, because each one gates the next:
+
+1. **Provenance.** Who published this, and when? A page with no named publisher and no visible update date is a page you cannot cite and cannot re-fetch with confidence it hasn't silently changed underneath you.
+2. **A data dictionary.** Does a codebook exist that defines every column in words, not just a header row? This is the gate the opening story failed. If there is no dictionary, you are guessing at meaning from column names, and column names lie by omission constantly.
+3. **Granularity.** What does one row represent? A country-year? A household-month? A single transaction? Two datasets that look comparable because they cover "the same thing" are frequently counting at different levels, and an aggregate built at the wrong level looks precise while meaning nothing.
+4. **Coverage.** Does the data actually contain everything it claims to? A dataset titled "national labour statistics" that is missing one region entirely looks identical, in every visible way, to one that legitimately has zero unemployed people in that region — unless you check the key list against what the documentation promised.
+5. **Licence.** What are you actually allowed to do with this? Analyse it privately? Publish a chart derived from it? Redistribute the raw file? These are three different permissions, and a licence granting the first does not imply the other two.
+6. **Checksum.** Once you download it, can you prove — to yourself in six months, or to a reviewer tomorrow — that the file you have is the file the source actually served?
+
+Fail any single gate and the source is not disqualified — it needs a caveat, spoken out loud in your write-up, rather than a silent join. What disqualifies a source is when you skip the check entirely and let a gap become invisible.
+
+![Diagram: a candidate dataset passing through six numbered gates in sequence — provenance, data dictionary, granularity, coverage, licence, checksum — each with a short caption naming what failing that gate costs later, ending in a ready-for-analysis box for a dataset that clears all six](./assets/source-assessment-architecture.svg)
+
+Once a source clears the assessment, a second, smaller decision follows: **bulk file or API?** A one-off analysis of a stable dataset wants a file with a checksum — download once, verify, move on. A dashboard that needs to stay current wants an API. Using an API as a bulk downloader — hitting it in a tight loop to reconstruct a full dataset it was never designed to serve that way — is the single most common way people get themselves rate-limited, and it is avoidable: check first whether the source publishes a bulk export.
+
+If it is an API, three behaviours separate a client that works politely from one that does not: it follows pagination until the source itself says stop, rather than guessing a page count; it treats a rate-limit response as an instruction to wait, with a bound on how long it will keep trying; and it caches what it has already fetched, so asking "has this changed?" is cheaper than asking for the data again.
+
+![Diagram: a paginated fetch walking three pages until told to stop, meeting a 429 rate limit, backing off and succeeding on retry, followed underneath by a second run the next day that sends the stored ETag and short-circuits on a 304 with no download and no wait](./assets/pagination-flow.svg)
+
+## Historical background
+
+Open government data has a specific, dateable origin. **Data.gov** launched in **May 2009**, under a **U.S. federal open-government directive** signed that December, and it was one of the first large national efforts to publish government-collected data as machine-readable files by default rather than as PDFs behind a records request. The UK's **data.gov.uk** followed in **January 2010**. By the mid-2010s most G20 countries and thousands of municipalities ran some form of open-data portal, usually built on the open-source **CKAN** platform, first released by the **Open Knowledge Foundation** in **2006**.
+
+Statistical agencies are older than any of this by decades — national censuses and labour-force surveys have run since the 19th and early 20th centuries — but publishing their outputs as queryable, API-accessible data rather than printed tables or static spreadsheets is a 2000s-and-later development. The **World Bank's Open Data** initiative launched in **2010**, making decades of development indicators freely downloadable and API-accessible for the first time. **Our World in Data**, run out of Oxford, began publishing its now-widely-cited visualisations and underlying CSVs from roughly **2011** onward, deliberately pairing every number with a link to its original source rather than acting as a primary source itself.
+
+Research-data repositories have a parallel but distinct history. **Dryad** launched in **2008**, built specifically to satisfy journals' data-availability requirements for ecology and evolutionary biology. **Zenodo**, run by CERN and funded initially through the EU's OpenAIRE project, launched in **2013** and generalised the same idea across every discipline, issuing a **DOI** for any dataset deposited — which is precisely the provenance guarantee this lesson opens with, formalised as infrastructure.
+
+The licensing vocabulary is younger than the data itself. **Creative Commons** published its first licence suite in **December 2002**; **CC0**, the public-domain dedication this lesson uses as the clean end of the licence spectrum, followed in **2009**. The **Open Data Commons Open Database License (ODbL)**, designed specifically for databases rather than creative works — because database rights and copyright are legally distinct in many jurisdictions — was published by the **Open Knowledge Foundation** in **2009** and is the licence **OpenStreetMap** adopted in 2012, which is why it is the licence most people encounter first when they ask "can I redistribute this?"
+
+**Kaggle** launched in **2010** as a data-science competition platform and grew into a general-purpose dataset host; **Hugging Face**, founded in **2016**, added its `datasets` library and hub in **2020**, becoming the default place to find ML-ready datasets with a consistent loading interface — a genuinely different guarantee from a statistical agency's, and one worth naming precisely, which the next section does.
+
+The API practicalities — pagination, rate limiting, conditional requests — are older than any of the above and belong to HTTP itself. **Entity tags (ETags)** and conditional `GET` requests were specified in **HTTP/1.1**, **RFC 2616**, in **1999** (refined in RFC 7232 in 2014), specifically to let a cache ask "has this changed?" without re-transferring a resource that hasn't. That mechanism is over two decades old and still the correct answer to "how do I make a re-run cost nothing."
+
+## What it is — and what it is not
+
+**Finding data** is the combined activity of locating a candidate source, applying a fast structured assessment to decide whether it is trustworthy and fit for your question, and — if it clears that bar — retrieving it in a way that is reproducible, polite to the source, and provably tied to a specific version of the data.
+
+It is **not** the same activity as cleaning data (Week 18 covered that), and it is not the same as exploratory analysis (Day 136 begins that). It comes before both. A cleaning pipeline built on a source you never assessed inherits every one of that source's undisclosed decisions, and no amount of downstream care removes them.
+
+It is also not "download the first file that shows up in a search." A file with no visible publisher, no update date and no dictionary might still be usable — but only once you have located where it actually came from and confirmed what it claims to measure. The assessment in the previous section exists precisely to convert "a file I found" into "a source I can name and defend."
+
+Finally, it is not a one-time gate you clear and then forget. A source that passed assessment last year may have changed its methodology, been discontinued, or had a silent backfill applied. The checksum-and-provenance habit this lesson builds is what lets you notice that a source has changed, rather than assuming today's copy behaves like last year's.
+
+## Why it was created and what problems it solves
+
+Before open-data portals and public APIs existed in any standard form, "finding data" mostly meant one of two things: paying for a commercial data vendor, or requesting records from an agency and waiting weeks for a response, if one came at all. The open-data movement of the late 2000s existed to solve a specific problem: publicly funded data collection whose outputs were locked in formats — PDF tables, printed reports, agency-specific portals with no consistent access pattern — that made reuse expensive even when reuse was legally permitted.
+
+APIs solve a narrower, more recent problem: a bulk file is a snapshot, and a growing number of use cases need something that stays current — a live dashboard, a monitoring pipeline, a research tool tracking an evolving situation. An API lets a consumer ask for exactly the current state, or exactly what has changed since a given point, without either party re-transferring the whole dataset on every request.
+
+Pagination, rate limiting and conditional requests are all solutions to the same underlying tension: a server has finite capacity and many simultaneous clients, and a naive client that requests everything as fast as it can will either overwhelm the server or get itself blocked. Pagination lets a server bound how much work one request does. Rate limiting lets a server bound how much work one client does over time. Conditional requests let a client and server agree, cheaply, on whether a full transfer is even necessary. None of these exist to be obstacles — they exist because "give me all your data as fast as possible" does not scale to a server with thousands of simultaneous callers, and every serious public API is built assuming some fraction of its callers will try exactly that unless the protocol makes the polite path the easy one.
+
+Licensing frameworks like CC0 and ODbL solve a legal problem that predates the internet but became acute once redistributing a dataset became technically trivial: copyright and, in some jurisdictions, database rights attach to compiled data by default, which means "I found it on a public website" is not the same as "I am allowed to redistribute it." A named licence removes the ambiguity, in either direction — sometimes granting more freedom than a cautious reader would assume, sometimes granting less.
+
+## How it works
+
+Walk the six-gate assessment against a concrete pair of fixtures, the same ones this lesson's lab uses, so each step has a real value attached rather than a description.
+
+**Gate 1 — provenance.** Source A calls itself the `national-labour-force-survey`. Source B calls itself the `administrative-benefit-claims-index`. Both are named, both are things you could look up and cite. A source with neither name nor institution behind it fails this gate before you have opened a single row.
+
+**Gate 2 — data dictionary.** Both sources publish a dictionary. Source A's entry for `unemployment_rate` reads:
+
+> share of the labour force not employed, actively seeking work in the last 4 weeks, and available to start within 2 weeks
+
+Source B's entry for the same column name reads:
+
+> share of the working-age population not currently employed, counted regardless of whether they are searching for work
+
+Those two sentences are the entire lesson. Everything downstream — the naive check passing, the join looking clean, the chart showing a phantom step change — follows from nobody reading them side by side.
+
+**Gate 3 — granularity.** Both state monthly, per-region observations. Comparable at this gate; the failure is elsewhere.
+
+**Gate 4 — coverage.** A dataset that documents four expected regions — north, south, east, west — but whose actual rows only cover three, has failed coverage even though every row present is correct. This is detected mechanically: compare the *set* of keys the dictionary promises against the *set* of keys the data actually contains, and report exactly what is missing. Eyeballing a chart will not reliably show this; a region with zero rows and a region that was never collected can look identical on a map with nothing plotted for either.
+
+**Gate 5 — licence.** `CC0` says: take it, no conditions. `CC-BY-4.0` says: take it, name the source. `ODbL` says: take it, but if you redistribute a derived database, that derived database must carry the same licence forward — the "share-alike" obligation that trips people up who assume "open" always means "unconditionally free." `All rights reserved` says: you may look, and that permission does not extend to using the data in your own published work without separate agreement. A licence check that returns a plain "allowed" or "not allowed" throws away exactly the information that matters here — the reason has to travel with the answer.
+
+**Gate 6 — checksum.** Compute the SHA-256 of the bytes you actually downloaded. `hashlib.sha256(path.read_bytes()).hexdigest()` on a small fixture file containing `id,value\n1,10\n2,20\n3,30\n` produces `4c0610aa92b75ca794ceec30068934fc6bc3d2fbff87969a15977f8fcf96f13f` — measured directly on this lesson's own machine, and reproducible on any machine, because SHA-256 of fixed bytes is deterministic everywhere. Change one digit — `3,30` to `3,31` — and the digest becomes a completely different `9352ed755477b7af1eefd6e473c3880dd49e0a5d368846f51f8d96519d2bcf50`. "Downloaded from this URL" is a claim. "Downloaded from this URL, SHA-256 `4c0610aa...`, on this date" is a claim someone else can check.
+
+Once a source is assessed and worth pulling, the retrieval itself follows a small number of concrete rules, each demonstrated against a local mock API built for this lesson's lab — a server on `127.0.0.1` and an ephemeral port implementing real pagination, a real `429`, and a real `ETag`.
+
+**Pagination to exhaustion.** The mock serves 25 rows, 10 per page, and marks each page with `has_more`. A correct client loop looks like this:
+
+```python
+def fetch_all_pages(base_url, path="/dataset"):
+    rows = []
+    page = 1
+    while True:
+        status, _, body = fetch_raw(f"{base_url}{path}?page={page}")
+        payload = json.loads(body)
+        rows.extend(payload["items"])
+        if not payload.get("has_more"):
+            break
+        page += 1
+    return rows
+```
+
+Run against the mock, this assembles exactly 25 rows across 3 requests — measured, not assumed. The stopping condition is the server's own word, never a page count computed in advance, because a computed count can silently drift out of sync with reality the moment the source adds a row.
+
+**Bounded backoff on a rate limit.** A `429` is not an error to propagate immediately, and it is not an invitation to retry forever either. Measured against this lesson's mock server, which is configured to reject the first two requests to a given endpoint and then relent: the client's third attempt succeeds, with the rejections logged at attempts 1 and 2. Against a second mock instance configured to *never* relent within a sane attempt budget, calling the same client with `max_attempts=3` raises a `RateLimitExceeded` after exactly 3 attempts — not one more. A client with no upper bound on retries is not "resilient"; against a real server it is indistinguishable from the traffic a rate limit exists to stop.
+
+**Conditional requests with `ETag`.** The first request for a resource returns the payload and an `ETag` header. The second request sends that value back as `If-None-Match`. Measured directly: the first fetch against this lesson's mock downloaded 92 bytes; the second, carrying the stored ETag, received a `304 Not Modified` with an empty body — 0 bytes over the wire — and the client served the cached copy it already had. That is the entire mechanism that makes a daily re-run of the same analysis cost the source nothing extra, and it is worth the ten extra lines of code every time.
+
+**A structured source assessment as code**, rather than a mental checklist you may forget half of under deadline pressure:
+
+```python
+def assess_source(metadata: dict) -> SourceVerdict:
+    problems = []
+    if not metadata.get("granularity"): problems.append("no stated granularity")
+    if not metadata.get("coverage"):    problems.append("no stated coverage")
+    if not metadata.get("licence"):     problems.append("no stated licence")
+    if not metadata.get("dictionary"):  problems.append("no data dictionary")
+    if not metadata.get("update_cadence"): problems.append("no update cadence")
+    if "known_issues" not in metadata:  problems.append("known issues undocumented")
+    return SourceVerdict(..., problems=problems)
+```
+
+Run against a well-documented fixture it returns zero problems; run against a fixture that states only "monthly" for granularity and nothing else, it returns five named gaps, not a bare "not ready." The names are what make the function useful in a real workflow — "no update cadence" tells you exactly what to go looking for, where a boolean would just make you start over.
+
+## An everyday analogy
+
+Finding data is buying a used car from a stranger's listing rather than from a dealership with a paper trail.
+
+The listing photo (the dataset preview, the first ten rows) always looks fine — nobody photographs the thing that's wrong. **Provenance** is asking who owned it and getting a real name, not "a guy." **The data dictionary** is the maintenance record: without it, you are guessing whether "recently serviced" means an oil change or a full inspection, and two sellers can use the same phrase to mean very different things — exactly like two agencies using the same column name for different concepts. **Granularity** is asking whether "50,000 km" is the odometer reading or this owner's mileage since their last owner — the same number means something different depending on what it's counted over. **Coverage** is checking the car actually has everything the listing claims — four working doors, not three plus an assurance that the fourth "isn't usually needed." **The licence** is the paperwork: can you legally drive it away today, or only take it for a supervised test drive? **The checksum** is the VIN check — proof that the car in front of you is the car the listing described, not a different one with the same description copy-pasted.
+
+And the API-versus-bulk-file choice is the difference between buying the car outright (a checksummed file, yours forever, verify once) and a car subscription you re-verify is still the agreed vehicle every month (a live API, worth conditional requests so you're not re-inspecting the whole car every single time nothing has changed).
+
+## Examples in practice
+
+**`urllib.request` — the standard library, ran.** Every client function in this lesson's lab is built on it, and it needed no installation. A minimal conditional-GET pattern:
+
+```python
+import urllib.request, urllib.error
+
+req = urllib.request.Request(url, headers={"If-None-Match": cached_etag})
+try:
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        status, body = resp.status, resp.read()
+except urllib.error.HTTPError as exc:
+    status, body = exc.code, exc.read()   # 304 and 429 both raise -- unwrap them
+```
+
+Free, always available, no dependency to pin. The one wrinkle worth knowing: `urlopen` raises `HTTPError` for any status 400 and above, so a `304 Not Modified` and a `429 Too Many Requests` both arrive as exceptions rather than ordinary responses, and a client that does not catch and unwrap them will crash on exactly the responses it most needs to handle gracefully.
+
+**`requests`** — not installed in this lesson's own lab venv, and no output from it is reproduced here; it is described from its public documentation only. It trades `urllib.request`'s explicit exception-per-status-code behaviour for a `response.status_code` you check directly, and it exposes `response.headers.get("ETag")` and a `requests.Session()` that persists connections across calls, which is worth it the moment a project makes more than a handful of requests. Free, Apache-2.0 licensed, and the de facto standard for anyone not deliberately keeping a project dependency-free.
+
+**`pandas.read_csv` reading a URL — ran, against this lesson's own local mock.** `pandas.read_csv(f"{base_url}/dataset.csv")` returned a 25-row DataFrame directly from an HTTP response, with no intermediate file — measured on this machine, not assumed. This is the fastest path from "here is a CSV endpoint" to "here is a DataFrame," and it is exactly what makes an API used carelessly dangerous: `read_csv` will happily re-request the same URL every time a notebook cell reruns, with none of the caching or backoff this lesson builds by hand. It is the right tool for a one-off pull against a small, stable file; it is the wrong tool to call in a loop against a paginated, rate-limited API.
+
+**Hugging Face `datasets` — described from its published documentation only; not installed anywhere in this course's authoring environment, and no output from it is reproduced here.** Its defining guarantee is different in kind from a statistical agency's file: `datasets.load_dataset("name")` returns an object with a documented, consistent schema regardless of the underlying source's original format, streamed and cached locally by the library itself. That consistency is exactly why it is the right first stop for an ML-ready corpus and the wrong first stop for an official statistic — the library optimises for "loads the same way every time," not for "carries the same provenance rigor a national statistical agency publishes." Free for the vast majority of hosted datasets; some require accepting a licence click-through before download, which the library will surface but not bypass.
+
+**Where to actually look**, mapped by what each source guarantees rather than by size or popularity: **national and municipal open-data portals** (built mostly on CKAN) guarantee an official public-sector source but vary wildly in dictionary quality and update discipline; **statistical agencies** (national statistics offices, Eurostat, the OECD) guarantee methodological rigor and a real data dictionary, at the cost of slower update cycles and formats aimed at analysts, not developers; **World Bank Open Data and Our World in Data** guarantee cross-country comparability and a citation trail back to primary sources, and are themselves aggregators rather than primary collectors; **Zenodo and Dryad** guarantee a DOI and a fixed, versioned snapshot tied to a specific research output, at the cost of no ongoing updates — a Zenodo record is meant to never change; **Kaggle and Hugging Face** guarantee ease of loading and ML-readiness, and guarantee comparatively little about original provenance, which is precisely the gap Day 138 addresses at length.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Security.** A client that retries a rate limit without bound is, from the server's point of view, indistinguishable from an attack. `RateLimitExceeded` — raising loudly with a named attempt count rather than looping silently — is not a nicety, it is the difference between "my script failed and told me why" and "I got my IP address blocked from a public service everyone in my team relies on." Never hard-code an API key into a script that might end up in version control; read it from an environment variable, every time.
+
+**Privacy.** A dataset that is technically public is not automatically safe to republish alongside other data. Two publicly available datasets, each individually anonymised, can become re-identifying when joined — a risk that starts, again, at the dictionary: does either source's documentation say anything about the granularity at which individuals could be singled out? Day 138 covers this in depth; this lesson's job is only to make sure you check the dictionary before you get anywhere near that question.
+
+**Performance.** Pagination and conditional requests are performance techniques as much as they are politeness techniques. A client that re-downloads a full resource on every run pays the full transfer cost every time; one that stores an ETag and checks first pays that cost once and then close to nothing. Measured here: a re-run against this lesson's mock cost 0 bytes on the second call versus 92 on the first — a small number in this fixture, but the same ratio scales to a multi-megabyte real dataset fetched daily.
+
+**Scalability.** A bulk file scales by download bandwidth and storage; an API scales by how considerately every client behaves. One badly written client hammering an API without backoff can degrade service for every other consumer of a shared public resource — this is the practical reason small open-data portals impose tight rate limits, and it is a direct consequence of past callers not implementing the backoff this lesson builds.
+
+**Cost.** Most of what this lesson maps is free to query. The costs that do appear are indirect: your own time re-downloading data you already have because you didn't cache it; a project blocked because a licence turned out to forbid the republishing you'd already planned around; and, for the ML-focused sources, compute costs for training that are entirely separate from the (usually free) cost of accessing the data itself.
+
+## Alternatives: free, open source, and commercial
+
+| Source class | Guarantees | Free vs paid | When to choose it |
+| --- | --- | --- | --- |
+| National open-data portals (CKAN-based) | Official public-sector origin; dictionary quality varies | Free | Municipal/national administrative data — permits, budgets, infrastructure |
+| Statistical agencies (national offices, Eurostat, OECD) | Methodological rigor; a real codebook | Free | Official indicators where definitions matter more than update speed |
+| World Bank Open Data / Our World in Data | Cross-country comparability, sourced from primary data | Free | Cross-country time series with a citation trail already built |
+| Zenodo / Dryad | A DOI, a fixed versioned snapshot | Free (deposit may require institutional access) | Reproducing or citing a specific published research output |
+| Kaggle | Ease of use, community notebooks, competition data | Free; some datasets require a click-through licence | Fast ML prototyping where provenance rigor matters less than iteration speed |
+| Hugging Face `datasets` | Consistent load interface across formats and sources | Free for most; some gated behind licence acceptance | ML-ready corpora, especially text and multimodal data |
+| Commercial data vendors (e.g., financial or market-research providers) | Contractual data-quality guarantees, support, indemnification | Paid, often via subscription or per-seat licence | When a wrong number has real financial consequences and someone needs to be accountable for it |
+
+The free options above are not a compromise tier beneath the paid ones — for the vast majority of coursework, research and prototyping, they are simply the correct choice, and the paid tier exists for a genuinely different need: a contractual guarantee and a named party to hold accountable when the data is wrong, which no public portal offers no matter how good its dictionary is.
+
+## Comparison with related concepts
+
+**Finding data versus cleaning data (Week 18).** Cleaning happens after you have committed to a source; finding data is the decision of whether to commit at all. A cleaning pipeline cannot fix a coverage gap it was never told about — it can only clean the rows that exist.
+
+**Finding data versus scraping (Days 78-79).** Scraping extracts data from a page that was not designed to be a data source. Everything in this lesson assumes the opposite: a publisher who intended the data to be consumed, documented it (to varying degrees), and stated terms for reuse. Scraping is a fallback for when this lesson's whole apparatus — a dictionary, a stated licence — simply does not exist.
+
+**Finding data versus ethics and provenance (Day 138).** This lesson treats licence and provenance as a fast, mechanical gate: is a dictionary present, does the licence permit your intended use, can you checksum the file. Day 138 asks the deeper question underneath that gate: whose decisions shaped what the data even measures, who is missing from it, and what a model trained on it silently inherits. Clearing this lesson's six gates is necessary and nowhere near sufficient for that deeper question.
+
+**Finding data versus API-to-DataFrame (Day 135).** This lesson stops at "assembled rows" — a Python list of dicts pulled from a paginated JSON response. Day 135 owns the transformation into a tidy, typed DataFrame: flattening nested structures, choosing dtypes, handling the JSON quirks that make that step non-trivial. The two are deliberately sequential rather than combined, because judging a source and reshaping its output are different skills that fail in different ways.
+
+## When to use it — and when not to
+
+Run the full six-gate assessment whenever a dataset will inform a decision anyone besides you will act on, whenever you plan to join it against another source, and whenever you plan to publish or share results derived from it. The five minutes this costs is cheap compared to the cost of a wrong join discovered after a report has shipped.
+
+You can reasonably skip the full assessment — while still doing gate 5, the licence check, always — for a quick, private, throwaway exploration you have no intention of building on: a five-minute "does this pattern even exist" check where you will discard the code either way. The moment that throwaway check becomes something you keep, go back and do the other five gates properly; skipping them once you are already committed is exactly how the opening story's bad join happens.
+
+Prefer a bulk file over an API whenever the source publishes one and your need is a single analysis rather than an ongoing feed — it is simpler, needs no backoff logic, and a checksum on a single file is a complete provenance story. Prefer an API when you genuinely need current data, when the bulk export does not exist, or when you need only a narrow slice of a much larger dataset that a bulk file would force you to download in full.
+
+## Knowledge check
+
+1. Two datasets both have a column named `unemployment_rate`. A check comparing dtype and value range passes on both. What is the one check that would actually catch a definitional mismatch, and why does the dtype/range check miss it?
+2. You are about to build a live dashboard fed daily from a public API. Why is fetching the same full resource on every run the wrong pattern, and what mechanism reduces the cost of a re-run to close to nothing?
+3. A client retries a `429` response with no upper bound on attempts. Name the two distinct problems with this, one from the caller's side and one from the server's side.
+4. A dataset's documentation claims "national coverage." What is the mechanical way to detect that a specific region is actually missing from the data, and why does eyeballing a chart not reliably catch this?
+5. Explain the difference between what a `CC-BY-4.0` licence permits and what an `ODbL` licence permits, specifically regarding a database you build by combining the licensed data with your own.
+6. What does a SHA-256 checksum let you prove about a downloaded file that "I downloaded this from this URL" alone does not?
+
+## Hands-on exercise
+
+Build and exercise the client and judgement functions from this lesson's lab: `labs/sections/math-statistics-and-data/day-134-finding-data-open-datasets-and-apis/`.
+
+```bash
+cd labs/sections/math-statistics-and-data/day-134-finding-data-open-datasets-and-apis
+python3 -m venv .venv
+.venv/bin/pip install -r requirements/requirements.txt
+.venv/bin/pytest starter -v
+```
+
+Read `starter/00_brief.md` for the nine exercises in full, then open `starter/test_datasource.py` and replace each `pytest.skip(...)` with a real assertion. Exercise 1 is the day's centrepiece: prove that a naive dtype-and-range check passes on two `unemployment_rate` columns defined differently, and that a dictionary-aware check refuses the same join.
+
+### Expected output
+
+On an untouched checkout, `pytest starter -v` reports `9 skipped`, each skip message naming exactly what to assert. Once every exercise is solved, it reports `9 passed`. The reference answers live in `starter`'s sibling `examples/` directory — `.venv/bin/pytest examples -q` should already report `9 passed` before you touch anything, since that suite is the solved version.
+
+### Validate your work
+
+Run the full harness from the lab directory:
+
+```bash
+bash tests/run_tests.sh
+```
+
+A correct run ends with `38 checks, 0 failure(s)` and exits `0`. Confirm the exit code directly — `echo $?` immediately afterward, never through a pipe, since a pipeline reports its *last* command's status and can hide a real failure underneath it.
+
+### Troubleshooting
+
+See `troubleshooting.md` in the lab directory for the full list. The two most common: running `pytest examples starter` in one command aborts with an `import file mismatch`, because both directories define a module with the same name — always run them as two separate commands. And a test expecting `RateLimitExceeded` that never raises usually means the wrong server fixture was used — `mock_api` relents after 2 rejections, `stubborn_mock_api` relents after 10, and only the second will exhaust a small attempt budget.
+
+### Common mistakes
+
+Treating a passing dtype-and-range check as proof two columns are joinable — it is evidence of nothing more than "nothing obviously mechanical is wrong," which is exactly the gap this lesson exists to close. Returning a bare boolean from a licence check instead of a reason — "allowed" and "allowed, with attribution required" are both `True` and impose very different obligations on whatever gets published downstream. And writing a retry loop with no attempt cap, which behaves identically to the exact traffic pattern that gets a well-meaning script's IP address blocked from a service everyone else on the team still needs.
+
+## Practice assignment
+
+Pick one real public dataset relevant to a question you actually care about. Run the six-gate assessment against it by hand, writing out the answer to each gate in a short markdown file: who published it and when; whether a data dictionary exists and what it says about your columns of interest; what one row represents; whether the coverage matches what the source claims; what the stated licence permits and forbids; and the SHA-256 of the file you downloaded, computed with `hashlib.sha256`. If the source is an API rather than a bulk file, note whether it paginates, what its rate-limit behaviour is, and whether it supports conditional requests. End with a one-paragraph verdict: is this source fit for the question you have in mind, and what caveat would you attach if you used it anyway.
+
+## Extension challenge
+
+Take two real datasets that share a column name you suspect might be defined differently — a currency figure that might be nominal in one and inflation-adjusted in the other, a "revenue" figure that might include or exclude a subsidiary in one but not the other, anything with the same shape as this lesson's `unemployment_rate` story. Write both a naive dtype-and-range check and a dictionary-aware check against them, in the style of `naive_join_check` and `dictionary_aware_join_check` in this lesson's lab, and report honestly which one actually catches the mismatch — including the possibility that, having checked properly, the two columns turn out to be safely joinable after all.

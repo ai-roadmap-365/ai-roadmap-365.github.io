@@ -1,0 +1,823 @@
+---
+day: 149
+title: 'Loss Functions and Least Squares'
+---
+
+## Why this matters
+
+Sixty rows. One straight line, fit the ordinary way. Then one measurement
+gets corrupted — a sensor glitch, a data-entry slip, a single row where
+the true value of 85 or so gets logged as 165 — and the line is refit.
+
+```text
+  estimator    before     after    movement
+  ols        3.0465    3.8010    +0.7545
+  huber      2.9870    3.0308    +0.0437
+  quantile   2.9961    3.0064    +0.0104
+```
+
+One point, out of sixty, and the ordinary least-squares slope moves by
+three quarters of a unit. A fit fully re-tilts on the strength of a single
+bad row. Meanwhile a Huber fit on the exact same corrupted data barely
+notices — seventeen times less movement — and a fit built around the
+median notices even less, seventy-two times less.
+
+Nothing here is a bug. `LinearRegression`, `HuberRegressor` and
+`QuantileRegressor` are all doing exactly what they are told. What
+differs between them is *what they are told to minimise* — and that
+difference, which most people never examine because "minimise the error"
+sounds like one idea, is actually a decision with sharply different
+consequences depending on what kind of errors show up in your data.
+
+Every regression model you have fit so far — Day 148's single-predictor
+line included — was quietly built on top of one specific choice: minimise
+the sum of squared residuals. It is such a common default that it rarely
+gets named as a choice at all. This lesson names it, measures what it
+buys you, measures what it costs you, and measures the two most common
+alternatives against it on identical data. By the end you will be able to
+look at a dataset and say, with a number behind you, whether squared
+error is the right thing to minimise or whether it is quietly handing
+seventeen times too much influence to your worst row.
+
+This matters for AI practice specifically because almost every model you
+will train — a linear layer, a regression head bolted onto an embedding,
+a reward model, a value function in reinforcement learning — is fit by
+minimising some loss, and squared error is the reflexive default nearly
+everywhere. A training pipeline that ingests real-world data — user
+ratings, sensor logs, scraped prices — will eventually ingest a corrupted
+or adversarial value. Whether that one bad row moves your whole model by
+0.75 or by 0.01 is decided, entirely, by a choice you make before you
+call `.fit()`.
+
+## The idea in plain language
+
+Fitting a line means picking numbers for a slope and an intercept.
+Infinitely many candidate lines exist. A loss function is the rule that
+scores each candidate against the data and says which one is "best" —
+and, crucially, different scoring rules can and do disagree about which
+line wins.
+
+Two candidate lines can fit the bulk of your data almost identically and
+still disagree sharply about how to handle the one point that sits far
+from everyone else. Squared error's rule says: square every leftover gap
+(every *residual*) between the line and the actual data, add them up, and
+find the line that makes that total smallest. Absolute error's rule says:
+just add up the plain sizes of the gaps, with no squaring, and minimise
+that instead.
+
+Those sound like small variations on the same theme. They are not. The
+squaring is the whole story. A residual of 2 contributes 4 to a
+squared-error total and 2 to an absolute-error total — a factor of two
+difference, tolerable. A residual of 80, like the one in this lesson's
+opening measurement, contributes 6,400 to a squared-error total and 80
+to an absolute-error total — a factor of eighty. Squared error does not
+merely dislike large residuals a little more than small ones; it
+punishes them so disproportionately that the fitting process will
+sacrifice a great deal of accuracy on every other point just to shrink
+that one enormous term a little. Absolute error refuses to escalate that
+way — a large residual costs proportionally what it costs, nothing more.
+
+That single arithmetic fact — squaring versus not squaring — is the
+entire mechanism behind everything measured in this lesson: why the mean
+and the median disagree, why one loss has a tidy formula and the other
+does not, why Huber loss exists as a deliberate compromise, and why
+"least squares" is the right choice for some datasets and the wrong
+choice for others.
+
+## Historical background
+
+The method of least squares is older than the phrase "loss function,"
+and its early history is a genuine priority dispute worth knowing,
+because it previews the tension this whole lesson explores.
+
+Adrien-Marie Legendre published the first description of the method in
+1805, in a book on determining the orbits of comets, presenting it as a
+practical way to reconcile more observations than unknowns by minimising
+the sum of squared discrepancies. Carl Friedrich Gauss then claimed he
+had been using the same method privately since 1795, a full decade
+earlier, and published his own derivation in 1809 in his treatise on
+the motion of celestial bodies — but Gauss's version did something
+Legendre's had not: it connected least squares to an assumption about
+the errors, namely that they followed what we now call the normal
+(Gaussian) distribution, and showed that under that assumption, least
+squares was the estimator that most probable values would produce. The
+priority dispute between Gauss and Legendre was never fully settled, and
+both names are still attached to results in this area today.
+
+Squared error was not the only idea in the room, and it was not even
+first. Roger Boscovich, working decades earlier in the 1750s on the
+problem of fitting a line to measurements of the Earth's shape, proposed
+minimising the sum of the *absolute* sizes of the residuals rather than
+their squares — an early, explicit statement of the absolute-error loss
+this lesson measures directly. Pierre-Simon Laplace picked up and
+publicised Boscovich's approach later in the eighteenth century.
+Boscovich's method never displaced least squares as the default,
+largely because it lacked squared error's clean, solvable structure —
+which is exactly the property this lesson measures in the "How it
+works" section below — but the two-camp split, smooth-and-solvable
+against robust-but-harder, has never really gone away.
+
+It resurfaced formally in the twentieth century. In 1964, the
+statistician Peter Huber published a paper proposing a loss that blends
+the two: behave like squared error for small residuals, where squaring
+is harmless, and like absolute error for large ones, where squaring is
+dangerous. That construction — swept directly in this lesson's lab and
+its animated diagram — is the Huber loss, still one of the standard
+tools for robust regression sixty years later. And the theoretical
+result that explains exactly *when* squared error is the right choice
+— the Gauss-Markov theorem — also traces to Gauss's own work in the
+1820s, later sharpened and associated with the mathematician Andrey
+Markov, whose name now travels alongside Gauss's in its title.
+
+## What it is — and what it is not
+
+A loss function is a scalar-valued rule that scores one candidate model
+against the data it is being fit to, with lower always meaning better.
+It takes the model's residuals — actual value minus predicted value, one
+per row — and combines them into a single number the fitting procedure
+tries to minimise.
+
+It is not the same thing as the model. `LinearRegression`,
+`HuberRegressor` and `QuantileRegressor` in this lesson's lab all fit the
+exact same kind of model — a straight line, one intercept and one slope
+— on the exact same data. What differs between them is entirely which
+loss each one minimises. The model form answers "what shape can the
+prediction take"; the loss answers "how do we judge one candidate shape
+against another."
+
+It is not the same thing as a metric, either, and this distinction is
+worth being precise about because the two words get used interchangeably
+in casual conversation and should not be. A loss is what an algorithm
+optimises *during* fitting. A metric is what you report *afterward* to
+judge the result. They can be, and often are, different functions
+entirely: a model is routinely fit by minimising squared error and then
+reported using mean absolute error, because squared error has convenient
+calculus properties for optimisation while absolute error is easier for
+a human to interpret in the target's own units. Nothing requires the two
+to match, and Day 152 covers metrics as their own subject — this lesson
+deliberately stops at the boundary and does not cross into that
+territory, beyond stating the distinction once, here, clearly.
+
+Nor is a loss the same thing as a penalty. Ridge and lasso regression,
+which Day 151 covers, add an extra term on top of a loss — a penalty
+that discourages large coefficients — without changing the loss itself.
+Squared error plus a penalty is still fundamentally squared error; it is
+being asked to do an additional job (keep the coefficients small) on top
+of its original one (fit the data), but the underlying question this
+lesson asks — how does the estimator react to one bad row — is a
+property of the loss, and ridge and lasso inherit whichever loss they
+are built on. This lesson stays entirely on plain, unpenalised losses; a
+penalty is a separate design decision layered on top, and it is coming
+next.
+
+## Why it was created and what problems it solves
+
+Fitting a line to noisy data is an overdetermined problem: you typically
+have far more data points than the two numbers (slope and intercept)
+you are solving for, and no single line will pass exactly through all of
+them. Some rule is needed to reconcile the disagreements — to say which
+line, out of infinitely many imperfect candidates, counts as the best
+compromise. A loss function is that rule, made explicit and
+computational rather than left to eyeballing a scatter plot.
+
+Squared error solved a second problem at the same time it solved the
+first: it made the reconciliation *tractable*. Before cheap computing,
+"try every possible line and see which scores best" was not a realistic
+option — a fitting method needed a rule that calculus could solve
+directly, in closed form, without search. Squared error's landscape
+turns out to be smooth everywhere with exactly one minimum — this
+lesson's lab measures that smoothness directly, as a constant second
+derivative — which meant a solution could be written down algebraically:
+the normal equations, covered below. That combination of statistical
+motivation (Gauss's link to the normal distribution of errors) and
+computational convenience (an exact, hand-solvable formula) is most of
+why squared error became the default it still is today, over a century
+before anyone had a computer.
+
+But defaults reached for convenience carry a cost, and that cost is
+exactly what this lesson measures: convenience under well-behaved errors
+translates directly into fragility under a single badly-behaved one.
+Absolute error and Huber loss exist to solve the problem squared error
+creates once real data — with typos, sensor faults, and occasional
+extreme but genuine events — stops looking like Gauss's tidy
+assumptions.
+
+## How it works
+
+![Diagram: two side-by-side loss-landscape panels. The left panel shows squared error as a smooth parabola with one minimum at slope 3.0, its second differences constant at 0.000000. The right panel shows absolute error as a piecewise-linear, kinked curve also minimised at slope 3.0, its second differences varying with a standard deviation of 1.9366. Below both, a note states that the normal equations solve squared error directly, matching LinearRegression to within 1e-14, while absolute error has no equivalent closed form because it has no derivative at a residual of zero. Beneath that, three horizontal bars show how far each estimator's slope moved when one point was pushed 80 units off the line: ordinary least squares moved 0.7545, Huber regression moved 0.0437, seventeen times less, and median regression moved 0.0104, seventy-two times less. A final panel states the Gauss-Markov theorem precisely -- OLS is the best linear unbiased estimator, conditional on the errors -- and shows two measured boxes: under Gaussian errors OLS's standard deviation is 0.0560 against Huber's 0.0588, a ratio of 0.9524 favouring OLS, while under heavy-tailed errors OLS's standard deviation is 0.0589 against Huber's 0.0422, a ratio of 1.3957 favouring Huber. A closing note says the ranking flips with the errors, but bias never does](./assets/loss-landscape-architecture.svg)
+
+### What each loss actually minimises
+
+Take a handful of numbers — this lesson's lab uses `2.0, 3.0, 5.0, 7.0,
+100.0` — and ask two different questions about a single candidate
+number `c`: how large is the total squared error, `sum((v - c)^2)`, and
+how large is the total absolute error, `sum(abs(v - c))`. Set the
+derivative of the first with respect to `c` to zero and solve, and the
+answer that falls out is the arithmetic mean of the values — 23.4 here,
+dragged sharply upward by the single value of 100.0. Do the same with
+absolute error and there is no derivative to set to zero at every point
+(more on that in a moment), but the value that minimises the total is
+the median — 5.0 here, completely unmoved by how large the 100.0 is,
+because absolute error only counts *how many* points sit on either side
+of the candidate, never *how far away* they are.
+
+That is not a coincidence to be memorised — it is a fact you can confirm
+with a plain numerical grid search, trying thousands of candidate values
+and checking which one gives the smallest total. This lesson's lab does
+exactly that: a grid search over squared error lands at 23.39975, within
+its own resolution of the true mean; a grid search over absolute error
+lands at 5.00005, within its own resolution of the true median. Nothing
+about either result depends on believing a textbook — both are
+discoverable directly from the loss's own definition.
+
+### Why squared error has a closed form and absolute error does not
+
+Plot squared error's total against a sweep of candidate values and the
+curve is a parabola: smooth everywhere, with exactly one minimum, its
+curvature (its second derivative) constant across the whole sweep. This
+lesson's lab confirms that numerically — sweeping a candidate slope from
+2.0 to 4.0 on a real dataset, the second differences of the resulting
+squared-error curve have a standard deviation of 0.000000, meaning they
+genuinely do not vary at all.
+
+Plot absolute error's total against the same sweep and the curve is a
+sequence of straight segments joined at kinks — one kink at every slope
+where some data point's residual crosses exactly zero. It is
+piecewise-linear, not smooth, and its second differences vary
+noticeably: a standard deviation of 1.9366 on the same swept dataset.
+The curve has no single well-defined slope-of-the-slope anywhere near
+its kinks, because at a kink the function has a corner rather than a
+smooth turn.
+
+That distinction is the entire reason one loss is easy to solve
+algebraically and the other is not. A function that is smooth
+everywhere has a derivative everywhere, so setting that derivative to
+zero produces a genuine equation to solve. Squared error, being smooth,
+gives exactly that — a system called the normal equations:
+
+```text
+(X^T X) beta = X^T y
+```
+
+where `X` is the design matrix (a column of ones for the intercept and a
+column of the predictor values) and `y` is the target. Solve that linear
+system once, directly, and you have the exact least-squares answer —
+no search, no iteration, no starting guess. This lesson's lab solves it
+directly with `numpy.linalg.solve` on a 300-row dataset and confirms it
+matches scikit-learn's `LinearRegression` to within `6e-14` on the
+intercept and `1e-14` on the slope — the two are, to machine precision,
+computing the identical answer through different arithmetic.
+
+Absolute error has no equivalent system, because its derivative simply
+does not exist at a residual of exactly zero — the function has a
+corner there, not a smooth minimum, so "set the derivative to zero" is
+not a meaningful instruction everywhere on the curve. Fitting absolute
+error therefore requires an iterative method instead of a one-shot
+formula: `QuantileRegressor(quantile=0.5)`, which this lesson's lab uses
+for the median case, solves it as a linear program rather than a linear
+system. It reaches the same kind of answer — a genuine minimiser of
+absolute error — but by search rather than by direct algebra.
+
+### Huber loss: a blend, swept continuously
+
+Huber loss picks a threshold, conventionally called `epsilon`, and
+behaves like squared error for any residual smaller than that threshold
+and like a scaled absolute error for any residual larger than it. Near
+zero, where squaring is harmless, it behaves like the smooth, easy-to-
+optimise squared error. Far from zero, where squaring would blow a
+single bad point wildly out of proportion, it switches to the
+proportional, harder-to-be-fooled absolute error.
+
+This is not a hard switch between two separate modes — it is a
+continuous family, and sweeping `epsilon` demonstrates that directly.
+This lesson's lab moves one point 80 units off a line and then fits
+`HuberRegressor` at seven different values of epsilon on that
+contaminated data:
+
+| epsilon | fitted slope |
+| --- | --- |
+| 1.0 | 3.0064 |
+| 1.35 (scikit-learn's default) | 3.0308 |
+| 1.5 | 3.0505 |
+| 2.0 | 3.0906 |
+| 5.0 | 3.1511 |
+| 20.0 | 3.8010 |
+| 100.0 | 3.8010 |
+
+The slope climbs smoothly and monotonically as epsilon grows, and at
+epsilon 20 and epsilon 100 it lands *exactly* on 3.8010 — the plain
+ordinary-least-squares slope on the identical contaminated data. That is
+not approximate agreement; it is exact, to four decimal places, because
+once epsilon is large enough that every residual in the dataset falls
+inside the threshold, Huber's loss becomes squared error in every single
+term, with nothing left over from the absolute-error half. Small epsilon
+leans almost entirely on the outlier-resistant half of the blend; large
+epsilon collapses back to plain least squares. One parameter, one
+continuous dial.
+
+![Diagram: a bar chart with one bar per value of Huber's epsilon parameter, at 1.0, 1.35, 1.5, 2.0, 5.0, 20 and 100, on data where a single point has been moved 80 units off the line. The bars climb steadily from a fitted slope of 3.0064 at epsilon 1.0 through 3.0308, 3.0505, 3.0906 and 3.1511, reaching 3.8010 at both epsilon 20 and epsilon 100 and landing exactly on a dashed reference line marking the plain least-squares slope on the same contaminated data. A caption explains that small epsilon leans on absolute error and barely reacts to the outlier, large epsilon leans on squared error and reacts fully, and the climb is continuous rather than a switch between two modes](./assets/huber-epsilon-sweep-flow.svg)
+
+### The Gauss-Markov theorem, stated precisely
+
+Gauss-Markov is one of the most frequently misquoted results in applied
+statistics, almost always by dropping one of its qualifying words. Stated
+in full: under a specific set of assumptions about the errors —
+linearity of the relationship, unbiasedness of the errors, constant
+error variance, and no correlation between errors — ordinary least
+squares is the **best linear unbiased estimator**.
+
+Every one of those four words is load-bearing. "Best" here means lowest
+variance, not lowest bias and not lowest error by every conceivable
+measure. "Linear" restricts the comparison to estimators that are
+themselves linear combinations of the observed target values — it says
+nothing about how OLS compares to a nonlinear estimator. "Unbiased"
+restricts the comparison further, to estimators that are correct on
+average — it says nothing about how OLS compares to an estimator that
+deliberately trades a little bias for a lot less variance, which is
+precisely what ridge regression does on Day 151. And the entire claim is
+conditional on those four assumptions about the errors holding in the
+first place.
+
+That conditionality is not a footnote — it is the whole practical
+content of the theorem, and it is directly measurable. This lesson's lab
+fits both `LinearRegression` and `HuberRegressor` 500 times each on
+independently generated data with a known true slope of 3.0, once with
+Gaussian errors and once with heavy-tailed errors (a Student's t
+distribution with 3 degrees of freedom, scaled to a similar central
+spread):
+
+| errors | OLS mean | OLS spread (sd) | Huber mean | Huber spread (sd) | tighter estimator |
+| --- | --- | --- | --- | --- | --- |
+| Gaussian | 2.998 | 0.0560 | 2.9977 | 0.0588 | OLS (ratio 0.9524) |
+| heavy-tailed | 2.9967 | 0.0589 | 2.9984 | 0.0422 | Huber (ratio 1.3957) |
+
+Both estimators stay within 0.01 of the true value of 3.0 in both
+settings — neither is biased, in either regime, and that is worth
+noticing before anything else. What changes is the *spread*: under
+Gaussian errors, OLS's standard deviation across the 500 fits is smaller
+than Huber's, exactly as Gauss-Markov promises. Under heavy-tailed
+errors, the ranking flips — Huber becomes the tighter, more precise
+estimator, because Gauss-Markov's assumptions about the errors no longer
+hold, and its guarantee simply does not apply once they break. The
+theorem was never wrong; the measurement is showing you the edge of
+where it applies, not a contradiction of it.
+
+## An everyday analogy
+
+Picture a small delivery company trying to answer one question: what is
+our typical delivery time, and how should one wildly late delivery count
+toward that number?
+
+Ninety-nine deliveries arrive close to on time, clustered tightly around
+thirty minutes. The hundredth gets stuck behind an accident and takes
+four hours. Report the *mean* of all hundred and that one delivery drags
+the "typical" time up substantially — the mean has no way to discount a
+single extreme value; it treats every minute of lateness as equally
+informative, whether it comes from ordinary traffic or a genuine
+accident, and a number that large contributes disproportionately just by
+existing. Report the *median* instead and the four-hour outlier
+contributes exactly one vote, identical in weight to a delivery that was
+one minute late — the median only cares that the outlier is *on the late
+side*, never by how much.
+
+Squared-error regression is the mean's cousin: it inherits exactly the
+same sensitivity, for exactly the same reason — squaring the accident's
+enormous residual turns it into an enormous term in the total, and the
+fitting procedure will contort the rest of its predictions to shrink
+that one term. Absolute-error regression is the median's cousin, for the
+matching reason: no squaring, no escalation, one bad delivery counts
+once. And Huber regression is the dispatcher who says, sensibly, "if
+you're a few minutes off, I'll track that precisely — every minute
+matters for planning. If you're four hours off, something unusual
+happened, and I'm not going to let that one event dominate my sense of
+what a normal day looks like." That dispatcher's judgment call — where
+does "a few minutes" end and "something unusual" begin — is exactly
+Huber's epsilon, and this lesson's sweep of it, from a slope of 3.0064
+at epsilon 1.0 up to the exact OLS value of 3.8010 at epsilon 20, is the
+dispatcher gradually loosening that threshold until every delivery,
+including the four-hour one, gets treated as perfectly ordinary.
+
+## Examples in practice
+
+### The five-number grid search
+
+Five values — `2.0, 3.0, 5.0, 7.0, 100.0` — and two questions: which
+single number minimises the total squared error against them, and which
+minimises the total absolute error. A brute-force numerical search over
+a fine grid of candidates, checked against no formula at all, lands at
+23.39975 for the first (the true mean is 23.4000) and 5.00005 for the
+second (the true median is 5.0000). The single value of 100.0 pulls the
+mean to nearly five times the median's value, purely because it is being
+squared into the total.
+
+### The loss landscape, swept and measured
+
+Take a real sixty-row dataset and sweep a candidate slope from 2.0 to
+4.0, holding the intercept fixed, totalling both losses at each
+candidate. Both landscapes are minimised at the identical slope of 3.0
+on this dataset — the two losses agree completely on the easy case, with
+no outlier present. What differs is the *shape*: squared error's second
+differences have a standard deviation of exactly 0.000000 (a parabola);
+absolute error's have a standard deviation of 1.9366 (kinked). That is
+the direct, numerical version of "smooth versus piecewise-linear" — not
+an analogy, a measurement.
+
+### The normal equations, solved by hand
+
+On a 300-row dataset, solving `(X^T X) beta = X^T y` directly with
+`numpy.linalg.solve` gives an intercept of 4.966335126423676 and a
+slope of 2.977853013652841. Fitting `LinearRegression` on the identical
+data gives 4.966335126423733 and 2.977853013652829. The two disagree in
+the thirteenth decimal place — pure floating-point rounding, not a real
+difference — because they are two different arithmetic routes to the
+same exact mathematical answer.
+
+### The centrepiece: one outlier, three fits
+
+Sixty rows, an ordinary line, and then one point moved 80 units off it:
+
+| estimator | loss it minimises | slope before | slope after | movement |
+| --- | --- | --- | --- | --- |
+| `LinearRegression` | squared error | 3.0465 | 3.8010 | +0.7545 |
+| `HuberRegressor` | Huber (blended) | 2.9870 | 3.0308 | +0.0437 |
+| `QuantileRegressor(0.5)` | absolute error | 2.9961 | 3.0064 | +0.0104 |
+
+The same single corrupted row, the same sixty data points otherwise, and
+three genuinely different reactions — a seventeen-fold difference
+between OLS and Huber, and a seventy-two-fold difference between OLS and
+the median fit. This is not three algorithms disagreeing about how to
+compute the same answer; it is three different definitions of "the best
+answer," disagreeing about what the answer even is.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Security.** A pipeline fit with plain squared error on data an
+attacker can partially influence — a user-submitted rating, a
+crowd-sourced price feed, a review score — inherits an unbounded
+sensitivity to any one adversarial value. This lesson's measured 0.7545
+movement from a single corrupted row is a direct illustration: an
+attacker does not need to control much of your data to move your model
+substantially, only one value, and squared error hands that one value
+maximal leverage. Huber and quantile losses put an explicit, tunable
+ceiling on how much any single point can buy, which is worth treating as
+a security property, not merely a statistical nicety, whenever a
+pipeline ingests data it does not fully control.
+
+**Privacy.** A squared-error fit's heavy reliance on its most extreme
+points means those points can disproportionately influence the fitted
+line — which, in a setting where a model's parameters or predictions are
+exposed, can leak more about an unusual individual data point than about
+the population as a whole. A model that reacts moderately to any single
+row, as Huber and quantile fits do here, leaks correspondingly less
+about that row specifically. This is a secondary consideration for the
+outlier-sensitivity property measured throughout this lesson, not this
+lesson's primary subject, but it is worth flagging as one place these
+two topics touch.
+
+**Performance and scalability.** The normal equations are a single
+linear-algebra solve — fast, exact, and well-understood at scale via
+standard numerical libraries, though the direct `(X^T X)` inversion used
+here becomes numerically less stable as the number of predictor columns
+grows, which Day 150's multiple-predictor setting will address more
+carefully. Huber and quantile regression, by contrast, both require
+iterative solvers — `HuberRegressor`'s reweighted approach and
+`QuantileRegressor`'s linear program — meaning more compute per fit and,
+for very large datasets, meaningfully slower training. Choosing a robust
+loss is not free; it is a real computational trade against outlier
+protection, and the trade gets more expensive as the dataset grows.
+
+**Cost.** On the datasets in this lesson's lab — tens to hundreds of
+rows — the difference between a closed-form solve and an iterative
+robust fit is a matter of milliseconds, immaterial to any real budget.
+At production scale, with millions of rows and features fit repeatedly
+during hyperparameter search, an iterative robust loss can meaningfully
+add to compute cost, and that cost should be weighed against how much
+outlier protection the data actually needs — not assumed to be free, and
+not assumed to be prohibitive without checking.
+
+## Alternatives: free, open source, and commercial
+
+**scikit-learn** (`LinearRegression`, `HuberRegressor`,
+`QuantileRegressor`) — free and open source under the BSD 3-clause
+licence, and the tool used throughout this lesson's lab. `LinearRegression`
+is the right default when you have checked for outliers and found none
+of concern, or when speed matters and the closed form's exactness is
+worth more than robustness. `HuberRegressor` is the right choice when
+you expect occasional bad rows but still want most of squared error's
+statistical efficiency on the well-behaved majority; its one knob,
+`epsilon`, is the threshold swept in this lesson's animated diagram.
+`QuantileRegressor(quantile=0.5)` is the right choice when you want the
+strongest available protection against extreme values and can accept the
+computational cost of an iterative linear-program solve; it also
+generalises past the median, to any quantile, which Day 152's cousin
+concepts around prediction intervals will touch on. All three were used
+directly in this lesson, and their behaviour is measured, not asserted.
+
+**statsmodels** — also free and open source, and worth knowing about
+because it offers `sm.OLS` alongside `sm.RLM` (robust linear models,
+including a Huber-style M-estimator) with a heavier emphasis on
+statistical inference — standard errors, confidence intervals and
+hypothesis tests reported by default, in a style closer to traditional
+econometrics than scikit-learn's prediction-first API. Described here
+from its documentation; no output from statsmodels is reproduced
+anywhere in this lesson or its lab.
+
+**R's built-in `lm()` and the `MASS` package's `rlm()`** — free, open
+source under GPL, and the long-standing default toolkit in academic
+statistics. `lm()` fits ordinary least squares via the normal equations,
+identically in spirit to this lesson's own hand-solved version; `rlm()`
+fits Huber-style robust regression. Described here from documentation
+only; this course's labs are Python-based and no R output is reproduced.
+
+**SAS's `PROC ROBUSTREG`** — a commercial, paid product, part of SAS's
+enterprise analytics suite, offering several robust-regression methods
+including M-estimation (the Huber family) and least-trimmed-squares.
+Licensing is typically per-seat or per-server and priced through direct
+SAS sales rather than published list pricing, so no specific figure is
+quoted here; scikit-learn's `HuberRegressor` and `QuantileRegressor`,
+both used directly in this lesson, are free, well-documented equivalents
+for the core ideas this lesson covers.
+
+## Comparison with related concepts
+
+**Loss versus penalty.** A loss scores how well a candidate fits the
+data; a penalty, added on top of a loss, additionally discourages large
+coefficients regardless of fit. Ridge and lasso (Day 151) are squared
+error plus a penalty — the loss underneath is unchanged, and everything
+this lesson measured about squared error's outlier sensitivity still
+applies to a ridge or lasso fit unless a robust loss is substituted in
+as well. The two ideas are independent design axes, not alternatives to
+each other.
+
+**Loss versus metric**, restated once more because it is easy to blur:
+optimised during fitting versus reported afterward, and not required to
+be the same function. This lesson's `HuberRegressor` fits by minimising
+Huber loss and could equally be *reported* using mean absolute error,
+root mean squared error, or R-squared — Day 152's subject, deliberately
+left untouched here beyond this one clarifying sentence.
+
+**Squared and absolute error versus classification losses.** Fitting a
+line and fitting a classifier both work by minimising a loss, but the
+losses look different because the targets do: log loss and hinge loss,
+which a future course day covers, score a *probability* or a *margin*
+rather than a numeric residual. The underlying principle — a loss is a
+choice, and the choice has consequences — carries over identically; the
+specific formulas do not.
+
+**Robust regression versus outlier removal.** A tempting alternative to
+any of this lesson's losses is simply deleting rows that look extreme
+before fitting anything. That approach requires deciding, by some other
+rule, what counts as "extreme" — a judgment call made once, by hand,
+before seeing how it affects the fit. Huber and quantile regression make
+that judgment continuous and principled instead: every row stays in the
+data, and the loss itself determines how much influence it gets, rather
+than a binary keep-or-discard decision made in advance.
+
+## When to use it — and when not to
+
+**Use plain squared error (`LinearRegression`) when you have genuinely
+checked for outliers and found the data reasonably well-behaved**, and
+when the extra statistical efficiency it offers under those conditions —
+measured directly in this lesson as a smaller standard deviation across
+repeated fits — is worth having. It is also the right choice whenever
+speed and exactness matter more than robustness: the normal equations
+give you a single, exact, and fast answer with no iteration.
+
+**Use Huber loss when you expect occasional bad rows but do not want to
+throw away statistical efficiency on the well-behaved majority.** Its
+one tunable knob lets you decide, explicitly, how large a residual has
+to get before it stops being treated as "ordinary" — this lesson's
+sweep, from 3.0064 at epsilon 1.0 to the exact OLS answer of 3.8010 at
+epsilon 20, is a direct picture of that knob's whole range.
+
+**Use quantile regression at the median when you want the strongest
+practical protection against extreme values**, or when you specifically
+want to estimate a conditional median rather than a conditional mean —
+a genuinely different quantity whenever the target's distribution is
+skewed. Accept, in exchange, a slower iterative fit and somewhat less
+statistical efficiency on well-behaved data.
+
+**Do not reach for a robust loss reflexively, on every dataset,
+regardless of what the data looks like.** This lesson's own measurement
+shows OLS *winning* the precision contest under Gaussian errors — Huber
+was, on that specific comparison, the worse choice. Robustness is a real
+trade, not a strict upgrade: it buys protection against extreme values
+at a real cost in statistical efficiency when those extreme values never
+actually show up. Look at the data — or, better, measure both losses on
+it, the way this lesson's lab does — before deciding which loss to
+minimise.
+
+### The AI thread
+
+The mechanism this lesson measured — squaring gives one extreme value
+disproportionate leverage — is not confined to fitting a straight line
+to sixty rows. It is present, in some form, in essentially every model
+trained by minimising an average loss over a dataset, and AI practice
+runs into it in at least three recognisable places.
+
+**Reward models and preference data.** A reward model in reinforcement
+learning from human feedback is fit, in large part, by minimising some
+loss over human-provided scores or comparisons. A rater who is
+inconsistent, adversarial, or simply has an unusual day contributes a
+residual just like this lesson's single corrupted delivery, and a
+squared-error-style objective will let that one rater's disagreement
+pull the reward model's behaviour further than a robust objective would.
+Practitioners who down-weight or clip extreme disagreements between
+raters are, whether or not they use that language, making exactly the
+choice this lesson names explicitly.
+
+**Data poisoning.** A model whose training loss reacts strongly to a
+single extreme example is more exploitable by an adversary who can
+inject even one bad example into a training or fine-tuning set — this
+lesson's 0.7545-versus-0.0104 comparison is a direct, if simplified,
+illustration of how much leverage that one example can be handed,
+purely as a consequence of which loss the pipeline minimises. This is
+not a theoretical concern confined to linear regression; the same
+squaring mechanism is present, with the same qualitative effect, in the
+loss functions behind much larger models.
+
+**Evaluation and benchmark aggregation.** When a benchmark score is
+computed as a mean across many examples, one anomalous example — a
+malformed prompt, a scoring bug on a single item — can shift the
+reported number disproportionately, exactly as this lesson's 100.0
+shifted the mean of five numbers to nearly five times the median. Median
+or trimmed-mean aggregation, borrowed directly from this lesson's
+robust-loss intuition, is a standard and underused defence.
+
+None of this requires a different mental model from the one this lesson
+built with sixty rows and a straight line. The scale changes; the
+mechanism — squaring rewards large deviations disproportionately, and
+that reward can be exploited or simply triggered by accident — does not.
+
+## Knowledge check
+
+1. Explain, in your own words and without looking anything up, why the
+   mean minimises squared error and the median minimises absolute error.
+   Use the values `2.0, 3.0, 5.0, 7.0, 100.0` in your explanation.
+2. Sweeping a candidate slope produces a squared-error curve with
+   constant second differences and an absolute-error curve with varying
+   second differences. Connect that fact directly to why one loss has a
+   closed-form solution (the normal equations) and the other does not.
+3. A single point is moved 80 units off a fitted line. State, in one
+   sentence, the arithmetic reason ordinary least squares reacts far
+   more than a Huber fit does.
+4. Huber's epsilon parameter is swept and the fitted slope converges
+   exactly to the OLS answer at large epsilon. Explain why "exactly"
+   rather than merely "approximately."
+5. State the Gauss-Markov theorem with all four of its qualifying words
+   present, and explain what each word rules out.
+6. Under Gaussian errors, OLS's standard deviation across 500 fits is
+   smaller than Huber's. Under heavy-tailed errors, the ranking flips.
+   Explain why this is not a contradiction.
+7. A model is fit by minimising squared error and reported using mean
+   absolute error. Is this a mistake? Justify your answer using the
+   distinction between a loss and a metric.
+8. Name one setting in AI practice, other than the ones this lesson
+   named, where a squared-error-style loss could give an outlier or an
+   adversarial example disproportionate influence.
+
+## Hands-on exercise
+
+Today's lab, `Loss Functions and Least Squares`, measures every claim in
+this lesson directly, on real (synthetic, seeded) data: the mean and
+median as minimisers, the smooth-versus-kinked landscape shapes, the
+normal equations matching `LinearRegression`, the outlier-shift table,
+the Huber epsilon sweep, and the Gauss-Markov efficiency comparison
+under both Gaussian and heavy-tailed errors.
+
+Ten exercises. The first four rebuild the calculus (what each loss
+minimises, and why one has a closed form). The next three measure
+outlier sensitivity directly, including the epsilon sweep. The last two
+measure Gauss-Markov's conditional promise under two different error
+distributions.
+
+Build the environment, then work through `starter/test_loss_claims.py`,
+replacing one `pytest.skip` at a time.
+
+### Expected output
+
+The harness ends with:
+
+```text
+---------------------------------------------------------------
+14 checks, 0 failure(s)
+```
+
+and exits 0. `pytest examples -q` reports `14 passed`, and
+`pytest starter -q` reports `4 passed, 10 skipped` until you begin.
+
+The measured table includes:
+
+```text
+  estimator    before     after    movement
+  ols        3.0465    3.8010    +0.7545
+  huber      2.9870    3.0308    +0.0437
+  quantile   2.9961    3.0064    +0.0104
+  Gaussian errors     : OLS mean=2.9980 sd=0.0560   Huber mean=2.9977 sd=0.0588
+  heavy-tailed errors : OLS mean=2.9967 sd=0.0589   Huber mean=2.9984 sd=0.0422
+```
+
+### Validate your work
+
+1. `bash tests/run_tests.sh; echo "exit=$?"` reports `14 checks, 0
+   failure(s)` and `exit=0`. Capture the harness's own exit status.
+2. `.venv/bin/pytest examples -q` reports `14 passed`.
+3. `.venv/bin/python3 examples/report_measurements.py | diff - expected-output/measured-values.txt`
+   produces no output.
+4. When you have finished every exercise, `pytest starter -q` reports
+   `14 passed`.
+5. Break one assertion on purpose, confirm the harness fails, restore it.
+
+### Troubleshooting
+
+**`import file mismatch`.** You ran `pytest examples starter` together.
+Run them separately, always — both directories define modules with the
+same names.
+
+**Your numbers in the later exercises differ slightly.** Read
+`expected-output/FIELDS.md` first. Everything past the normal-equations
+exercise is sampled, from `numpy.random.default_rng` or from an
+iterative scikit-learn solver, and neither carries a cross-version
+guarantee. What must hold on any version: OLS moves furthest of the
+three estimators under an outlier, the epsilon sweep is non-decreasing,
+and Gaussian errors favour OLS while heavy-tailed errors favour Huber.
+
+**`QuantileRegressor` raised a solver error.** This lab passes
+`solver="highs"` explicitly; if you build your own without naming a
+solver, check which one your scikit-learn version defaults to.
+
+**The efficiency comparison takes a noticeable moment.** It fits 2,000
+models in total. No timing is asserted anywhere, so a slow machine
+changes nothing about whether the checks pass.
+
+### Common mistakes
+
+**Treating "the mean" as a natural default rather than squared error's
+minimiser.** The grid search in exercise 1 finds the mean without ever
+computing an average — it discovers it from the loss's own definition,
+which is the point.
+
+**Describing Huber as "the robust one" without naming its epsilon
+parameter.** It is a one-parameter family with OLS-like behaviour at one
+end and MAE-like behaviour at the other, not a fixed alternative to
+either.
+
+**Concluding from the heavy-tailed result alone that Huber is simply
+better.** Exercise 6 measured OLS winning under Gaussian errors. Run
+both before drawing a conclusion.
+
+**Reciting Gauss-Markov without its qualifying words.** "Best" (lowest
+variance), "linear," "unbiased," and conditional on its assumptions are
+all load-bearing; dropping any of them changes what is being claimed.
+
+## Practice assignment
+
+Take a regression you have already fit, or one you can fit quickly on
+data you have on hand.
+
+1. **Fit it with both a squared-error loss and a robust loss** — OLS and
+   `HuberRegressor`, at minimum. Do not decide in advance which is
+   "right"; measure both.
+2. **Deliberately corrupt one row** by a large, obvious amount — the way
+   this lesson moved one point 80 units off its line — and refit both
+   models. Report how far each coefficient moved, and the ratio between
+   the two movements.
+3. **Sweep Huber's epsilon** on your corrupted data across at least five
+   values, and report whether the sweep is monotonic and where it
+   converges.
+4. **Check whether your data looks more Gaussian or more heavy-tailed**
+   by plotting a histogram of your model's residuals (fit without the
+   deliberate corruption). State, based on that shape alone, which loss
+   you would predict wins the precision contest, then check your
+   prediction against the corrupted-vs-uncorrupted comparison you just
+   ran.
+5. **Write one paragraph** stating which loss you would ship for this
+   specific dataset, and why — citing the numbers from steps 1 through 4,
+   not a general preference.
+
+The deliverable is the comparison, not a single "correct" model.
+
+## Extension challenge
+
+Pick one and measure it.
+
+1. **Ridge, ahead of schedule.** Fit `Ridge(alpha=1.0)` on this lesson's
+   outlier-contaminated dataset and compare its coefficient movement to
+   plain `LinearRegression`'s. Day 151 owns penalties properly; this is a
+   preview of how a penalty interacts with an unchanged loss.
+2. **A second heavy tail.** Repeat the Gauss-Markov comparison with a
+   Laplace-distributed error instead of Student's t, and report whether
+   the efficiency ranking still flips in Huber's favour.
+3. **Find the crossover.** Sweep the degrees of freedom of the Student's
+   t error from 30 down to 1 and estimate, approximately, the point at
+   which OLS and Huber's standard deviations cross. Report what that
+   implies about how heavy the tails need to be before Huber earns its
+   keep.
+4. **Two outliers.** Add a second point 80 units off the line at a
+   different predictor value, and re-measure the outlier-shift table.
+   Does OLS's movement roughly double, or is the effect worse than
+   linear?
+5. **Beyond the median.** Fit `QuantileRegressor` at `quantile=0.1` and
+   `quantile=0.9` on the outlier-contaminated data, and describe, in one
+   paragraph, what the gap between those two fitted lines tells you that
+   a single squared-error fit cannot.

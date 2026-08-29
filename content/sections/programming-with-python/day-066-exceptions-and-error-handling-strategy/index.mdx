@@ -1,0 +1,680 @@
+---
+day: 66
+title: 'Exceptions and Error Handling Strategy'
+---
+
+## Why this matters
+
+For two days you have been handling data you did not create. Day 64 gave you bytes in and out of files; Day 65 gave those bytes an agreed structure. Both days ended at the same door and did not walk through it: what should your program actually *do* when the file is not there, when line 2 is not valid JSON, when the severity field says `high` where a number belongs?
+
+The syntax half of that question takes ten minutes to learn. `try`, `except`, and you are done. The half that matters — the half that separates a script from a program — is the design question underneath it: **which failures does each part of your code have the authority to decide about?** That is not a Python question. It is an architecture question, and getting it wrong produces the worst class of bug there is, the one that does not look like a bug.
+
+The concrete consequence is silence. A program that wraps its whole body in `except: pass` never crashes, and it also never tells you that it read zero of the four thousand records it was supposed to read. It prints `done`. It exits 0. The scheduler that runs it nightly reports success for six weeks. This is not hypothetical: the lab for today hands you exactly that program, and its total is wrong in a way no exit code reveals.
+
+This lands directly on your AI work. Every call to a hosted model can fail with a rate limit, a timeout, a truncated response, or a body that is supposed to be JSON and is not. Production systems built on those calls live or die on three things you will build today — a retry policy, a timeout budget, and structured error logging. And in a data pipeline, a swallowed exception has a very specific cost: you get a model trained on half a dataset, with no error anywhere to tell you which half.
+
+## The idea in plain language
+
+An **exception** is a way for code to say "I cannot do the job you asked, and I am not going to pretend otherwise" — and to say it to whoever is in a position to decide what happens next, rather than to its immediate caller only.
+
+That last clause is the whole idea. When a function returns an error code, the error stops at the caller: the caller must check it, must decide what to do, and must pass it along by hand if it cannot. When a function *raises*, the error travels. It leaves the function, leaves the caller, and keeps going outward through the chain of calls until it reaches a piece of code that says "I know what to do with this one." If nobody says that, it reaches the top, and Python prints the whole route it took and stops the program.
+
+So the decision you are making all day is not "should I use try/except here". It is **where should this failure be allowed to stop?** Some failures are decisions a small function can make. Most are not. A parser that finds a bad number knows the number is bad; it does not know whether that means skip the line, reject the file, or halt the shift. Somebody higher up knows that. The parser's job is to describe the problem precisely and get out of the way.
+
+The mistake almost everyone makes at first is handling failures too early and too broadly — catching everything, right where it happens, because it feels responsible. It is the opposite of responsible. It takes a decision that belonged to someone with more context and makes it, silently, with less.
+
+## Historical background
+
+Before exceptions there were **return codes**. In C — and in the operating system interfaces beneath every language you use, including Python's — a function that might fail returns a sentinel value: `NULL` for a failed allocation, `-1` for a failed system call, with the actual reason deposited in a global variable named `errno`. The convention is old and it works, in the sense that a disciplined programmer can write correct code with it. The trouble is what happens when the programmer is not disciplined at that exact moment. Nothing forces the check. `fclose(f);` compiles, runs, and returns a value nobody looked at.
+
+Structured exception handling as we know it grew from work in the 1970s. John Goodenough's 1975 paper on exception handling and language design set out the vocabulary, and Barbara Liskov's CLU language gave the mechanism a serious first implementation. Ada, in 1980, brought raise-and-handle into a widely used language. C++ added exceptions in the early 1990s, and Java made them unavoidable in 1995 with *checked* exceptions — a compiler-enforced rule that a method must either handle a declared exception or declare that it throws it. Java's experiment is instructive precisely because it was partly a failure: developers, forced to write handlers they did not want, wrote empty ones, and the language that tried hardest to prevent ignored errors produced an enormous body of code that ignores errors in a syntactically approved way.
+
+Python has had exceptions since its first public release in 1991, and Guido van Rossum chose them as the primary error mechanism rather than an escape hatch. Two later additions matter for today. `try`/`finally` and `try`/`except` were separate statements until Python 2.5 unified them, which is why you can now write all four blocks together. And PEP 3134, in Python 3.0, added **exception chaining**: when one exception is raised while another is being handled, Python keeps both, so a traceback can show you the failure you saw *and* the failure that caused it. That single feature is the difference between a log line that helps and one that wastes an afternoon.
+
+## What it is — and what it is not
+
+Error handling strategy means: deciding which conditions are expected and which are bugs, choosing the level of your program where each expected condition gets decided, making sure the information needed for that decision survives the trip, and guaranteeing that resources are released no matter which path the program takes out.
+
+The misconceptions here are expensive, so let us be precise about what this is not.
+
+| Common misconception | The reality |
+| --- | --- |
+| "Error handling means adding try/except." | It means deciding *where* failures stop. A try/except in the wrong function is worse than none at all, because it makes the wrong decision invisibly. |
+| "A program that never crashes is robust." | A program that never crashes may simply be lying. `except: pass` guarantees no crash and guarantees no information. |
+| "`except Exception:` catches everything." | It does not catch `KeyboardInterrupt`, `SystemExit`, or `GeneratorExit`, and that is deliberate. A bare `except:` does catch them, which is why Ctrl-C stops working. |
+| "Catching an error and printing it is handling it." | Only if the program can then do something sensible. Printing and continuing with corrupt state is swallowing with extra steps. |
+| "`raise` inside a handler is fine." | Bare `raise` re-raises the current exception intact. `raise NewError(...)` without `from` still records the original as context, but `raise NewError(str(err))` throws the traceback away. |
+| "Exceptions are for exceptional situations only." | A missing file is not exceptional; it is Tuesday. Python's own idiom uses exceptions for ordinary expected conditions. What matters is that you handle them deliberately. |
+| "`assert` validates input." | `assert` vanishes entirely when Python runs with `-O`. Validation that can disappear is not validation. |
+| "Retrying makes an operation reliable." | Retrying a deterministic failure just fails more slowly. Retrying without a cap turns your bug into a load attack on someone else's service. |
+| "The traceback is noise to hide from users." | The traceback is the single most valuable diagnostic your program produces. Hide it from the user, never from the log. |
+
+## Why it was created and what problems it solves
+
+**Exceptions exist** because return codes are optional and failures are not. With a raise, the failure cannot be ignored by inaction: doing nothing means the exception continues outward, and eventually the program stops. The default behaviour of an unhandled error is loud. That inversion — silence requires effort, noise is free — is the entire point.
+
+**The call-stack unwind exists** so the failure reaches the level that can decide. A function three layers down does not know whether one bad record should end the run. Unwinding carries the problem outward until it meets code that has the context to choose.
+
+**The traceback exists** because knowing *what* failed is half a diagnosis. You also need *how you got there*, and the sequence of calls is that answer. Python collects each abandoned frame on the way out and prints them all.
+
+**`finally` exists** because cleanup must not depend on success. An open file, a held lock, a started transaction — each must be released whether the block finished, returned early, or blew up. `finally` is the only construct that promises to run on every path out.
+
+**`else` exists** to keep the try block small. Code that must run only when nothing raised belongs in `else`, not at the end of `try`, so a `KeyError` from your *success* path cannot be mistaken for a `KeyError` from the risky call.
+
+**Exception chaining (PEP 3134) exists** because a translated error loses its cause. When a low-level `ValueError` becomes a high-level `RecordError`, you want both in the log. `raise ... from err` says the causation was deliberate.
+
+**The class hierarchy exists** so you can catch at exactly the width you need — `FileNotFoundError` when only that matters, `OSError` when any filesystem problem does, `Exception` when you are the last line of defence and are about to log everything.
+
+## How it works
+
+![Diagram: the Python built-in exception hierarchy drawn as a labelled tree, with BaseException at the root, the SystemExit, KeyboardInterrupt and GeneratorExit branch called out as sitting deliberately outside Exception, and Exception itself branching into ValueError, TypeError, LookupError with KeyError and IndexError beneath it, OSError with FileNotFoundError and PermissionError beneath it, ArithmeticError with ZeroDivisionError beneath it, and a custom exception of your own](./assets/exception-hierarchy.svg)
+
+Every exception in Python is an object, and every one of them descends from `BaseException`. The tree in the diagram is not trivia — it is the mechanism by which `except` decides whether to fire. An `except` clause matches if the raised exception is an instance of the named class **or any of its subclasses**. So `except LookupError:` catches a `KeyError` and an `IndexError`; `except OSError:` catches `FileNotFoundError`, `PermissionError`, and `IsADirectoryError`; `except Exception:` catches nearly everything your own code will ever raise.
+
+Nearly. Look at the dashed box on the left of the diagram. `SystemExit`, `KeyboardInterrupt`, and `GeneratorExit` hang off `BaseException` *beside* `Exception`, not under it. That placement is a deliberate design decision, and you can check it yourself:
+
+```python
+>>> issubclass(KeyboardInterrupt, Exception)
+False
+>>> issubclass(SystemExit, Exception)
+False
+```
+
+Those three are not errors. They are control-flow signals: "the user pressed Ctrl-C", "somebody called `sys.exit()`", "this generator is being closed". Putting them outside `Exception` means a well-behaved `except Exception:` — a broad catch at the top of a program, logging and continuing — cannot accidentally trap a Ctrl-C. A **bare** `except:` sits at `BaseException` level and catches them all, which is exactly why a program with a bare except inside a loop cannot be interrupted from the keyboard.
+
+### What actually happens on a raise
+
+![Diagram: how a raised exception unwinds the call stack — parse_record raises, finds no matching handler in its own frame and is abandoned, load_records is checked next and its except RecordError clause matches so the search stops and the handler runs, main is never reached by that exception, and an inset shows the try, except, else, finally execution order for both the raising and the non-raising path](./assets/exception-unwinding-flow.svg)
+
+When `raise` executes, four things happen in order.
+
+1. **An exception object is constructed.** `RecordError("line 2: missing field 'severity'")` is an ordinary object with a message, a type, and — once raised — a traceback attached to it.
+2. **The current frame is searched for a handler.** A *frame* is one function call's private workspace: its local variables and its position in the code. The interpreter asks whether the raise happened inside a `try` whose `except` clauses name a matching type.
+3. **If there is no match, the frame is abandoned.** Before leaving, the interpreter records the file, line, and function in the traceback, and runs any `finally` block that frame owns. Then it resumes the search in the *caller's* frame.
+4. **This repeats outward** until a frame matches — at which point the search stops and that handler runs — or until the stack is exhausted, in which case Python prints the collected frames and exits with status 1.
+
+The flow diagram traces exactly that walk for the lab's program. `parse_record` raises. It has no handler for `RecordError`, so it is recorded and abandoned. `load_records` is checked next and does have `except RecordError as err:` — the search stops, the handler logs the record and lets the loop continue, and `main` never sees the exception at all. The same diagram notes the contrast: a `FileNotFoundError` from `open()` finds no match in `load_records`, unwinds past it, and is caught in `main`. Same walk, different frame, because the frames declared different interests.
+
+### Reading a real traceback
+
+Here is a genuine traceback, captured by running the lab's unhandled version against a file whose severity field says `high`. The absolute paths have been shortened to `<lab>`; yours will show wherever you cloned the repository, and that difference is normal:
+
+```text
+Traceback (most recent call last):
+  File "<lab>/examples/raw_triage.py", line 45, in <module>
+    sys.exit(main(sys.argv))
+             ~~~~^^^^^^^^^^
+  File "<lab>/examples/raw_triage.py", line 40, in main
+    print("total severity:", total_severity(argv[1]))
+                             ~~~~~~~~~~~~~~^^^^^^^^^
+  File "<lab>/examples/raw_triage.py", line 32, in total_severity
+    total += read_severity(json.loads(line))
+             ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "<lab>/examples/raw_triage.py", line 21, in read_severity
+    return int(record["severity"])
+ValueError: invalid literal for int() with base 10: 'high'
+```
+
+Read it in this order, and never any other.
+
+**Last line first.** `ValueError: invalid literal for int() with base 10: 'high'`. That is the type and the message — the *what*. Everything above it is the *how you got here*.
+
+**Second-to-last frame block, next.** `line 21, in read_severity` with the source line `return int(record["severity"])`. That is where the exception was actually raised. The `~~~^^^` carets underneath a call in the other frames (a feature of recent Python versions; older ones omit them) point at the exact sub-expression that failed.
+
+**Then walk upward to see the route.** Line 45 called `main`, which at line 40 called `total_severity`, which at line 32 called `read_severity`. The frames print **outermost first, innermost last**, which is why the phrase at the top is "most recent call last". Beginners read tracebacks top-down and conclude the bug is in `sys.exit`. It is not. The bug is in the last frame, and the frames above it are the path.
+
+### try / except / else / finally
+
+The full statement has four blocks, and each one has a job:
+
+```python
+handle = open(path, "r", encoding="utf-8")
+try:
+    records = [parse_record(line, n) for n, line in enumerate(handle, 1)]
+except RecordError as err:
+    logging.exception("rejected a record")
+    return []
+else:
+    logging.info("read %d records", len(records))
+    return records
+finally:
+    handle.close()
+```
+
+**`try`** holds the smallest amount of code that can fail — ideally the risky call and nothing else. Every extra line inside it is a line whose own accidental `KeyError` will be caught by a handler meant for something else.
+
+**`except`** holds the response, and there may be several clauses tried **in order, top to bottom**. Order matters enormously because matching includes subclasses: if you write `except ValueError:` before `except json.JSONDecodeError:`, the second clause is dead code, since `JSONDecodeError` is a subclass of `ValueError`. Specific first, general last, always.
+
+**`else`** holds the code that must run only when nothing raised. Two reasons it earns its keep: it keeps the `try` block minimal, and it makes the success path explicit to a reader.
+
+**`finally`** holds cleanup, and it runs on **every** path out — normal completion, a handled exception, an unhandled one travelling through, a `break`, or a `return`. That last case surprises people: if the `try` block executes `return records`, Python evaluates the return value, then runs `finally`, then actually returns. The cleanup is not skipped by an early exit. (The `with` statement you met on Day 64 is built on exactly this guarantee; `with open(...)` is a `finally: close()` you did not have to write.)
+
+### Chaining: `raise` versus `raise ... from err`
+
+When you catch a low-level error and raise a higher-level one, Python tracks the relationship either way — but it tells the reader two different stories.
+
+Raise a new exception inside a handler without `from`, and Python records the original as the **implicit context**. Here is the real output:
+
+```text
+Traceback (most recent call last):
+  File "ctx.py", line 5, in <module>
+    lookup({})
+  File "ctx.py", line 2, in lookup
+    return config["retries"]
+KeyError: 'retries'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "ctx.py", line 7, in <module>
+    raise RuntimeError("configuration is incomplete")
+RuntimeError: configuration is incomplete
+```
+
+"During handling of the above exception, another exception occurred" is Python's careful way of saying: these two are related in time, and I do not know whether that was on purpose. It is what you see when the second error was an accident — a bug in your handler.
+
+Add `from err` and the wording changes to a claim of causation. This is the lab's real captured log, with paths shortened:
+
+```text
+ERROR: rejected record on line 2
+Traceback (most recent call last):
+  File "<lab>/examples/triage.py", line 56, in parse_record
+    record = {"id": raw["id"], "severity": int(raw["severity"])}
+ValueError: invalid literal for int() with base 10: 'high'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<lab>/examples/triage.py", line 176, in load_records
+    records.append(parse_record(line, line_number))
+  File "<lab>/examples/triage.py", line 64, in parse_record
+    raise RecordError(f"line {line_number}: severity is not a whole number") from err
+RecordError: line 2: severity is not a whole number
+```
+
+"The above exception was the **direct cause**" is a deliberate statement by you, the author, stored on the new exception. Use `from err` whenever you are translating an error on purpose. Use `from None` — rarely — when the underlying cause is a genuinely irrelevant implementation detail you do not want in the log.
+
+And the third option: a **bare `raise`** inside a handler re-raises the current exception completely intact, traceback and all. That is how you log a failure at one level and still let it travel:
+
+```python
+try:
+    dispatch(counts)
+except ConnectionError:
+    logging.exception("dispatch failed; letting the caller decide")
+    raise            # not `raise err` — bare raise keeps everything
+```
+
+### Your own exception classes
+
+A custom exception is a class that inherits from `Exception`. Classes get their own lesson tomorrow, on Day 67, so today you use exactly one form and no more:
+
+```python
+class RecordError(Exception):
+    """One intake record could not be admitted."""
+```
+
+That is the complete definition. No methods, no attributes, nothing to understand beyond "it is an `Exception` with a name of your choosing". Tomorrow that syntax will stop being a magic incantation.
+
+When does a custom exception earn its place? When callers need to catch *your* failure specifically and not confuse it with the failures of the machinery you used. `parse_record` may fail because of `json.JSONDecodeError`, `KeyError`, `TypeError`, or `ValueError`. A caller that wants to say "a record was bad, skip it" should not have to name all four — and worse, `except ValueError:` at that level would also catch a `ValueError` accidentally raised by the caller's own code. One `RecordError` translates four mechanical failures into one meaningful one. When you have nothing to add beyond what a built-in already says, use the built-in.
+
+### EAFP versus LBYL
+
+Two styles, both valid, with different failure modes.
+
+**Look Before You Leap** checks first: `if os.path.exists(path): open(path)`. **Easier to Ask Forgiveness than Permission** just tries it and handles the failure: `try: open(path) except FileNotFoundError:`. Python's community strongly prefers EAFP, and the reason is not aesthetic — it is a **race condition**. Between your `exists()` check and your `open()` call, time passes. Another process can delete the file, revoke your permission, or rename the directory. The check told you the truth about a moment that has already ended, and you must handle `FileNotFoundError` anyway. Now you have two code paths for one failure, and only one of them is tested.
+
+The same applies to dictionaries. `if "severity" in record: use(record["severity"])` performs two lookups and is fine for a local dict nobody else can touch. EAFP performs one and is honest about the failure. LBYL is genuinely better in two situations: when the check is cheap and the failure is common enough that exception overhead matters in a hot loop, and when a value must be validated for *policy* reasons rather than mechanical ones — a severity of 9 is a perfectly good integer, and only a range check catches it.
+
+### The strategy layer
+
+Here is the actual doctrine, and it is where the hospital comes in.
+
+**Fail fast at the boundary.** Validate at the edges of your program — the command line, the file it opens, the API response it parses. A malformed input that reaches the middle of your program has already cost you the ability to give a clear message about it.
+
+**Let it propagate through the middle.** Functions in the middle should mostly not catch. If a function cannot make a *decision* about a failure, catching it there can only lose information.
+
+**Handle where you can act.** The test for whether a handler belongs somewhere is a single question: after this `except` block runs, does the program do something genuinely different and correct? If the answer is "it logs and carries on with broken state", the handler is in the wrong place.
+
+**Retry only what a later attempt might survive.** A `ConnectionError` might succeed in 200 milliseconds. A `ValueError` from parsing `"high"` as an integer will fail identically forever; retrying it three times just wastes 350 milliseconds before failing. Cap the attempts, use exponential backoff, and when you give up, re-raise with the cause chained.
+
+**Log with `logging.exception`, not `print`.** Called from inside an `except` block, it records the message *and* the full chained traceback at ERROR level, with a timestamp, a logger name, and a destination you configure once. Here is a real run:
+
+```text
+ERROR triage: could not read severity for record r-1002
+Traceback (most recent call last):
+  File "log.py", line 5, in <module>
+    int("high")
+ValueError: invalid literal for int() with base 10: 'high'
+INFO triage: run finished
+```
+
+`print(err)` would have given you `invalid literal for int() with base 10: 'high'` and nothing else — no level, no timestamp, no traceback, no route, and it would have gone to whatever stream happened to be attached.
+
+**Distinguish an expected condition from a bug.** A missing file, a malformed record, a rate limit: expected. Your program should have a considered response. A `TypeError` because you passed a list where a dict belonged: a bug. Your program should not have a considered response — it should stop, loudly, so you fix it.
+
+**And `assert` is not error handling.** Run the same script two ways and watch the check evaporate:
+
+```text
+$ python3 a.py
+AssertionError: x must be positive
+$ python3 -O a.py
+-5
+```
+
+Under `-O` the assertion is not merely ignored; it is not compiled into the program. Use `assert` for internal invariants you are documenting for yourself and for tests. For anything a user or a file can cause, `raise ValueError(...)`.
+
+### Building `@retry` from scratch
+
+You met decorators on Day 58: a decorator is a function that takes a function and returns a replacement. A retry decorator is the clearest possible use for one, because "try this again" is entirely orthogonal to what "this" is. Here is the lab's implementation, complete:
+
+```python
+def retry(attempts=3, base_delay=0.05, sleep=time.sleep):
+    """Return a decorator that retries a callable with exponential backoff."""
+
+    def decorate(function):
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(1, attempts + 1):
+                try:
+                    return function(*args, **kwargs)
+                except (ConnectionError, TimeoutError) as err:
+                    last_error = err
+                    if attempt == attempts:
+                        break
+                    delay = base_delay * (2 ** (attempt - 1))
+                    print(f"attempt {attempt} failed ({err}); retrying in {delay:.2f}s",
+                          file=sys.stderr)
+                    sleep(delay)
+            raise DispatchError(
+                f"{function.__name__} gave up after {attempts} attempts"
+            ) from last_error
+
+        wrapper.__name__ = function.__name__
+        return wrapper
+
+    return decorate
+```
+
+Five decisions are worth naming. The **tuple** `(ConnectionError, TimeoutError)` is the retry policy expressed as types — nothing else is retried, so a `ValueError` propagates on the first attempt as it should. **`last_error` is captured** because it is needed after the loop, outside the `except` block. The **backoff doubles**: `base_delay * 2 ** (attempt - 1)` gives 0.05 s then 0.10 s, so a struggling service is not hammered by every client at a fixed interval. The loop **breaks rather than raising inside the handler**, keeping the final raise in one place. And the final `raise ... from last_error` means the caller who catches `DispatchError` still gets the `ConnectionError` in the traceback.
+
+Run against a service that never answers, this is the real output — a `DispatchError` with its cause attached:
+
+```text
+attempt 1 failed (offline ward system never answers); retrying in 0.05s
+attempt 2 failed (offline ward system never answers); retrying in 0.10s
+Traceback (most recent call last):
+  File "<lab>/examples/triage.py", line 152, in dispatch_offline
+    raise ConnectionError("offline ward system never answers")
+ConnectionError: offline ward system never answers
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<lab>/examples/dispatch_demo.py", line 30, in <module>
+    triage.dispatch_offline(COUNTS)
+  File "<lab>/examples/triage.py", line 123, in wrapper
+    raise DispatchError(
+        f"{function.__name__} gave up after {attempts} attempts"
+    ) from last_error
+triage.DispatchError: dispatch_offline gave up after 3 attempts
+```
+
+One caution for real systems: the `sleep` parameter is injectable so tests can run instantly, and the flaky operation in the lab is deterministic so the output above is identical on every run. Real retry policies add **jitter** — a small random offset to each delay — so that a thousand clients recovering from the same outage do not all retry in lockstep and knock the service back over.
+
+## An everyday analogy
+
+A hospital emergency department is an error-handling strategy that people's lives depend on, and it is organised exactly the way your program should be.
+
+**Triage at the door is failing fast at the boundary.** The triage nurse does not treat anybody. The nurse assesses, assigns a severity, and turns away what does not belong there at all — a patient needing a different facility is redirected in the first minute, not after four hours of tests. That is validation at the edge: reject what the system cannot handle while rejecting is still cheap.
+
+**A nurse who finds something outside their authority escalates.** They do not guess and they do not quietly do nothing. They describe the problem precisely — vitals, history, what they observed — and hand it to someone with the authority to decide. That is a raise. The `except` clauses in each frame are the standing orders at each level: *this* I am cleared to handle, *that* goes up.
+
+**The chart is the traceback.** By the time the case reaches the consultant, it carries the whole route — who saw the patient, in what order, what each of them found. A consultant handed a bare diagnosis with no history is exactly a developer handed `print(err)`.
+
+**`finally` is the ward that gets cleaned regardless.** However the case ends — discharged, admitted, transferred, or worse — the bed is stripped and the equipment sterilised. Nobody makes that conditional on the outcome, and neither should your `close()`.
+
+**Retry with backoff is paging a specialist who does not answer.** You call again in a minute, then in two. You do not call three hundred times a second, and after a few attempts you escalate rather than waiting forever. Crucially, you only re-page for reasons a second call might fix. If the specialist is on leave for a fortnight, calling again is not a strategy.
+
+**And the cardinal sin has a name here too.** A nurse who noticed something alarming, wrote nothing down, and sent the patient home because the shift was busy — that is `except Exception: pass`. The department reports a normal night. Everybody's numbers look fine. The failure is real and nobody knows.
+
+The analogy holds even at its edges. `KeyboardInterrupt` and `SystemExit` outside the `Exception` branch are the fire alarm: it is not a patient, it is not triaged, and no ward-level protocol is allowed to absorb it. When the building says evacuate, you evacuate.
+
+## Examples in practice
+
+The lab's `parse_record` is the strategy in miniature — four narrow handlers, ordered most-specific-first, each translating a mechanical failure into one meaningful one, with `else` for the policy check:
+
+```python
+try:
+    raw = json.loads(line)
+    record = {"id": raw["id"], "severity": int(raw["severity"])}
+except json.JSONDecodeError as err:
+    raise RecordError(f"line {line_number}: not valid JSON") from err
+except KeyError as err:
+    raise RecordError(f"line {line_number}: missing field {err.args[0]!r}") from err
+except ValueError as err:
+    raise RecordError(f"line {line_number}: severity is not a whole number") from err
+else:
+    if not 1 <= record["severity"] <= 5:
+        raise RecordError(f"line {line_number}: severity is outside 1-5")
+    return record
+```
+
+`json.JSONDecodeError` must come before `ValueError` because it is a subclass of it — reverse those two clauses and the specific message is unreachable. The range check lives in `else` so that a `KeyError` raised by the check itself could never be mistaken for a parse failure.
+
+One level up, the loop handles what it can act on and leaves the rest alone:
+
+```python
+handle = open(path, "r", encoding="utf-8")   # NOT wrapped — a bad path is not our decision
+try:
+    for line_number, line in enumerate(handle, start=1):
+        try:
+            records.append(parse_record(line, line_number))
+        except RecordError as err:
+            logging.exception("rejected record on line %d", line_number)
+            problems.append(str(err))
+finally:
+    handle.close()
+```
+
+And `main` — the boundary — is where a missing file becomes an exit code:
+
+```python
+try:
+    records, problems = load_records(path)
+except FileNotFoundError as err:
+    print(f"error: no such intake file: {err.filename}", file=sys.stderr)
+    logging.exception("intake file missing")
+    return 1
+```
+
+The behavioural difference is visible from the terminal. A bad *record* costs one line and exit 0:
+
+```text
+$ python3 -u examples/triage.py examples/samples/missing-field.jsonl ; echo "exit: $?"
+admitted 2 record(s), rejected 1
+immediate  1
+urgent     1
+routine    0
+rejected: line 2: missing field 'severity'
+attempt 1 failed (ward system unavailable (call 1)); retrying in 0.05s
+attempt 2 failed (ward system unavailable (call 2)); retrying in 0.10s
+dispatched 2 record(s) to the ward system
+exit: 0
+```
+
+A bad *path* stops the run with exit 1:
+
+```text
+$ python3 -u examples/triage.py examples/samples/no-such-file.jsonl ; echo "exit: $?"
+error: no such intake file: examples/samples/no-such-file.jsonl
+exit: 1
+```
+
+Now compare the same missing file through a program with a bare except:
+
+```text
+$ python3 -u examples/swallowing.py examples/samples/no-such-file.jsonl ; echo "exit: $?"
+total severity: 0
+done
+exit: 0
+```
+
+A total of zero, the word `done`, and a success exit code, from a file that does not exist. That is the bug this entire lesson exists to prevent.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Security.** A swallowed exception hides precisely the events you most need to see — a permission denial, a failed integrity check, an unexpected authentication result. Attackers rely on that silence. A bare `except:` additionally traps `KeyboardInterrupt`, so an operator cannot stop a misbehaving process from the keyboard. In the other direction, an unhandled exception shown to a *user* is a disclosure risk: a traceback carries file paths, function names, and often the offending values themselves.
+
+**Privacy.** That last point is the privacy issue. Tracebacks quote source lines and can print arguments; a chained traceback can include the raw record that failed. If those records contain personal data, your error log has just become a data store with a retention policy nobody wrote. Log identifiers, not payloads.
+
+**Performance.** Raising and handling an exception costs more than a comparison, so LBYL genuinely wins in a hot loop where the failure is common — the classic case is a dictionary lookup executed millions of times. But `try` costs almost nothing when nothing is raised, which is why EAFP is the default. The expensive mistake is elsewhere: an uncapped retry loop against a failing service turns one slow request into indefinite waiting, and there is no timeout on `time.sleep` waiting for something that will never work.
+
+**Scalability.** Retry policy is a scalability question in disguise. When a shared service degrades, every client's retries arrive simultaneously and finish the job the outage started — the "thundering herd". Exponential backoff spreads them out; jitter spreads them further; a cap on attempts stops them entirely. A retry policy without all three is a load generator.
+
+**Cost.** In money terms, the two costs are re-running and re-training. A pipeline that swallowed errors produces output that looks complete, so nobody re-runs it until the damage surfaces downstream — by which time the correct fix is to find the original data, re-run the pipeline, and re-train whatever learned from the bad version. For paid APIs, retries are billed: a failed call that gets retried three times may be charged three times, so an uncapped retry is a direct, unbounded line item.
+
+## Alternatives: free, open source, and commercial
+
+Everything in the standard library below is **free and built in**. The paid tier appears only in hosted error tracking, where a company runs the servers that receive your errors.
+
+| Option | What it is | When to choose it | Cost |
+| --- | --- | --- | --- |
+| `try`/`except` | The language mechanism | Always — this is the substrate everything else sits on | Free, built in |
+| `logging` | The stdlib logging framework | Any program that runs unattended or must leave a record | Free, built in |
+| `contextlib.suppress` | A context manager that swallows named exception types | The narrow, deliberate "this failure is genuinely fine" case | Free, built in |
+| `warnings` | Non-fatal messages about deprecated or suspect usage | Telling a *developer* something without stopping the program | Free, built in |
+| `sys.excepthook` / `traceback` | Last-resort hook and traceback formatting | Controlling what an unhandled exception looks like on exit | Free, built in |
+| Hosted error tracking (for example Sentry) | A service that receives, groups, and alerts on exceptions | Once errors happen on machines you cannot read logs on | Free tier available; paid tiers by volume |
+| Structured logging libraries (for example `structlog`, `python-json-logger`) | Emit log records as JSON objects rather than prose lines | When machines, not humans, read the logs | Free, open source (`pip install`) |
+
+**`try`/`except` — how, with an example.** Choose it whenever a specific failure has a specific response. Catch the narrowest type that covers what you can act on, and bind the instance when you need its details:
+
+```python
+try:
+    data = json.loads(payload)
+except json.JSONDecodeError as err:
+    raise ResponseError(f"model returned non-JSON at char {err.pos}") from err
+```
+
+**`logging` — how, with an example.** Choose it the moment output outlives the terminal. Configure once at the boundary; call `logging.exception` only from inside a handler, because it reads the exception currently being handled:
+
+```python
+import logging
+
+logging.basicConfig(filename="run.log", filemode="w", level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("triage")
+try:
+    admit(record)
+except RecordError:
+    log.exception("rejected record %s", record["id"])   # message + full traceback
+```
+
+The five levels — DEBUG, INFO, WARNING, ERROR, CRITICAL — let one program serve a quiet production run and a noisy debugging session from the same code, changing only `level=`.
+
+**`contextlib.suppress` — how, with an example.** Choose it when doing nothing is genuinely the correct response and you want that intent to be unmistakable. It is `except X: pass` with the crucial difference that it names X, so it is a decision rather than an accident:
+
+```python
+import contextlib, os
+
+with contextlib.suppress(FileNotFoundError):
+    os.remove("triage.tmp")      # already gone is exactly as good as removed
+```
+
+Never pass `Exception` to it. At that width it is the bare-except anti-pattern wearing better clothes.
+
+**`warnings` — how, with an example.** Choose it to tell a developer that something still works but should change. Unlike an exception it does not unwind anything; the program keeps running. This is the real output:
+
+```text
+misc.py:13: DeprecationWarning: severity field will be required in a future version
+  warnings.warn("severity field will be required in a future version", DeprecationWarning)
+still running after the warning
+```
+
+Note that `DeprecationWarning` is hidden by default outside `__main__`; the run above used `python3 -W always`. Warnings are for your callers, not your users.
+
+**`sys.excepthook` and `traceback` — how, with an example.** Choose `traceback` when you want to *format* an exception yourself — printing a caught one, or storing the text. Choose `sys.excepthook` to control what a completely unhandled exception looks like on the way out, which is how command-line tools print a clean message while still writing the full detail to a log:
+
+```python
+import sys, traceback
+
+def last_words(exc_type, exc_value, exc_tb):
+    print(f"unhandled {exc_type.__name__}: {exc_value}", file=sys.stderr)
+    traceback.print_exception(exc_type, exc_value, exc_tb)
+
+sys.excepthook = last_words
+```
+
+That produced, on a real run: `unhandled ValueError: severity is not a whole number`, followed by the full traceback and exit status 1.
+
+**Hosted error tracking — when to choose it.** Once your code runs somewhere you cannot read the log file — a server, a worker fleet, a user's machine — you need errors to come to you. Services such as Sentry receive exceptions over the network, group identical ones together so a thousand occurrences become one issue with a count, attach the traceback and environment, and alert you. Typically you add a client library and one initialisation call, after which unhandled exceptions are reported automatically. These services generally offer a free tier for individuals and small volumes, with paid plans priced by event volume and retention; check the current terms yourself rather than trusting a figure quoted anywhere, including here. The trade-off is real: you are sending diagnostic data, which may include sensitive values, to a third party.
+
+**Structured logging — when to choose it.** A prose log line has to be parsed with regular expressions before anything can query it. A structured logger emits each record as a JSON object — level, message, timestamp, plus whatever fields you attach — so a log aggregator can filter on a field directly. Choose it when logs are read by machines or when you need to answer questions like "how many rejections mentioned a missing severity, per hour". The stdlib can approximate this with a custom `Formatter`; libraries such as `structlog` and `python-json-logger` are free, open source, and save you writing it.
+
+## Comparison with related concepts
+
+| Concept A | Concept B | Key difference |
+| --- | --- | --- |
+| Return code | Raised exception | A return code can be ignored by doing nothing; an exception propagates by doing nothing. Silence requires effort |
+| `except Exception:` | bare `except:` | `Exception` spares `KeyboardInterrupt`, `SystemExit`, and `GeneratorExit`; a bare except traps them, so Ctrl-C stops working |
+| `raise` (bare) | `raise err` | Bare re-raises the current exception with its traceback intact; `raise err` inside a handler is nearly the same but bare is the idiom, and `raise SomeError(str(err))` discards the route entirely |
+| `raise X from err` | `raise X` in a handler | `from` sets `__cause__` and prints "direct cause" — a deliberate claim. Without it Python sets `__context__` and prints "during handling", which reads as an accident |
+| EAFP | LBYL | LBYL's check describes a moment that has already passed; the file can vanish between the check and the open. EAFP has one code path and no race |
+| `else` block | Code at the end of `try` | `else` runs only when nothing raised and is not itself covered by the handlers, so its own errors are not misattributed |
+| `finally` | Code after the try statement | `finally` runs on every exit path including `return`, `break`, and an exception travelling through. Code after the statement runs only if control reaches it |
+| `assert` | `raise ValueError(...)` | `assert` is removed entirely under `-O`. Use it for internal invariants and tests, never for validating input |
+| Expected condition | Bug | A missing file deserves a considered response; a `TypeError` from your own wrong argument deserves a crash and a fix |
+| `logging.exception` | `print(err)` | The first records level, timestamp, logger, and the full chained traceback to a configured destination; the second records one line of text to whatever stream is attached |
+| `contextlib.suppress(X)` | `except X: pass` | Functionally equivalent for a named X; `suppress` makes the deliberateness syntactically obvious and cannot drift into a bare except |
+| Retryable error | Deterministic error | A `ConnectionError` may succeed on the next attempt; a `ValueError` from bad input will fail identically forever. Retrying the second wastes time and money |
+
+## When to use it — and when not to
+
+Handle an exception where the handler can make the program do something genuinely different and correct: reject one record and continue, fall back to a cached value, retry a transient failure, or report clearly and exit non-zero. Catch the narrowest type that covers what you can act on, order the clauses specific-first, use `else` for the success path and `finally` for cleanup, translate low-level errors into your own with `from err` when callers need to catch your failure by name, and log with `logging.exception` so the traceback survives even when the user sees one clean line.
+
+Do not catch what you cannot act on — letting it propagate is a decision, and usually the right one. Do not write a bare `except:` at all; it catches Ctrl-C. Do not write `except Exception: pass` outside a `suppress` with a named type, and if you find one in code you inherit, treat it as a defect to be reported rather than a style choice. Do not validate with `assert`. Do not retry a deterministic failure or retry without a cap. Do not put the whole body of a function inside one `try` — the block should be as small as the risky operation. And do not swallow an error in a data pipeline for any reason at all: producing fewer records than you were asked for, without saying so, is the single most damaging thing a pipeline can do.
+
+The through-line from the last two days is exact. Day 64 opened files, Day 65 parsed their contents, and both generated failures they had no policy for. Today gave them a policy. Tomorrow, Day 67, the two-line `class RecordError(Exception)` you have been using on trust becomes a class you understand completely — inheritance, initialisers, attributes and all — and today's custom exceptions are the first thing you will re-read with new eyes.
+
+And this closes the AI thread. Every call you make to a hosted language model can fail in four distinct ways, and all four are ordinary: a **rate limit** because you sent requests faster than your tier allows, a **timeout** because generation took longer than your client was willing to wait, a **truncated response** because the output hit a token ceiling mid-sentence, and **invalid JSON** because the model was asked for structured output and produced something almost-but-not-quite parseable. Three of those are transient and belong behind a `@retry` with backoff; the fourth is a validation failure that no amount of retrying fixes without also changing the prompt. Production AI systems are, to a surprising degree, exactly this: a retry policy, a timeout budget, and structured error logging wrapped around a call that usually works. And the failure that costs the most is still the quiet one — a swallowed exception in a data pipeline does not crash anything, it simply produces a model trained on half a dataset, with metrics that look plausible and no error anywhere to explain them.
+
+## Knowledge check
+
+Try these from memory before looking back:
+
+1. In what order do traceback frames print, and which line do you read first?
+2. Name the three exception types that sit outside `Exception`, and explain what breaks when a bare `except:` catches them.
+3. What is the difference between the "during handling" and "direct cause" lines in a chained traceback, and which one do you cause on purpose?
+4. Why must `except json.JSONDecodeError:` come before `except ValueError:`?
+5. Give the race condition that makes `if os.path.exists(path)` insufficient before opening a file.
+6. What does `finally` do when the `try` block contains a `return`?
+7. Why is `assert` unsuitable for validating a value that came from a file?
+8. Which of a `ConnectionError` and a `ValueError` is worth retrying, and why is retrying the other one actively harmful?
+
+## Hands-on exercise
+
+In the Day 66 lab you are handed a program that never crashes and is therefore broken. You will reproduce three real tracebacks and read them frame by frame, replace a bare `except:` with narrow handlers plus `else` and `finally`, add a minimal custom exception raised with `from`, write a `@retry` decorator with backoff, and log every failure with `logging.exception` so the full traceback survives in a file while the user sees one clean line.
+
+Work in the lab directory; every command below is run from there.
+
+First, generate real failures and read them:
+
+```bash
+python3 examples/raw_triage.py examples/samples/no-such-file.jsonl
+python3 examples/raw_triage.py examples/samples/bad-severity.jsonl
+python3 examples/raw_triage.py examples/samples/missing-field.jsonl
+```
+
+Then see what the bare except costs, and what the rebuilt program does instead:
+
+```bash
+python3 examples/swallowing.py examples/samples/no-such-file.jsonl ; echo "exit: $?"
+python3 examples/triage.py examples/samples/missing-field.jsonl ; echo "exit: $?"
+python3 examples/triage.py examples/samples/no-such-file.jsonl ; echo "exit: $?"
+python3 examples/triage.py examples/samples/bad-severity.jsonl triage.log
+cat triage.log
+python3 examples/dispatch_demo.py
+```
+
+Now fill in `starter/traceback-notes.md`, complete the three numbered exercises in `starter/triage.py`, run your version, and check your work:
+
+```bash
+python3 starter/triage.py examples/samples/missing-field.jsonl
+bash tests/run_tests.sh
+```
+
+### Expected output
+
+A correct run of the reference on a file with a missing field produces exactly this — captured on the authoring machine, and deterministic, because the flaky operation counts calls rather than reading a clock:
+
+```text
+$ python3 -u examples/triage.py examples/samples/missing-field.jsonl ; echo "exit: $?"
+admitted 2 record(s), rejected 1
+immediate  1
+urgent     1
+routine    0
+rejected: line 2: missing field 'severity'
+attempt 1 failed (ward system unavailable (call 1)); retrying in 0.05s
+attempt 2 failed (ward system unavailable (call 2)); retrying in 0.10s
+dispatched 2 record(s) to the ward system
+exit: 0
+```
+
+And the log that run leaves behind, showing the chaining:
+
+```text
+ERROR: rejected record on line 2
+Traceback (most recent call last):
+  File "<lab>/examples/triage.py", line 56, in parse_record
+    record = {"id": raw["id"], "severity": int(raw["severity"])}
+ValueError: invalid literal for int() with base 10: 'high'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<lab>/examples/triage.py", line 176, in load_records
+    records.append(parse_record(line, line_number))
+RecordError: line 2: severity is not a whole number
+```
+
+**Your tracebacks will not match ours character for character, and they are not meant to.** A traceback prints the absolute path of every file in the stack, so yours show wherever you cloned the repository; the captured files shorten the lab directory to `<lab>` for readability. What must match is the exception type, the message, the order of the frames, and the exit code.
+
+### Validate your work
+
+You are done when you can check every box:
+
+- [ ] `raw_triage.py` on the three sample files ends in `FileNotFoundError`, `ValueError`, and `KeyError` respectively, each with exit 1.
+- [ ] `swallowing.py` on a file that does not exist prints `done` and exits `0` — you have seen the lie with your own eyes.
+- [ ] `triage.py` on `intake.jsonl` prints `admitted 5 record(s), rejected 0` and exits 0.
+- [ ] `triage.py` on `missing-field.jsonl` rejects line 2 by name, still summarizes the other two records, and exits `0`.
+- [ ] `triage.py` on a missing file prints `error: no such intake file: ...` and exits `1`.
+- [ ] `triage.log` contains an `ERROR` line, a full traceback, and the words `The above exception was the direct cause of the following exception`.
+- [ ] `dispatch_demo.py` shows backoff delays of `0.05s` then `0.10s`, a success, and then a chained `DispatchError`.
+- [ ] `starter/traceback-notes.md` is filled in with all three tracebacks and every question answered.
+- [ ] `bash tests/run_tests.sh` prints `0 failure(s).` and exits `0`.
+
+### Troubleshooting
+
+**Your paths differ from the captured ones.** Expected and correct. A traceback prints absolute paths; the captured files shortened them to `<lab>`. Compare types, messages, frame order, and exit codes.
+
+**No `~~~^^^` caret lines under your call frames.** Fine-grained error locations are a feature of newer Python versions. Older ones print the same frames without the carets; nothing is wrong.
+
+**Your specific message never appears — you always get the generic one.** Clause order. `json.JSONDecodeError` is a subclass of `ValueError`, so a `ValueError` clause placed first shadows it. Specific first, always.
+
+**Your chained traceback shows "during handling" rather than "direct cause".** You raised inside the handler without `from err`. Add it.
+
+**Your log file is empty.** Either `logging.basicConfig` ran after the first log call (it only configures once, and the first call wins), or you called `logging.exception` outside an `except` block, where there is no current exception to record.
+
+**`ValueError: I/O operation on closed file`.** A `finally: handle.close()` that runs before you finished reading — usually because the `return` you thought was at the end of the function is inside the `try`.
+
+**The starter raises `NotImplementedError`.** Expected until you finish that exercise. Each unfinished function raises on purpose so an empty function cannot be mistaken for a working one.
+
+### Common mistakes
+
+- **A bare `except:`.** It catches `KeyboardInterrupt` and `SystemExit`, so your program cannot be stopped from the keyboard. There is no case where this is right.
+- **`except Exception: pass`.** The cardinal sin. If doing nothing really is correct, say which type with `contextlib.suppress(ThatType)`.
+- **Handling too early.** A function that cannot make a decision about a failure should not catch it.
+- **Wrapping the whole function body in one `try`.** The block should be as small as the risky operation, or a handler meant for the parse will catch a bug in your success path.
+- **`raise RecordError(str(err))`.** That discards the traceback. Use `raise RecordError(...) from err`.
+- **Ordering handlers general-first.** The broad clause wins and every specific one below it is dead code.
+- **Retrying a `ValueError`.** It will fail identically every time; you have only made failure slower.
+- **Using `print` where the program runs unattended.** No level, no timestamp, no traceback, and it goes wherever stdout happens to point.
+- **Validating with `assert`.** Under `-O` the check does not exist.
+
+## Practice assignment
+
+Build `checkfiles.py`, a program in the Day 63 shape — a pure core plus a thin shell — that validates a directory of JSONL records and reports on every problem rather than stopping at the first.
+
+Your spec: given a directory path, process every `.jsonl` file in it. Each line must be valid JSON, must be an object, and must have a string `id` and an integer `severity` between 1 and 5. Collect every violation as `(filename, line number, reason)` and print a summary at the end: files scanned, records accepted, records rejected grouped by reason. Write the full detail — including chained tracebacks — to `checkfiles.log` with `logging.exception`, while standard output stays one clean line per problem.
+
+Requirements that carry the lesson: define exactly one custom exception, `RecordError`, in the minimal two-line form; raise it from your parser with `from err` in every case; put the range check in an `else` block; do not catch anything in your parser that you cannot translate; let a missing directory propagate to the shell, which reports it and exits 2; use `finally` to guarantee every file handle closes; and make the exit code meaningful — 0 when everything was accepted, 1 when any record was rejected, 2 for a usage or path failure.
+
+Then prove it. Create three broken files: one with a malformed JSON line, one whose severity is the string `"high"`, and one with a severity of `9`. Confirm all three are reported with distinct reasons, that the run continues past each, that `checkfiles.log` contains a chained traceback for each, and that the exit code is 1. Finally, run it with an empty directory and confirm the exit code is 0 and nothing crashes.
+
+## Extension challenge
+
+**One: build a retry policy worth shipping.** Extend the `@retry` decorator with three additions. Add a `retry_on` parameter so the caller supplies the tuple of retryable types, defaulting to `(ConnectionError, TimeoutError)`. Add a `max_total_seconds` budget so retrying stops when the *elapsed* time exceeds it, even if attempts remain — this is the timeout budget every API client needs. Add deterministic jitter derived from the attempt number, and write a comment explaining why real policies randomize the delay and why a test suite cannot. Then write tests proving each addition, injecting a fake `sleep` that records the delays instead of waiting.
+
+**Two: measure the cost of the two styles.** Using `timeit`, compare LBYL (`if key in d`) against EAFP (`try: d[key]`) for a dictionary lookup, at three hit rates: the key is present 99% of the time, 50%, and 1%. Report the three pairs of numbers and state the crossover point you measured. Then explain in two sentences why the answer for a *file* is different from the answer for a *dictionary* even where the timings agree.
+
+**Three: write a failure-mode catalogue for an API client.** Without making any network calls, write `client_policy.py` containing a function per failure mode — rate limit, timeout, truncated response, invalid JSON — each raising a realistic exception, and a driver that shows your handling strategy for each: which are retried, which are validated and re-raised, which halt the run, and what each logs. Use a fake transport that raises on command so the whole thing is deterministic and offline. Then write, in a comment at the top, the one-paragraph policy your code implements — because that paragraph, not the code, is the actual deliverable of an error-handling strategy.

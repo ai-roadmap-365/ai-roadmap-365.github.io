@@ -1,0 +1,127 @@
+
+======================================================================
+1. One JSON object per line, with fields you can query
+======================================================================
+6 lines of JSON. Here are the first two, pretty-printed
+for reading only — the real output is one object per line:
+{
+  "ts": "2026-08-16T12:44:45.907Z",
+  "level": "INFO",
+  "logger": "json.demo",
+  "event": "run started",
+  "run_id": "run-4711",
+  "model": "small-encoder",
+  "seed": 7
+}
+{
+  "ts": "2026-08-16T12:44:45.908Z",
+  "level": "INFO",
+  "logger": "json.demo",
+  "event": "batch complete",
+  "run_id": "run-4711",
+  "batch": 1,
+  "records": 64,
+  "kept": 61
+}
+
+Now the point. That is a queryable table, so query it — with the
+standard library, no log platform involved:
+  records kept across all batches: 125
+  lines by level: {'INFO': 4, 'WARNING': 1, 'ERROR': 1}
+  the failure: event='could not parse batch size' exc_type='ValueError' batch=3
+  every line carries run_id='run-4711', so this run separates from every other run
+
+Three things earned their place there. `event` is the unformatted
+message, so 'batch complete' groups across every batch. `run_id` is
+a static field on the formatter, so it is stamped on every line
+without any call site remembering it. And the traceback is its own
+field rather than being glued onto the message, so a parser does
+not have to guess where one ends and the other begins.
+
+What it costs, stated honestly: JSON logs are unpleasant to read
+with your eyes. The usual answer is JSON to the file or the
+collector and a human-readable formatter on the console — the same
+records, two handlers, two formatters. Demonstration 05 does that.
+
+======================================================================
+2. The redacting filter, and the proof that it worked
+======================================================================
+First, without the filter. This is what a careless line does:
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "INFO", "logger": "redact.without", "event": "calling upstream with key sk-live-9f2c4a7b1e63", "run_id": "run-4711"}
+  the secret appears in that line: True
+
+Now with the filter attached to the logger, and four different
+routes by which a secret tries to get out:
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "INFO", "logger": "redact.with", "event": "calling upstream with key ***redacted***", "run_id": "run-4711"}
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "INFO", "logger": "redact.with", "event": "hard-coded into the message: ***redacted***", "run_id": "run-4711"}
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "INFO", "logger": "redact.with", "event": "config loaded", "run_id": "run-4711", "api_key": "***redacted***"}
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "INFO", "logger": "redact.with", "event": "headers built", "run_id": "run-4711", "headers": {"Authorization": "Bearer ***redacted***"}}
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "ERROR", "logger": "redact.with", "event": "request failed", "run_id": "run-4711", "exc_type": "RuntimeError", "traceback": "Traceback (most recent call last):\n  File \"<lab>/examples/03_structured_logging.py\", line 157, in demo_redaction\n    raise RuntimeError(f\"upstream rejected key {API_KEY}\")\nRuntimeError: upstream rejected key sk-live-9f2c4a7b1e63"}
+
+  the secret appears anywhere in that output: True
+  the placeholder appears: True
+
+Four of the five routes are closed. Read the fifth one carefully,
+because it is the honest limit of this technique:
+  the secret survives inside the traceback field: True
+
+The filter rewrites `record.msg`, `record.args` and the fields you
+passed through `extra=`. It does NOT rewrite the traceback, because
+the traceback is rendered later, by the FORMATTER, out of the
+exc_info tuple — after every filter has already run. A secret that
+is inside an exception message therefore walks straight past a
+filter that only touches the record.
+
+There are two fixes and one rule.
+  Fix one: scrub in the formatter as well as the filter, so the
+           rendered traceback is scrubbed too.
+  Fix two: never put a credential in an exception message. This is
+           the better fix, because it removes the secret from the
+           exception object rather than from one of its renderings.
+  The rule: a redacting filter is a seatbelt. It is not permission
+           to drive at a wall. Do not log the secret.
+
+======================================================================
+2b. WHERE the filter goes, and the hole nobody expects
+======================================================================
+The filter above is attached to the HANDLER. The obvious
+alternative is to attach it to the application's top logger and
+let the whole tree inherit the protection. That does not work, and
+here is the measurement rather than the claim.
+
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "INFO", "logger": "leak.demo", "event": "logged directly on leak.demo: key=***redacted***", "run_id": "run-4711"}
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "INFO", "logger": "leak.demo.loader", "event": "logged on the CHILD leak.demo.loader: key=sk-live-9f2c4a7b1e63", "run_id": "run-4711"}
+
+  the direct line leaked: False
+  the child's line leaked: True
+
+A logger's filters run only for records logged through THAT logger
+object. A record that arrives by propagation from a descendant
+skips every ancestor's filters — propagation consults the
+ancestors' HANDLERS, not their filters. Since every module in a
+well-behaved application calls getLogger(__name__) and is therefore
+a descendant, a filter on the top logger protects almost nothing
+while looking like it protects everything.
+
+Attach redaction to each HANDLER. A handler sees everything that
+reaches its destination, from anywhere in the tree.
+
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "INFO", "logger": "safe.demo.loader", "event": "logged on the CHILD safe.demo.loader: key=***redacted***", "run_id": "run-4711"}
+  the child's line leaked: False
+
+======================================================================
+3. Closing the traceback hole: scrub in the formatter too
+======================================================================
+  the secret appears anywhere in that output: False
+  the traceback is still there and still useful: True
+
+  the first 200 characters of the line:
+  {"ts": "2026-08-16T12:44:45.908Z", "level": "ERROR", "logger": "redact.formatter", "event": "request failed", "run_id": "run-4711", "exc_type": "RuntimeError", "traceback": "Traceback (most recent cal
+
+Cost of this belt: every log line now runs a substring search per
+known secret. That is cheap, and it is not free. The reason to do
+it anyway is that the failure it prevents is not proportional to
+its cost.
+
+======================================================================
+Structured logging demonstration complete.

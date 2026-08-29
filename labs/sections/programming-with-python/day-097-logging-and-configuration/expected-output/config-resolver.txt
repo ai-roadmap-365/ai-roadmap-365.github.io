@@ -1,0 +1,154 @@
+
+======================================================================
+1. One setting, four different values, four layers
+======================================================================
+batch_size is:
+    32   in the code, as the default
+    64   in examples/config.toml
+   128   in the environment, as APP_BATCH_SIZE
+   256   on the command line, as --batch-size
+
+Adding one layer at a time:
+
+  nothing but the code      batch_size = 32    from default
+  + the config file         batch_size = 64    from file:config.toml
+  + the environment         batch_size = 128   from env:APP_BATCH_SIZE
+  + the flag                batch_size = 256   from flag:--batch-size
+
+The flag wins. That ordering is not arbitrary and it is worth being
+able to justify: each layer is more specific than the one below it.
+A default is what everybody gets. A file is what this deployment
+gets. An environment variable is what this process gets. A flag is
+what THIS INVOCATION gets, typed by a person who is looking at the
+problem right now. The more specific statement wins, which is the
+same rule CSS uses and the same rule your shell uses.
+
+======================================================================
+2. The provenance table: why is it doing that?
+======================================================================
+setting       value            came from
+------------  ---------------  ------------------------
+log_level     'DEBUG'          flag:--log-level
+batch_size    256              flag:--batch-size
+model_name    'small-encoder'  file:config.toml
+seed          7                env:APP_SEED
+dry_run       False            file:config.toml
+data_version  '2026-08-01'     file:config.toml
+api_key       ***redacted***   env:APP_API_KEY
+
+Every setting reports its value AND the layer that supplied it.
+Seven settings, five different provenances, one screen. The value of
+this is entirely in the third column: without it, 'why is batch_size
+256?' means reading a TOML file, a deployment manifest, a shell
+wrapper and an argparse definition, in the dark, at speed.
+
+Note api_key. It is in the table so you can see WHERE it came from
+and whether it is set at all, and its value is never printed. Those
+are two different questions and only one of them is dangerous.
+
+Note also that api_key has no flag. A secret passed on the command
+line is visible in `ps` to every other user on the machine and lands
+in the shell history file. Environment or a secret manager, and
+nowhere else.
+
+======================================================================
+3. Everything from the environment is a string
+======================================================================
+The trap, in one line of Python:
+    bool("false")  ->  True
+
+Every non-empty string is truthy. So the naive conversion turns the
+word 'false' into on, silently, and the feature you switched off
+stays switched on. No error, no warning, just the wrong behaviour.
+
+The fix is an explicit table of words, and a refusal for anything
+else:
+    to_bool('true'  ) -> True
+    to_bool('TRUE'  ) -> True
+    to_bool('1'     ) -> True
+    to_bool('yes'   ) -> True
+    to_bool('on'    ) -> True
+    to_bool('false' ) -> False
+    to_bool('0'     ) -> False
+    to_bool('no'    ) -> False
+    to_bool('off'   ) -> False
+    to_bool('maybe' ) -> refused: expected one of ['0', '1', 'false', 'no', 'off', 'on', 'true', 'yes'], got 'maybe'
+    to_bool(''      ) -> refused: expected one of ['0', '1', 'false', 'no', 'off', 'on', 'true', 'yes'], got ''
+    to_bool('2'     ) -> refused: expected one of ['0', '1', 'false', 'no', 'off', 'on', 'true', 'yes'], got '2'
+
+Then the same discipline for the other types. An int setting read
+from the environment:
+    APP_BATCH_SIZE='128'    -> 128
+    APP_BATCH_SIZE=' 128 '  -> 128
+    APP_BATCH_SIZE='12.5'   -> refused: batch_size: cannot read '12.5' from env:APP_BATCH_SIZE as int (invalid literal for int() with base 10: '12.5')
+
+And the difference the config file makes: TOML has real types, so
+`batch_size = 64` in the file arrives as an int already and needs no
+conversion at all. That is a genuine advantage of a typed file
+format over the environment, and it is the reason a file is a better
+home for structured configuration than a pile of variables.
+    from config.toml: batch_size = 64 (int), dry_run = False (bool)
+
+======================================================================
+4. A missing variable and an empty one are different
+======================================================================
+These are three different states of one environment variable, and a
+program that cannot tell them apart will eventually do the wrong
+thing with at least one:
+
+  not set at all             value='small-encoder'    source=file:config.toml
+  set to the empty string    value=''                 source=env:APP_MODEL_NAME (set but empty)
+  set to a value             value='large-encoder'    source=env:APP_MODEL_NAME
+
+The distinction is made by asking `'APP_MODEL_NAME' in environ`
+rather than `os.environ.get('APP_MODEL_NAME')`. `.get` returns None
+for a variable that was never set and '' for one that was set to
+nothing, and the usual `or default` idiom then collapses both to the
+default:
+
+    name = os.environ.get("APP_MODEL_NAME") or "tiny-baseline"
+
+That line cannot express 'the operator deliberately blanked this'.
+It matters because an empty variable is almost never an accident —
+it is a deployment template that filled in nothing, a secret that
+failed to inject, or a person who meant to clear a value. Silently
+treating it as 'unset' hides all three.
+
+For an int setting the empty string is not a value at all, and the
+resolver says so rather than guessing:
+    batch_size: environment variable APP_BATCH_SIZE is set but empty, and an empty string is not a valid int. Unset it to use the default, or give it a value.
+
+======================================================================
+5. Validating at startup, so nothing fails at 3 a.m.
+======================================================================
+A bad configuration value has two possible moments of discovery:
+the second the process starts, or the first time the code path that
+uses it runs — which may be hours later, in the middle of the night,
+halfway through a job. Validation at startup chooses the first.
+
+  3 problems found, all of them at once:
+    - log_level: 'VERBOSE' is not one of ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] (from flag:--log-level)
+    - batch_size: 0 is below the minimum of 1 (from flag:--batch-size)
+    - seed: -1 is below the minimum of 0 (from env:APP_SEED)
+
+Two design decisions in those messages.
+
+They are reported ALL AT ONCE rather than one per run, because
+fixing configuration one error at a time is miserable and pushes
+people towards guessing.
+
+And every one names its PROVENANCE. 'batch_size must be at least 1'
+tells you what is wrong. 'batch_size: 0 is below the minimum of 1
+(from flag:--batch-size)' tells you where to go and change it. The
+second message costs one extra field on a dataclass.
+
+A good configuration then passes silently:
+    validate_or_die() returned; the program may start.
+
+And a required secret that is absent is a configuration error too,
+not a runtime surprise. Adding one rule to the spec:
+    api_key: not set. Set APP_API_KEY in the environment.
+    (the message names the variable and never the value)
+
+======================================================================
+Configuration demonstration complete.

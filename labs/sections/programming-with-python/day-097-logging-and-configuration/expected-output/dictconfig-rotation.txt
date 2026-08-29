@@ -1,0 +1,115 @@
+
+======================================================================
+1. dictConfig: the whole setup in one dictionary
+======================================================================
+Configured. One logger, two handlers, two formatters, one filter.
+Watch the SAME five calls produce two different renderings.
+
+--- what the console handler prints (level INFO, human format) ---
+18:14:46 INFO     app.prepare    run started
+18:14:46 INFO     app.prepare    batch complete
+18:14:46 WARNING  app.prepare    upstream slow
+18:14:46 INFO     app.prepare    using key ***redacted***
+
+--- what the file handler wrote (level DEBUG, JSON) ---
+  {"ts": "2026-08-16T12:44:46.008Z", "level": "DEBUG", "logger": "app.prepare", "event": "cache hit for shard 3", "run_id": "run-4711"}
+  {"ts": "2026-08-16T12:44:46.008Z", "level": "INFO", "logger": "app.prepare", "event": "run started", "run_id": "run-4711"}
+  {"ts": "2026-08-16T12:44:46.008Z", "level": "INFO", "logger": "app.prepare", "event": "batch complete", "run_id": "run-4711", "batch": 1, "kept": 61}
+  {"ts": "2026-08-16T12:44:46.008Z", "level": "WARNING", "logger": "app.prepare", "event": "upstream slow", "run_id": "run-4711", "status": 429}
+  {"ts": "2026-08-16T12:44:46.008Z", "level": "INFO", "logger": "app.prepare", "event": "using key ***redacted***", "run_id": "run-4711"}
+
+console saw 4 of the 5 calls; the file has 5 of them.
+The DEBUG line was accepted by the logger, rejected by the console
+handler and kept by the file handler — the two-level rule, with two
+handlers disagreeing on purpose, which is what it is FOR.
+
+the secret appears in the file: False
+The redacting filter is listed on BOTH handlers, which is the only
+arrangement that actually works: a filter on the `app` logger would
+be skipped by every record propagating up from `app.prepare`, and
+both destinations would be leaking. Demonstration 03 measures that.
+
+Why a dictionary rather than calls: this is DATA. It can be loaded
+from the TOML file the rest of the configuration comes from, kept in
+version control, diffed in review, and swapped per environment
+without touching a line of Python. `logging.basicConfig` is the
+convenience version of the same thing — one handler on the ROOT
+logger, and nothing at all if the root already has one, which is
+why calling it twice appears to do nothing the second time.
+
+======================================================================
+2. Rotation: what happens when the file gets big
+======================================================================
+maxBytes=900, backupCount=3. After 40 more records:
+  app.log         429 bytes, 3 lines
+  app.log.1       858 bytes, 6 lines
+  app.log.2       858 bytes, 6 lines
+  app.log.3       858 bytes, 6 lines
+
+`app.log` is always the live one. When it exceeds maxBytes it is
+renamed to `app.log.1`, the old `.1` becomes `.2`, and the file
+that would have become `.4` is DELETED — backupCount is how many
+you keep, and everything past it is gone for good.
+
+`TimedRotatingFileHandler` is the same idea keyed on the clock
+rather than the size. Waiting for midnight is impractical in a
+demonstration, so here it is with the rollover called by hand —
+which is exactly what the handler does when the interval elapses:
+  files after one rollover: 2
+    daily.log                the live file
+    daily.log.2026-08-16     rolled, named by date
+
+Size-based rotation bounds your DISK; time-based rotation bounds
+your SEARCH, because 'the log for Tuesday' is one file. Pick by
+which of those two questions you ask more often. `backupCount=7`
+with when='midnight' is a week of history and no more.
+
+Now the honest part, and it is the same conclusion Day 81 reached
+about scheduling and Day 84 reached about packaging.
+
+For a long-running service, writing your own log files is usually
+the WRONG default. Log to stdout, unformatted by any rotation
+logic, and let the thing that already supervises your process
+collect it — systemd's journal, a container runtime, a process
+manager. Four reasons, none of them theoretical:
+
+  * Rotation in-process is racy across processes. Two workers with
+    RotatingFileHandler on the same file will rename it out from
+    under each other. There is a documented recipe involving a
+    socket handler and a single writer, and it exists because the
+    simple thing does not work.
+  * The supervisor already does it, uniformly, for every service on
+    the machine, with one retention policy you can audit.
+  * A container has no persistent disk to rotate onto anyway.
+  * stdout composes. `your-app | grep ERROR` works; a file handler
+    inside the process does not compose with anything.
+
+When file rotation IS right: a scheduled job that runs on a machine
+with a disk and no supervisor, a desktop application, or a
+deliberately separate audit trail with its own retention rules.
+Those are real cases. They are not the default.
+
+======================================================================
+3. Turning it down without editing code
+======================================================================
+The whole argument for logging over print, in one demonstration.
+Same program, same calls, one configuration value changed:
+
+18:14:46 INFO     app.levels     batch complete
+18:14:46 WARNING  app.levels     upstream slow
+  logger level DEBUG    -> file has 3 lines: ['cache hit for shard 3', 'batch complete', 'upstream slow']
+18:14:46 INFO     app.levels     batch complete
+18:14:46 WARNING  app.levels     upstream slow
+  logger level INFO     -> file has 2 lines: ['batch complete', 'upstream slow']
+18:14:46 WARNING  app.levels     upstream slow
+  logger level WARNING  -> file has 1 lines: ['upstream slow']
+
+Three deployments, three answers, one unchanged program. With
+print() the only way to get the first row is to edit the source and
+ship it, and the only way to get back to the third is to edit it
+again — which is exactly the change nobody wants to make while
+something is broken.
+
+======================================================================
+dictConfig and rotation demonstration complete.
+(the log directory was temporary and has been removed)

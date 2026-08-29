@@ -1,0 +1,183 @@
+==========================================================================
+1. A gradient walking back through fifty layers
+==========================================================================
+
+  The chain rule says the gradient at the far end of a chain is the
+  product of every local rate on the way. If each layer contributes a
+  rate of 0.9, the product is 0.9 to the fiftieth power. If each
+  contributes 1.1, it is 1.1 to the fiftieth.
+
+  Neither factor looks alarming. Watch anyway.
+
+     layers      x 0.9 each        x 1.1 each
+     ------------------------------------------------
+     1           9.000000e-01      1.100000e+00
+     5           5.904900e-01      1.610510e+00
+     10          3.486784e-01      2.593742e+00
+     20          1.215767e-01      6.727500e+00
+     30          4.239116e-02      1.744940e+01
+     40          1.478088e-02      4.525926e+01
+     50          5.153775e-03      1.173909e+02
+
+  After 50 layers the shrinking chain has lost more than
+  two orders of magnitude and the growing one has gained more than two.
+  The early layers of the shrinking network receive a gradient a few
+  thousandths the size of the one the last layer receives, so they
+  learn a few thousandths as fast. They are not broken. They are slow
+  by a factor nobody budgeted for.
+
+  Asserted as orders of magnitude, not as digits -- the scale is the
+  lesson and the digits are float64 rounding:
+
+      0.9 ** 50 = 5.153775e-03   order -3
+      1.1 ** 50 = 1.173909e+02   order 2
+
+==========================================================================
+2. Deeper, and harsher
+==========================================================================
+
+     factor   layers    product            order    lost in a weight of 1?
+     --------------------------------------------------------------------
+     0.9      200       7.055079e-10       -10      no
+     1.1      200       1.899053e+08       8        no
+     0.5      50        8.881784e-16       -16      no
+     0.25     50        7.888609e-31       -31      yes
+     2        50        1.125900e+15       15       no
+
+  The last column asks a blunt question: if this were the gradient
+  and you added it to a weight of about 1, would the weight change at
+  all, or would the update disappear into rounding?
+
+  The 0.5 row is worth pausing on, because the obvious guess about it
+  is wrong. Fifty halvings give
+
+      0.5 ** 50 = 8.881784e-16,  which is 4 x EPSILON
+
+  EPSILON here is 2.220446e-16, the gap between 1.0 and the next
+  float64 above it. So this gradient is four of those gaps wide and it
+  DOES still move a weight of 1. It takes about three more halvings to
+  disappear -- 0.5 to the 53rd is half an EPSILON, and half a gap
+  rounds away to nothing.
+
+  The row underneath is the one that actually vanishes. 0.25 is the
+  largest slope the sigmoid ever has, measured back in script 02, so a
+  stack of sigmoid layers is multiplying numbers no bigger than this:
+
+      0.25 ** 50 = 7.888609e-31
+      1.0 + 7.888609e-31 == 1.0  ->  True
+
+  That is not a metaphor for a vanishing gradient. It is one, and the
+  factor being used is the sigmoid at its most generous rather than at
+  anything like a typical value.
+
+==========================================================================
+3. The same collapse, through the real engine
+==========================================================================
+
+  Nothing above needed the autodiff engine, so it could be accused of
+  being a story about exponents. Build the chain for real instead:
+  fifty multiplications by 0.9, differentiated by one backward pass.
+
+      engine gradient after 50 layers: 5.153775e-03
+      0.9 ** 50 for comparison:        5.153775e-03
+      backward passes used:                1
+
+  The engine reproduces the collapse exactly, because the collapse IS
+  the chain rule. Nothing has gone wrong; the arithmetic is correct
+  and the answer is useless. Those are different complaints, and
+  every fix the course reaches later -- careful initialisation,
+  residual connections, normalisation, gradient clipping, ReLU in
+  place of a saturating non-linearity -- is an attempt to keep this
+  product near 1 rather than to make the chain rule behave otherwise.
+
+==========================================================================
+4. Forward mode against reverse mode, counted
+==========================================================================
+
+  Both modes apply the same chain rule. They differ in which end they
+  start from, and that decides the cost.
+
+     inputs   reverse passes   forward passes   central-diff passes
+     ------------------------------------------------------------------
+     1        1                1                2
+     2        1                2                4
+     5        1                5                10
+     10       1                10               20
+     25       1                25               50
+
+  All three columns produce the same gradients -- the first two
+  agree to the last bit, and the third to about a part in a billion.
+  Only the cost differs, and it differs by a factor that grows with
+  the number of inputs.
+
+  So the rule of thumb is not about elegance, it is about shape:
+
+      many inputs, one output   ->  reverse mode  (training a model)
+      one input, many outputs   ->  forward mode  (sensitivity to a
+                                    single parameter)
+
+  Training a model is the first shape: millions of parameters in, one
+  scalar loss out. Reverse mode gets every gradient for roughly the
+  cost of two forward passes, and that is the entire economic basis
+  of modern machine learning.
+
+==========================================================================
+5. What reverse mode pays for it
+==========================================================================
+
+  Reverse mode has to keep the forward pass's intermediate values
+  alive until the backward pass consumes them, because the local
+  derivatives are written in terms of those values -- tanh's backward
+  step needs the tanh output, and a product's needs both inputs.
+
+      a 50-layer chain holds 101 nodes alive
+
+  Forward mode holds almost nothing, which is its one real advantage.
+  On a large model the stored activations dominate memory use, and
+  that is why techniques for trading recomputation against memory
+  exist at all. The chain rule is free; remembering where you have
+  been is not.
+
+==========================================================================
+6. A measurement that corrects sections 1 and 2
+==========================================================================
+
+  Everything above multiplied a CONSTANT factor. Real layers do not
+  work that way: a local rate depends on where it is evaluated, and
+  the forward pass moves that point. So stack tanh on tanh on tanh and
+  measure what actually happens.
+
+     depth    gradient at x = 0.9     ratio to the row above
+     ----------------------------------------------------------
+     1        4.869174e-01            -
+     5        1.255802e-01            3.877
+     10       5.515820e-02            2.277
+     20       2.213240e-02            2.492
+     40       8.397332e-03            2.636
+     80       3.084811e-03            2.722
+     160      1.113159e-03            2.771
+
+  Now the naive prediction. tanh's slope at 0.9 is about
+  0.486917, so forty tanh layers 'should' multiply the gradient
+  by that forty times over:
+
+      0.486917 ** 40 = 3.149274e-13     the prediction
+      measured at depth 40 = 8.397332e-03     the measurement
+      the measurement is larger by a factor of 2.666e+10
+
+  Ten orders of magnitude. The prediction is not slightly off, it is
+  wrong in kind, and the reason is worth more than the number: each
+  tanh pulls its input closer to 0, and tanh's slope AT 0 is 1. The
+  deeper the stack goes, the closer every local rate creeps back
+  towards 1, so the product decays like a power of the depth rather
+  than exponentially.
+
+  A product of constants is the wrong model for a product of rates
+  that depend on where they are evaluated. Sections 1 and 2 are still
+  the right picture of what a chain of fixed factors does -- and a
+  weight matrix that is too small or too large really does behave that
+  way -- but 'tanh saturates, therefore gradients vanish' is a claim
+  that has to be measured on the network in front of you rather than
+  assumed from the shape of the curve.
+
+07_vanishing_and_exploding.py: every assertion held.

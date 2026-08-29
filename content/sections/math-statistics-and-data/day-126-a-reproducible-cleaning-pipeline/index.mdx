@@ -1,0 +1,522 @@
+---
+day: 126
+title: 'A Reproducible Cleaning Pipeline'
+---
+
+## Why this matters
+
+Here is a cleaning step that looks completely reasonable. It clips extreme values in an `amount` column to the 99th percentile, so a handful of outliers don't distort a downstream mean:
+
+```text
+>>> ceiling = df["amount"].quantile(0.99)
+>>> df["amount"] = df["amount"].clip(upper=ceiling)
+```
+
+Run it once, on this lesson's seven-row lab data, and order 7's amount — a genuine $1,250.00 sale — clips down to **1236.5**. Run the exact same step again, on the frame it just produced, and order 7's amount changes again, to **1223.675**. Same code. Same function. No exception, no warning, and the second number is not obviously wrong — it looks like a perfectly plausible clipped value. It is simply a *different* answer than the first run gave, computed from data the step had already altered.
+
+Nobody deliberately runs a notebook cell twice in a row. But a scheduled job that retries after a timeout does exactly that. An Airflow task re-triggered after a flaky network blip does exactly that. A colleague who re-runs "the cleaning script" on last week's already-cleaned export, because they weren't sure if it had been run, does exactly that. Every one of those situations re-applies your pipeline to data that has already been through it once — and a pipeline that is not **idempotent** will drift, silently, without a single line of output telling anyone it happened.
+
+That is this lesson's whole subject, stated as one sentence you can check with one line of code: **`pipeline(pipeline(df))` must equal `pipeline(df)`, exactly.** Six days into pandas — Day 120 through Day 125 — you have learned dtypes and Copy-on-Write, loading and inspecting, masks and filters, split-apply-combine, joins and reshaping, and the cleaning techniques themselves: mean imputation, coercing strings to numbers, normalising text. Every one of those is a transformation you now know how to write correctly, once. Today is not about a new transformation. It is about the difference between a notebook that produced the right answer once and a **pipeline** — something you can hand to a colleague, schedule to run next month, and trust to produce the same answer every time it runs, including the times nobody meant for it to run twice.
+
+By the end of today you will be able to name the specific step designs that break idempotence and fix them; write an explicit tie-break so a sort's output does not depend on the order rows happened to arrive in; build a step log that tells you exactly which step in a seven-step chain silently dropped a row; write contracts at both ends of a pipeline that fail loudly, on purpose, when something is wrong; and build a manifest — a small, boring JSON file — that is the only thing standing between "this number is wrong" and "we have no way to know why."
+
+## The idea in plain language
+
+A **pipeline**, in the sense this lesson uses the word, is a sequence of named steps applied to data in a fixed order, where every step is a function that takes a frame and returns a frame. That is the whole definition. The interesting part is not the sequence — you already know how to chain pandas operations — it is the four properties a *reproducible* pipeline needs that an ordinary sequence of notebook cells does not automatically have.
+
+**Idempotence** means running the whole pipeline twice in a row, feeding the first run's output back in as the second run's input, gives you back exactly what the first run gave you. Not approximately — exactly. This is not a property pandas gives you for free. It is a property you have to design into every single step, because pandas is perfectly happy to let a step compute something new from data that has already been transformed.
+
+**Determinism** means the same input, run through the same pipeline with the same configuration, always produces the same output — including the *order* of the rows. This sounds like it should be automatic, and mostly it is, with one sharp exception: sorting. A "stable" sort preserves the relative order of rows that tie on the sort key, but it says nothing about what that relative order *was* before the sort — two frames with the same tied values, built in a different row order, will come out sorted differently unless you name an explicit second key to break the tie.
+
+**A step log that reconciles** is Day 123's habit — after any `groupby` aggregation, check that the parts sum back to the whole — generalised from one aggregation to an entire multi-step pipeline. Every step records how many rows it saw and how many it produced. Read that log after the fact, and you can point at exactly which step in a seven-step chain quietly discarded a fifth of your data, instead of only noticing that the final total looks smaller than you expected.
+
+**Contracts at both ends** are Day 125's idea — assert what your data is supposed to look like, rather than assuming it — made structural rather than optional. An **input contract** checks that a frame arriving from outside the pipeline has the columns and dtypes the pipeline needs, and raises immediately, naming the problem, if it does not. An **output contract** checks that what comes out the other end actually keeps the promises the pipeline is supposed to make. Neither contract is worth anything until you have proven it can actually fail — a check that has only ever run against correct data has never really been tested.
+
+Picture the architecture diagram below: raw data enters through an amber input-contract gate, passes through seven named steps in a declared order, checkpoints to a small Parquet file partway through, passes an amber output-contract gate, and exits as clean data — while a purple manifest box off to the side quietly collects four things: a hash of the input, a hash of the configuration, the full step log, and a hash of the output. Nothing about that manifest changes what the pipeline computes. It exists purely so that, months from now, someone can answer "which data, and which settings, produced this exact number?" without guessing.
+
+![Diagram: raw input flows through an input contract gate, seven named steps in their declared order — parse currency amount, normalise region strings, deduplicate orders, impute missing amount, clip amount to a fixed ceiling, add amount z-score, sort deterministic — a Parquet checkpoint between the fourth and fifth steps, and an output contract gate, ending in clean output. A manifest box to the side collects four items: the input hash, the config hash, the per-step log, and the output hash.](./assets/pipeline-architecture.svg)
+
+Now watch the same pipeline in motion. A token carrying a row count travels through the seven steps; watch it shrink from 7 to 6 exactly at the `dedupe_orders` step, and stay at 6 for everything after. A step-log panel fills in beside it, one line per step, as the token passes. At the end, the token reaches a hash. Then a second, fainter token repeats the *exact same journey* — and lands on the *exact same hash*. That repetition is the entire argument of this lesson, made visual: the same input, run through the same pipeline, produces the same artifact, every single time, including the second time.
+
+![Diagram: a token labelled with a row count travels left to right through seven step nodes, shrinking from 7 rows to 6 rows at the dedupe orders step and staying at 6 for the remaining steps, while a step-log panel fills in one line per step as the token passes, ending at an output-hash box; a second, fainter token then repeats the identical journey and lands on the identical hash, with a checkmark confirming the two hashes agree — the same input always gives the same artifact.](./assets/pipeline-flow.svg)
+
+Hold one image from the everyday-analogy section in reserve for now, because it will do a lot of work later: a pipeline is a recipe you hand to someone else, not a dish you cooked once. A recipe that says "add salt until it tastes right" is not reproducible — "until it tastes right" depends on who is tasting and what they already added. A recipe that says "add 4 grams of salt" is. Today is about turning "clean the data until it looks right" into something with the second recipe's precision.
+
+## Historical background
+
+Idempotence did not originate in data engineering. It is formally named and required in **RFC 2616**, the HTTP/1.1 specification published in June 1999, which defines `GET`, `PUT` and `DELETE` as **idempotent methods** — a client is explicitly permitted to retry any of them after a failed or uncertain response, because the specification requires that repeating the same request produces the same server state as making it once. `POST` is deliberately left out of that guarantee, which is exactly why "don't double-click the buy button" became a widely known piece of web folklore: a `POST` request has no promised idempotence, so retrying it can genuinely create a second order. The same distinction — some operations are safe to retry, some are not, and the difference has to be a designed property, not an accident — is precisely what separates the fixed-ceiling clip step in this lesson's lab from the recomputing-percentile one.
+
+**Apache Parquet**, the file format this lesson's checkpoints use, was announced in 2013 as a joint open-source effort between Twitter and Cloudera, built around the columnar-storage ideas described in Google's 2010 Dremel paper. Its design goal was efficient, schema-preserving storage for large analytical datasets — which is exactly why it round-trips a nullable integer column's missing values exactly, where a text format like CSV cannot, because Parquet's file format stores the column's declared type and nullability directly rather than re-inferring them from printed characters on read.
+
+The **SHA-256** hash function this lesson's `content_hash` and `config_hash` functions build on is part of the SHA-2 family, designed by the U.S. National Security Agency and published by NIST in FIPS 180-2 in 2002. It has no known practical collision (two different inputs producing the same digest), which is exactly the property a content hash needs: if two frames hash differently, they are different; if two frames hash the same, in practice, they are the same.
+
+The discipline of keeping configuration separate from code — this lesson's `CONFIG` dictionary, holding every threshold this pipeline uses, so that changing a number never means editing a function — is formalised as Factor III of the **Twelve-Factor App**, a set of software-as-a-service design principles published by Adam Wiggins at Heroku in 2011. Its specific argument, "store config in the environment" (or, as this lesson's smaller-scale version does, in a data structure the code reads rather than embeds), is that code and configuration change for different reasons, at different times, decided by different people — and conflating them means every parameter change requires a code change and a code review, when it should require neither.
+
+pandas' own `DataFrame.pipe`, which this lesson uses to compose the same seven steps a second way, exists specifically so a chain of function calls can read top to bottom, left to right, the way R's `magrittr`/`dplyr` pipe operator (`%>%`) does — rather than nesting deeply as `seventh(sixth(fifth(fourth(third(second(first(df)))))))`, which puts the *first* operation applied at the *innermost*, hardest-to-read position. `.pipe()` is documented in pandas' own reference, cited in this lesson's sources, as the tool for exactly that: composable functions, chained.
+
+The version installed for this lesson, checked directly:
+
+```text
+>>> import pandas; pandas.__version__
+'3.0.5'
+```
+
+Nothing in this lesson's core mechanics — idempotence, determinism, contracts, checkpointing, manifests — is new to pandas 3.0 or specific to it. One detail this lesson's own code is written against *is* version-specific and worth stating plainly, because it changes what "the input contract's dtype check" actually has to look for: pandas 3.0's default string-inference behaviour gives a plain Python string column its own dedicated `str` extension dtype, not the historical `object` dtype. This lesson's `pipeline.py` encodes that fact directly in `REQUIRED_INPUT_COLUMNS`, and `steps.py`'s idempotence guard on the currency-parsing step checks for a non-numeric dtype rather than the specific string `"object"`, for exactly this reason — confirmed by running the code and reading the raised error, not assumed from memory.
+
+## What it is — and what it is not
+
+**A reproducible pipeline is a sequence of pure, named functions, each one frame-to-frame, applied in a declared order, with contracts checked at both ends.** That is the complete definition this lesson works from. Every step is testable on its own, against a fixture small enough to compute the right answer by hand — which is exactly how the exercises in this lesson's lab are written: not against a sample of "real" data, whose correct output nobody actually knows, but against a seven-row table this lesson built, whose correct output is known in advance because the table's contents are literal, specified values.
+
+**It is not a notebook.** A notebook's defining hazard is out-of-order execution: cell 7 can run before cell 4 if you clicked them in that order, and the kernel's state at any moment depends on the entire history of what you happened to run, in what order, including cells you have since deleted. A function-based pipeline has no such history — calling `pipeline(df)` today produces exactly the same result as calling `pipeline(df)` in six months, because nothing about the call depends on anything except its own arguments.
+
+**It is not automatically idempotent just because every individual step "looks like" a pure function.** `parse_currency_amount(df)` and `clip_amount_to_recomputed_percentile(df)` are both, syntactically, pure functions: no global state, no side effects, a `DataFrame` in, a `DataFrame` out. Only one of them is idempotent. The difference is not purity — it is whether the function's *output* depends only on its declared, fixed configuration, or also on incidental facts about whatever data happens to be passed in this particular call. A step that computes "the 99th percentile of whatever I was handed" has smuggled a piece of data-dependent state into what looks, from the outside, like a stateless function.
+
+**It is not the same problem a workflow runner like Prefect or Dagster solves**, and conflating the two is a common and expensive mistake. A workflow runner schedules when a pipeline runs, retries a failed step automatically, and gives you a dashboard showing what ran and when. None of that has any bearing on whether the pipeline computes the *right answer* when it runs — a beautifully scheduled, automatically retried pipeline that recomputes its clip threshold from the current data will produce a beautifully scheduled, automatically retried *wrong number*, over and over, on every retry. Scheduling and correctness are genuinely separate concerns, covered separately in this lesson's Tools section, and a plain function pipeline with no workflow runner at all is a completely legitimate, sufficient answer for a huge share of real cleaning work — the runner earns its keep only once you actually need automatic scheduling, retries across a fleet of jobs, or cross-team observability into which pipeline touched what.
+
+**It is not "the same as" a declarative schema-validation library like pandera**, even though both check that data conforms to expectations. This lesson's `check_input_contract` and `check_output_contract` are hand-written Python functions, chosen deliberately so every reader can see exactly what a contract does without learning a second library's API first. `pandera`, covered in Tools, expresses the same idea — required columns, required dtypes, value-range checks — as a declarative schema object rather than an imperative function, which becomes worth the extra dependency once a pipeline has enough columns and enough rules that hand-writing every check becomes its own maintenance burden.
+
+## Why it was created and what problems it solves
+
+Every property this lesson names exists to answer one recurring, expensive question: **why does this pipeline give a different answer on Tuesday than it gave on Monday, when nothing about the code changed?** Three specific ways that question gets asked, and the specific pipeline property that answers each one:
+
+**"I ran the same script twice and got two different numbers."** This is the idempotence failure this lesson opens with, and it is not a hypothetical — it is the single most common way a scheduled data pipeline silently corrupts itself. A step that clips to a recomputed percentile, appends a column derived from "today's date," or accumulates a running total by *adding to* an existing column rather than *recomputing* it from source, all share the same shape: correct the first time, wrong every time after, with nothing in the code that looks obviously broken. Idempotence turns "did this already run?" from a question that requires checking logs and comparing timestamps into a question that does not matter — running it again, on purpose or by accident, is safe by design.
+
+**"The report from last week's run doesn't match this week's run on the same file."** This is a determinism failure, and the specific mechanism this lesson focuses on — an unstated tie-break in a sort — is genuinely subtle, because the two runs can each look perfectly reasonable in isolation. Nobody notices that `sort_values("amount")` alone leaves tied rows in an arbitrary order, because *within one run*, the order looks fine. The problem only shows up when two runs, built from data that arrived in a different order for a completely unrelated reason (a different export order from a source system, a different order after a `groupby` with `sort=False`), disagree on where the tied rows land.
+
+**"Step four is supposed to keep every row, and somehow we lost 20% of the data."** Without a step log, answering this means adding print statements to a script, one at a time, re-running the whole thing between each addition, until the culprit is found by elimination — the exact debugging experience Day 121's inspection-battery discipline exists to prevent for a single frame, generalised here to an entire pipeline. With a step log, the answer is already sitting in a list of dictionaries: read down the `delta` column, and the step responsible for the drop announces itself.
+
+**"A production model's predictions changed, and nobody knows if the data changed or the model changed."** This is the manifest's reason for existing, and it is this lesson's AI thread, covered in full in Implications below. Without a recorded input hash and configuration hash, "did the training data change?" is not a question with an answer — it is a question that requires re-deriving the training set from scratch and hoping the result matches whatever is running in production, which is expensive, slow, and sometimes impossible if the original source data has since changed underneath you.
+
+## How it works
+
+Walk the full mechanism on this lesson's lab data: seven orders, with a currency-formatted `amount`, an inconsistently cased `region`, a nullable Int64 `priority` with one missing value, and — deliberately built in — order_id 3, a resubmission of order_id 1 that differs only in `region`'s whitespace and casing.
+
+```text
+>>> raw.dtypes
+order_id    int64
+region        str
+amount        str
+priority    Int64
+dtype: object
+>>> raw
+   order_id  region     amount  priority
+0         1   north    $120.50         1
+1         2   South    $980.00         2
+2         3   north    $120.50         1
+3         4   EAST      $75.00      <NA>
+4         5   South        NaN         3
+5         6    west     $60.00         2
+6         7    East  $1,250.00         1
+```
+
+**Step one: the input contract runs before anything else.** `check_input_contract` walks a small dictionary — `{"order_id": "int64", "region": "str", "amount": "str", "priority": "Int64"}` — checking each required column exists with exactly the declared dtype, and raises `ContractError`, naming the offending column, the moment one does not match:
+
+```text
+>>> broken = raw.drop(columns=["priority"])
+>>> pipeline.run_pipeline(broken, CONFIG)
+pipeline.ContractError: input contract violated: missing required column 'priority'
+>>> broken2 = raw.copy()
+>>> broken2["order_id"] = broken2["order_id"].astype("float64")
+>>> pipeline.run_pipeline(broken2, CONFIG)
+pipeline.ContractError: input contract violated: column 'order_id' has dtype 'float64', expected 'int64'
+```
+
+**Step two: seven named steps run, in the declared order, each one logged.** `parse_currency_amount` strips `$` and `,` and converts to `float64`, but only when the column is not already numeric — the guard that makes it idempotent. `normalize_region_strings` strips whitespace and title-cases. `dedupe_orders` sorts by `order_id` for a deterministic "first occurrence," then drops rows matching on `["region", "amount", "priority"]` — deliberately excluding `order_id` itself, because a resubmitted order is assigned a *new* ID by the intake system; the whole point is to catch a duplicate whose ID differs. `impute_missing_amount` fills the one missing `amount` with the column's own mean. `clip_amount_to_fixed_ceiling` clips to a number read from `CONFIG`, never recomputed. `add_amount_zscore` computes a z-score against fixed reference statistics, also from `CONFIG`. `sort_deterministic` sorts by `amount`, with `order_id` as an explicit tie-break.
+
+```text
+>>> df, log = pipeline.run_pipeline(raw, CONFIG)
+>>> df
+   order_id region  amount  priority  amount_zscore
+0         6   West    60.0         2      -1.600000
+1         4   East    75.0      <NA>      -1.500000
+2         1  North   120.5         1      -1.196667
+3         5  South   497.1         3       1.314000
+4         2  South   900.0         2       4.000000
+5         7   East   900.0         1       4.000000
+```
+
+Seven rows became six: order_id 3, the resubmission, is gone, and order_id 1 — the original — survives. Two different rows, order_id 2 and order_id 7, both land on `amount == 900.0` after clipping: order_id 2's real amount, $980, and order_id 7's real amount, $1,250, both exceed the configured ceiling of 900.0 and both get clipped down to exactly that number, which is precisely the tie `sort_deterministic`'s `order_id` tie-break exists to resolve.
+
+**Step three: the step log, read after the fact.**
+
+```text
+>>> for entry in log: print(entry)
+{'step': 'parse_currency_amount', 'rows_in': 7, 'rows_out': 7, 'delta': 0}
+{'step': 'normalize_region_strings', 'rows_in': 7, 'rows_out': 7, 'delta': 0}
+{'step': 'dedupe_orders', 'rows_in': 7, 'rows_out': 6, 'delta': -1}
+{'step': 'impute_missing_amount', 'rows_in': 6, 'rows_out': 6, 'delta': 0}
+{'step': 'clip_amount_to_fixed_ceiling', 'rows_in': 6, 'rows_out': 6, 'delta': 0}
+{'step': 'add_amount_zscore', 'rows_in': 6, 'rows_out': 6, 'delta': 0}
+{'step': 'sort_deterministic', 'rows_in': 6, 'rows_out': 6, 'delta': 0}
+```
+
+Every step's `rows_out` equals the next step's `rows_in` — that reconciliation is what proves the log is a complete, unbroken account of what happened, not a partial one. The total change, `6 - 7 = -1`, equals the sum of every step's `delta`, and `dedupe_orders` is the only step responsible for it. On a real pipeline with dozens of steps, this is the difference between "our row count is smaller than we expected, somewhere" and "step 14, specifically, dropped 8,400 rows — go look at step 14."
+
+**Step four: the output contract runs after the last step, and only after.** It checks that `amount` has no remaining missing values, that its dtype is genuinely numeric, that no value exceeds the configured clip ceiling, and that the required derived column `amount_zscore` exists. A contract that has only ever been checked against correctly-produced output has never actually been tested — so this lesson's lab sabotages a step on purpose to prove the check has teeth:
+
+```text
+>>> import pipeline as P
+>>> P.clip_amount_to_fixed_ceiling = lambda d, c: d  # a "clip" step that clips nothing
+>>> P.run_pipeline(raw, CONFIG)
+pipeline.ContractError: output contract violated: 'amount' has a value above the clip ceiling 900.0 (max seen: 1250.0)
+```
+
+**Step five: idempotence, checked directly.** The pipeline's own output — with `amount` already numeric, already deduplicated, already clipped — is fed back through the seven step functions a second time, and compared to the first run's output:
+
+```text
+>>> once, _ = pipeline.apply_steps_logged(raw, CONFIG)
+>>> twice, _ = pipeline.apply_steps_logged(once, CONFIG)
+>>> once.equals(twice)
+True
+```
+
+Every threshold every step reads comes from `CONFIG`, never from `once` itself — so `twice` computes nothing new. Compare that against the deliberately broken clip step, run the same way:
+
+```text
+>>> once_broken = steps.clip_amount_to_recomputed_percentile(prepared)
+>>> twice_broken = steps.clip_amount_to_recomputed_percentile(once_broken)
+>>> once_broken.loc[once_broken["order_id"] == 7, "amount"].iloc[0]
+1236.5
+>>> twice_broken.loc[twice_broken["order_id"] == 7, "amount"].iloc[0]
+1223.675
+>>> once_broken.equals(twice_broken)
+False
+```
+
+**Step six: hashing, checkpointing and the manifest.** `content_hash` builds a SHA-256 digest of a frame's exact CSV bytes; `config_hash` does the same for the configuration, serialised with sorted keys so key order never matters. `checkpoint_to_parquet` writes an intermediate frame to disk; `load_checkpoint` reads it back, dtype for dtype, including a nullable `Int64` column's missing value — where a CSV round-trip would lose the distinction between "this integer is missing" and "this column is actually floats." `build_manifest` collects all four pieces — input hash, config hash, step log, output hash — into one small JSON-serialisable dictionary, walked in full in Examples in practice below.
+
+## An everyday analogy
+
+You are handing a recipe to a friend who has never cooked this dish and will make it without you in the room. Every property this lesson names is a property that separates a genuinely usable recipe from a description of what you happened to do once.
+
+**Idempotence** is the difference between "add salt until it tastes right" and "add 4 grams of salt." The first instruction is not reproducible, because "tastes right" depends on who is tasting, how salty the stock already was, and how much salt got added the last time someone followed this same step — it is a step whose result depends on state outside the instruction itself. "Add 4 grams of salt" produces the same dish whether it is followed once or, by some kitchen mishap, followed twice by two different people who each thought the other hadn't done it yet — well, followed twice would actually be 8 grams, which is exactly the point: the fix is not "make salt idempotent," it is "make the *whole recipe* idempotent" by having the salt step check whether salt has already been added, the same way this lesson's `parse_currency_amount` checks whether `amount` is already numeric before trying to strip currency symbols from it a second time.
+
+**Determinism and the tie-break** show up the moment two ingredients need to go into the pan "in the order you have them." If your friend happened to unpack their grocery bag with the onions on top, and you happened to unpack yours with the garlic on top, "add them in the order you have them" gives two different pans, even though both of you followed the instruction exactly. A reproducible recipe says "onions first, then garlic" — an explicit tie-break, not a delegation to whatever order the ingredients happened to arrive in.
+
+**A step log** is the difference between a recipe that just says "cook until done" and a kitchen timer log: preheat at 2:00, oil in the pan at 2:03, onions in at 2:04, three minutes later garlic — a record you can check afterward if the dish comes out wrong, to find out *which* step ran long, rather than only knowing that something, somewhere, went wrong.
+
+**Contracts at both ends** are the recipe's own quality gates: "the oven must read 200°C before you put the tray in" (an input contract — check the conditions before you start) and "the internal temperature must reach 74°C before you take it out" (an output contract — check the result actually meets the promise, not just that you followed the steps). A recipe that only lists steps, with no check that the oven was actually hot or the food is actually done, trusts that everything upstream and downstream went right — and a contract you have never watched fail is a contract you have never actually tested; a smoke alarm that has never once gone off during a test is not proof your kitchen is safe, it is proof you have never tested the alarm.
+
+**A checkpoint** is the recipe telling you "you can prepare the sauce up to two days ahead and refrigerate it" — so if the main course goes wrong on the night, you are not starting the sauce over from raw tomatoes. **A manifest** is the card taped to the container in the fridge: which recipe, which day, which substitutions were made. Without it, "why does this sauce taste different from the batch three weeks ago?" is a question nobody in the kitchen can actually answer — the substitution that mattered was never written down.
+
+## Examples in practice
+
+Every value below is captured from a real run against pandas 3.0.5, pyarrow 25.0.1 and NumPy 2.5.2, using the exact `raw_orders` table and `CONFIG` defined in this lesson's lab (`labs/.../day-126-a-reproducible-cleaning-pipeline/starter/data.py`), so every number here is independently reproducible by running that lab.
+
+**Determinism, proven across two entirely independent runs.**
+
+```text
+>>> df_a, _ = pipeline.run_pipeline(build_raw_orders(), CONFIG)
+>>> df_b, _ = pipeline.run_pipeline(build_raw_orders(), CONFIG)
+>>> df_a.equals(df_b)
+True
+>>> pipeline.content_hash(df_a) == pipeline.content_hash(df_b)
+True
+>>> pipeline.content_hash(df_a)
+'9be4e83f364282312519c793338db734a8472c3b22bbb05848df30f87fe2d93f'
+```
+
+Two calls to `build_raw_orders()` build two separate `DataFrame` objects from the same literal values — nothing is shared between them in memory — and the pipeline still produces byte-identical output. That specific 64-character hex string is a real, captured digest; `expected-output/FIELDS.md` in this lesson's lab records honestly that the *literal digest* depends on pandas' CSV-formatting details and is not promised to match across every future pandas release, while the *equality between two runs* is the property this lesson's assertions actually rely on, and that property holds on any correctly installed copy of this exact pinned version.
+
+**The tie-break, made concrete.** Two orders — 2 and 7 — both land on `amount == 900.0`. Sort by `amount` alone, with no second key, and the result depends on which order the tied rows arrived in:
+
+```text
+>>> forward = prepared.sort_values("amount", kind="stable")
+>>> backward = prepared.iloc[::-1].sort_values("amount", kind="stable")
+>>> forward.loc[forward["amount"] == 900.0, "order_id"].tolist()
+[2, 7]
+>>> backward.loc[backward["amount"] == 900.0, "order_id"].tolist()
+[7, 2]
+```
+
+Same values, same "stable" sort, different order — because "stable" only ever promised to preserve *arrival* order among ties, and the two calls above handed it two different arrival orders on purpose. Naming `order_id` as an explicit second key removes the dependency entirely:
+
+```text
+>>> forward2 = prepared.sort_values(["amount", "order_id"], kind="stable")
+>>> backward2 = prepared.iloc[::-1].sort_values(["amount", "order_id"], kind="stable")
+>>> forward2.loc[forward2["amount"] == 900.0, "order_id"].tolist()
+[2, 7]
+>>> backward2.loc[backward2["amount"] == 900.0, "order_id"].tolist()
+[2, 7]
+```
+
+**Order dependence: normalising before deduplicating versus after.** This lesson's data hides a resubmitted order (order_id 3) whose `region` differs from the original (order_id 1) only in whitespace and casing — `" north"` versus `"north"`. The declared order runs `normalize_region_strings` before `dedupe_orders`:
+
+```text
+>>> declared, _ = pipeline.run_pipeline(raw, CONFIG)
+>>> len(declared)
+6
+>>> 3 in declared["order_id"].tolist()
+False
+```
+
+Reverse the two steps — deduplicate on the raw, unnormalised strings, *then* normalise — and the duplicate is invisible, because `" north"` and `"north"` compare unequal as raw strings:
+
+```text
+>>> swapped = pipeline.run_pipeline_swapped_order(raw, CONFIG)
+>>> len(swapped)
+7
+>>> {1, 3}.issubset(set(swapped["order_id"].tolist()))
+True
+```
+
+The difference runs deeper than row count. Because `impute_missing_amount`'s fill value is the column's own mean at the moment it runs, and the swapped pipeline still has 7 rows (including the un-caught duplicate) when it computes that mean, order_id 5's imputed amount is **not the same number** in the two versions:
+
+```text
+>>> declared.loc[declared["order_id"] == 5, "amount"].iloc[0]
+497.1
+>>> swapped.loc[swapped["order_id"] == 5, "amount"].iloc[0]
+434.333333...
+```
+
+Neither order is universally "correct" for every dataset — a resubmission-detection pipeline clearly wants the declared order here — but the two orders are demonstrably *not* interchangeable, and a pipeline that does not state which order it requires, and why, is leaving that decision to whoever happened to type the function calls in a particular sequence.
+
+**The Parquet checkpoint, with a nullable `Int64` carried through intact.**
+
+```text
+>>> before = normalize_region_strings(parse_currency_amount(raw))
+>>> before["priority"].tolist()
+[1, 2, 1, <NA>, 3, 2, 1]
+>>> before.dtypes["priority"]
+Int64Dtype()
+>>> pipeline.checkpoint_to_parquet(before, path)
+>>> after = pipeline.load_checkpoint(path)
+>>> before.equals(after)
+True
+>>> after.dtypes["priority"]
+Int64Dtype()
+>>> after["priority"].tolist()
+[1, 2, 1, <NA>, 3, 2, 1]
+```
+
+Order_id 4's missing priority survives the round trip as a genuine missing `Int64` value, not as `NaN` in a column silently upgraded to `float64` — the exact failure Day 121 demonstrated for CSV, and the specific reason this lesson's checkpoints are Parquet rather than CSV.
+
+**The manifest, stable across runs and sensitive to one changed byte.**
+
+```text
+>>> manifest_a = pipeline.build_manifest(build_raw_orders(), CONFIG, log_a, df_a)
+>>> manifest_b = pipeline.build_manifest(build_raw_orders(), CONFIG, log_b, df_b)
+>>> manifest_a["input_hash"] == manifest_b["input_hash"]
+True
+>>> manifest_a["output_hash"] == manifest_b["output_hash"]
+True
+```
+
+Now change one character — order_id 6's amount, `"$60.00"` becomes `"$60.01"` — and re-run:
+
+```text
+>>> changed = raw.copy()
+>>> changed.loc[5, "amount"] = "$60.01"
+>>> pipeline.content_hash(raw) == pipeline.content_hash(changed)
+False
+>>> changed_df, _ = pipeline.run_pipeline(changed, CONFIG)
+>>> pipeline.content_hash(df_a) == pipeline.content_hash(changed_df)
+False
+>>> pipeline.config_hash(CONFIG) == pipeline.config_hash(CONFIG)
+True
+```
+
+One byte, changed on purpose, changes both the input hash and the output hash — and leaves the config hash untouched, because the configuration itself never changed. That combination — input changed, config unchanged, output changed — is precisely the signature a manifest lets you *read off*, months later, without re-deriving anything: if `input_hash` differs between two runs and `config_hash` does not, the data changed, not the settings.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**A training set is the output of a pipeline, and this lesson's manifest is the only thing that makes a model's behaviour attributable** — this is the AI thread, and it deserves to be stated plainly rather than as an afterthought. When a deployed model's predictions shift unexpectedly, the first diagnostic question anyone asks is "did the data change, or did the model change?" If the training pipeline that produced last month's data and this month's data recorded a manifest each time — an input hash, a config hash, a step log, an output hash — that question is a lookup: compare the two `input_hash` values. If it did not, the question requires re-deriving both datasets from source, hoping the source data has not since changed underneath you, and comparing the results by hand — which is slower, more error-prone, and sometimes flatly impossible once upstream data has moved on. Reproducible data preparation is not a tidiness preference. It is the precondition for being able to say, with evidence rather than a guess, why a model behaves the way it does.
+
+**Idempotence is a security property, not merely a convenience, wherever a pipeline runs as part of an automated system.** A retry-safe pipeline can be re-triggered after a timeout, a crash, or a network partition with no risk of corrupting its own output — which is exactly the property that makes automatic retries a safe default in a scheduler. A pipeline that is not idempotent turns "automatically retry on failure" from a resilience feature into a data-corruption hazard: the retry itself becomes the bug. This is precisely why HTTP's specification bothers to define idempotence formally for `GET`, `PUT` and `DELETE` — the whole reason to know a method is idempotent is that it tells you retrying it is *safe*.
+
+**Contracts have a privacy dimension worth naming directly.** An input contract that checks column names and dtypes, run before any transformation touches the data, is also the first and cheapest place to catch a genuinely wrong file — the wrong dataset entirely, mistakenly pointed at a pipeline meant for something else, containing columns (and possibly people) that were never supposed to be there. Catching that at the input gate, before a single row is processed, is strictly better than discovering it three steps in, after some of that data has already been written to a checkpoint or logged in an error message.
+
+**Performance: checkpointing trades disk space for restart cost, and the trade is usually a clear win.** Writing an intermediate frame to Parquet costs disk I/O and some CPU for compression; the payoff is that a failure partway through an expensive pipeline — a slow join, a costly feature computation — resumes from the last checkpoint instead of from scratch. For this lesson's seven-row lab, that trade is invisible; for a pipeline processing millions of rows where step five alone takes forty minutes, a checkpoint after step four is the difference between a five-minute recovery and a forty-minute one, every single time step five fails partway through a long-running job.
+
+**Scalability: everything this lesson demonstrates operates entirely in memory, on one machine, and the properties do not automatically survive a move to a distributed system.** A pipeline scaled out across a Spark or Dask cluster introduces a genuinely new source of non-determinism this lesson's single-process examples never encounter: partition order across workers is not guaranteed to be stable run to run, which means "sort by amount, tie-break on order_id" has to be an *explicit*, distributed-aware operation, not an assumption carried over unchanged from a single-machine pandas pipeline. The properties — idempotence, determinism, contracts, a manifest — remain exactly as necessary at scale; the specific mechanics of achieving determinism change.
+
+**Cost: every tool this lesson actually ran is free.** pandas, PyArrow, NumPy, pytest, and Python's own `hashlib`, `json`, `logging` and `pathlib` carry no licence fee and no paid tier for anything demonstrated here. The engineering time cost is the honest one worth naming: writing a step's input and output contracts, and proving they can fail, takes real time up front — time that is reliably cheaper than the alternative, which is a multi-day, log-diffing investigation the first time a silently non-idempotent step corrupts a production dataset and nobody can say when it started.
+
+## Alternatives: free, open source, and commercial
+
+**Plain functions plus `DataFrame.pipe`** (ran). Free, open source (BSD 3-Clause pandas licence), no paid tier. This lesson's entire pipeline is built this way — and it is a genuinely sufficient answer for a large share of real cleaning work, not a simplified stand-in for "the real tool." Compose steps as sequential assignments (`df = step1(df); df = step2(df, config)`) when you want the easiest place to insert an inspection between two steps; compose the identical steps with `.pipe()` when you want the chain to read as one flowing statement:
+
+```text
+>>> via_pipe = (
+...     raw.pipe(parse_currency_amount)
+...        .pipe(normalize_region_strings)
+...        .pipe(dedupe_orders, CONFIG)
+...        .pipe(impute_missing_amount, CONFIG)
+...        .pipe(clip_amount_to_fixed_ceiling, CONFIG)
+...        .pipe(add_amount_zscore, CONFIG)
+...        .pipe(sort_deterministic)
+... )
+>>> via_pipe.equals(declared)
+True
+```
+
+Both forms compute the identical result — this lesson ran both and confirmed it directly, rather than assuming `.pipe()` is "just" nicer syntax. The genuine cost of `.pipe()` chaining is inspectability: there is nowhere to drop a `print(df.shape)` or a debugger breakpoint between two links in the chain without breaking the chain apart again into separate statements, which sequential assignment gives you for free at every single step. Choose `.pipe()` when the chain is short and well-tested and you want it to read cleanly; choose sequential assignment while you are still developing or debugging a pipeline, when you expect to need to inspect an intermediate frame.
+
+**`pandera`** (docs only — not installed in this lesson's environment, and no output from it is reproduced anywhere here). pandera lets a schema — required columns, dtypes, value ranges, custom row-level checks — be declared as a `pandera.DataFrameSchema` object and validated with a single call, rather than hand-written as a sequence of `if` statements the way this lesson's `check_input_contract` and `check_output_contract` are. Its documentation describes both a class-based API resembling `pydantic` models and a more concise object-based API, and it raises a structured `SchemaError` listing every failing check at once, rather than stopping at the first one, which becomes genuinely valuable once a schema has enough rules that debugging them one at a time is its own time sink. pandera is free and open source (MIT licence), with no separate paid tier for the validation library itself. Choose it once a pipeline's contracts have grown past what is comfortable to read as hand-written `if`/`raise` statements; the hand-written form this lesson uses has the advantage that every reader, at any experience level, can see exactly what it does without first learning pandera's schema syntax.
+
+**Great Expectations** (docs only — not installed in this lesson's environment, no output reproduced). A more heavyweight declarative data-validation framework, expressing checks as named "expectations" (`expect_column_values_to_not_be_null`, `expect_column_values_to_be_between`) that can be run against a dataset and produce a human-readable validation report, often as part of a CI pipeline gating whether new data is allowed to proceed downstream. Its open-source core is free (Apache 2.0 licence); **Great Expectations Cloud**, a hosted layer for storing validation results, alerting, and collaboration across a team, is a paid product built on top of the free core. Choose it over a hand-written contract, or over pandera, when the checks themselves need to be visible and auditable by people who are not going to read the pipeline's source code — a data-quality report is a very different artifact from a raised exception, and Great Expectations is built specifically to produce the former.
+
+**A workflow runner — Prefect or Dagster** (docs only — neither installed here, no output reproduced). Both are free, open-source (Apache 2.0-family licences) Python frameworks for scheduling pipeline runs, retrying failed steps automatically, and giving operational visibility — a dashboard showing which run of which pipeline succeeded, failed, or is currently in progress — with a paid managed-cloud tier (Prefect Cloud, Dagster+) layered on top of each free core, covering hosted scheduling and team-level observability. Both are explicit that they solve **scheduling, retries and observability** — genuinely different concerns from the correctness properties this lesson is about. Running `run_pipeline` under Prefect gives you automatic retries on failure; it gives you nothing at all toward making the pipeline idempotent, which is exactly why this lesson's idempotence and determinism work has to happen at the pipeline-function level, independent of whatever eventually schedules it. A plain function pipeline, called directly or from a simple cron job, is genuinely enough once a pipeline runs on one schedule with no cross-team dependency on watching it run — reach for a workflow runner once you need automatic retries across many pipelines, dependency graphs between them, or a shared dashboard other teams rely on.
+
+## Comparison with related concepts
+
+| Concept | What it guarantees | What it does NOT guarantee | Where covered |
+| --- | --- | --- | --- |
+| A pure function | Same output for the same arguments, no side effects | Nothing about whether repeated CALLS with data-derived arguments give the same result | Today, "What it is — and what it is not" |
+| Idempotence | `pipeline(pipeline(df))` equals `pipeline(df)` | Determinism across two INDEPENDENTLY built inputs — a pipeline can be idempotent and still non-deterministic if it depends on wall-clock time or randomness | Today, exercise 1 |
+| Determinism | Same input + same config always gives the same output, byte for byte | Idempotence — a deterministic pipeline can still change its own output on a second pass if it is not ALSO idempotent | Today, exercise 2 |
+| A step log | Rows in/out per step, so a silent drop is locatable | Correctness of the VALUES a step computes — a step can preserve every row and still compute the wrong number | Today, exercise 3 |
+| An input/output contract | The frame at that boundary meets a stated shape | Correctness of everything in between the two boundaries | Today, exercises 4-5 |
+| A checkpoint | A failure partway through does not require a full re-run | Nothing about correctness — checkpointing a wrong intermediate result just makes the wrong result faster to reach again | Today, exercise 8 |
+| A manifest | Provenance: which input, config and steps produced this exact output | Nothing about whether the pipeline's LOGIC was correct — a manifest documents what ran, not whether it should have | Today, exercise 9 |
+| A workflow runner (Prefect, Dagster) | Scheduling, automatic retries, cross-run observability | Nothing about correctness of any individual run — see Alternatives above | Today, Tools |
+
+The row most worth re-reading is idempotence versus determinism, because the two are easy to conflate and are genuinely independent properties. A pipeline that appends `pd.Timestamp.now()` as a column is deterministic in the sense that it does not depend on row order or arrival order — but it is not idempotent, because the second call produces a different timestamp than the first. A pipeline that reads a fixed configuration and always produces the same result from the same input, but sorts with no tie-break, is close to idempotent (rerunning it on its own output changes nothing about the *values*) while still failing determinism (two independently built inputs with the same values in different row orders can produce different row orders out). This lesson's pipeline needs, and has, both.
+
+## When to use it — and when not to
+
+**Build these properties into any pipeline that will run more than once, by more than one person, or on a schedule.** That describes essentially all real data preparation work outside of a genuinely one-off, throwaway exploration — the moment a cleaning script is going to be handed to a colleague, run again next month on fresh data, or trusted as an input to a model that other people rely on, the cost of adding an input contract, an output contract, a step log and a manifest is small compared to the cost of the debugging session that happens the first time it silently produces a wrong number.
+
+**Reach for `.pipe()` chaining specifically when the pipeline is short, stable, and you are not actively debugging it** — its readability wins once every step is already trusted; its inspectability cost is a real tax while you are still developing or troubleshooting a step.
+
+**Reach for a declarative contract library (pandera, Great Expectations) once hand-written `if`/`raise` contracts have grown past what is comfortable to read**, or once the checks themselves need to be legible to people who will never read the pipeline's Python source. Keep hand-written contracts, as this lesson does, while the number of rules is small and every reader benefits from seeing exactly what each check does without an extra dependency.
+
+**Reach for a workflow runner (Prefect, Dagster) once you need automatic retries, a dependency graph across multiple pipelines, or a shared dashboard other teams rely on** — never as a substitute for making the pipeline itself idempotent and deterministic first. Scheduling a non-idempotent pipeline just automates how often it corrupts its own output.
+
+**Do not skip the manifest because a pipeline "isn't that important."** The exact situations where a manifest turns out to matter — a model behaves unexpectedly in production, a stakeholder asks why a number changed since last quarter — are, almost by definition, situations nobody predicted in advance. The cost of building the manifest is paid once, up front, regardless of whether it is ever needed; the cost of *not* having it is paid, at a much higher rate, exactly when it is needed most.
+
+**Do not treat a checkpoint as a substitute for correctness.** A checkpoint makes recovering from a *crash* cheap. It does nothing at all to make a *wrong* intermediate result right — checkpointing a step that silently drops a fifth of your rows just makes that mistake faster to reach on every subsequent run.
+
+## Knowledge check
+
+Answer each question before checking `quiz.yml`.
+
+1. A clip step recomputes its threshold from the current frame every time it runs. What specific property does this violate, and what is the general fix?
+2. Two rows tie on a sort key. Why can a "stable" sort still give two different results across two independently built frames with the same values?
+3. What does a step log let you discover that a single before/after row-count comparison does not?
+4. Why does feeding a pipeline's own output back into its INPUT contract raise an error that has nothing to do with idempotence?
+5. What is the point of deliberately sabotaging a step to make an output contract fail, rather than only confirming the contract passes on correct data?
+6. What real, non-cosmetic cost does `.pipe()` chaining have compared to sequential function calls?
+7. Why does deduplicating a table before normalising its string columns give a different answer than normalising first?
+8. Why is Parquet, rather than CSV, used for this lesson's checkpoint?
+
+## Hands-on exercise
+
+The lab for this lesson, "A Pipeline You Can Re-run," lives at
+`labs/sections/math-statistics-and-data/day-126-a-reproducible-cleaning-pipeline/`
+and walks all nine properties covered above as a real, runnable pytest
+suite: idempotence (with the broken step demonstrated before the fix),
+determinism and an explicit tie-break, a step log that reconciles, input
+and output contracts proven able to fail, `.pipe()` equivalence,
+order-dependence, a Parquet checkpoint round-trip, and a manifest checked
+for stability and sensitivity to a one-byte change.
+
+Set up and run the reference suite first:
+
+```bash
+cd labs/sections/math-statistics-and-data/day-126-a-reproducible-cleaning-pipeline
+python3 -m venv .venv
+.venv/bin/pip install -r requirements/requirements.txt
+.venv/bin/pytest examples
+```
+
+Then open `starter/00_brief.md` and `starter/test_pipeline.py`, and replace
+each `pytest.skip(...)` with a real assertion, checking your progress with:
+
+```bash
+.venv/bin/pytest starter -v
+```
+
+### Expected output
+
+```text
+17 passed in 0.08s
+```
+
+for `pytest examples`, and, on the checked-in starter,
+
+```text
+17 skipped in 0.02s
+```
+
+for `pytest starter`. `bash tests/run_tests.sh` ends with:
+
+```text
+16 checks, 0 failure(s)
+```
+
+and exits 0.
+
+### Validate your work
+
+Run `bash tests/run_tests.sh` from the lab directory. It confirms the
+installed pandas matches `requirements.txt` exactly, runs the reference
+suite and requires 17 passed, runs your exercise suite, confirms
+`pytest examples starter` in one invocation fails to collect at all rather
+than silently shadowing one directory's tests, solves every exercise in a
+temporary scratch copy to prove a fully-completed suite passes,
+deliberately breaks one assertion to prove the suite can genuinely fail,
+restores it, and checks no `.parquet`, `.json` or `.csv` file — and no
+`__pycache__` — was left behind.
+
+### Troubleshooting
+
+See `troubleshooting.md` in the lab directory for the full list, grouped
+by the exact message you see — including the single most common mistake
+with this lab's layout: never run `pytest examples starter` in one
+command, because every module in this lab (`data`, `steps`, `pipeline`,
+`conftest`, `test_pipeline`) is defined identically in both directories,
+and pytest aborts collection outright with an `import file mismatch`
+rather than quietly shadowing one directory with the other.
+
+### Common mistakes
+
+- Checking idempotence with `pipeline.run_pipeline` (which enforces the
+  INPUT contract) instead of `pipeline.apply_steps_logged` (which does
+  not) — the input contract correctly rejects a pipeline's own output,
+  because `amount` is supposed to be numeric by then, which is a different
+  fact from whether the pipeline is idempotent.
+- Sorting by the primary key alone and assuming a "stable" sort makes the
+  result deterministic — stability only preserves arrival order among
+  ties; it does not remove the dependency on what that arrival order was.
+- Writing an output contract, running it once against correct data, and
+  calling it done — without deliberately sabotaging a step to confirm the
+  contract can actually fail, there is no evidence the check does anything
+  at all.
+- Assuming `.pipe()` and sequential function calls have a performance
+  difference — they do not; the real difference is inspectability, not
+  speed.
+
+## Practice assignment
+
+Take a small, hand-built dataset of your own — five to ten rows is
+plenty — with at least one text column that has whitespace or casing
+variants of the same value, and at least one numeric column that needs
+parsing (currency symbols, thousands separators, or similar). Build a
+three- or four-step pipeline as pure functions, then:
+
+1. Write an input contract checking your required columns and dtypes, and
+   confirm it raises, naming the column, when you deliberately drop or
+   mistype one.
+2. Write a step log and confirm it reconciles across every step.
+3. Check `pipeline(pipeline(df))` equals `pipeline(df)` exactly. If it does
+   not on your first attempt, find the step responsible and explain, in
+   one sentence, what data-dependent state it was smuggling in.
+4. Build a manifest with an input hash, a config hash, and an output hash,
+   and confirm it is stable across two independent runs on the same data.
+
+Write down, in one paragraph, which step in your own pipeline was hardest
+to make idempotent, and why.
+
+## Extension challenge
+
+Take a pipeline you have already written for this course — the Week 18
+project, or an earlier lab — and retrofit it with everything covered
+today: an input contract, an output contract proven able to fail, a step
+log, a checkpoint at the most expensive stage, and a manifest. Then
+simulate the exact failure this lesson opens with: call your pipeline
+three times in a row, feeding each output back in as the next call's
+input, and confirm all three outputs are identical. If any step in your
+pipeline is not idempotent, identify the specific data-dependent
+computation responsible, fix it so it reads from a fixed configuration
+instead, and re-run the three-times check to confirm it now holds.

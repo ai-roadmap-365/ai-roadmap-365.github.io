@@ -1,0 +1,72 @@
+questions:
+  - question: 'A JSON file holds 50,000 loan records. One loan is returned, so one field changes from null to a date — 27 bytes. What does the update cost, and what does a database do instead?'
+    options:
+      - 'The whole file is read and written again: on the authoring machine, over 17 megabytes moved to change 27 bytes. A database rewrites only the fixed-size page holding that row'
+      - 'Only the changed bytes are written, because json.dump seeks to the right offset'
+      - 'The cost is the same in both cases; databases are faster only for reads'
+      - 'The file grows by 27 bytes and nothing else is touched'
+    answer_index: 0
+    explanation: 'This is measured in the lab, not argued: 8,622,249 bytes read and 8,622,241 written to change a 27-byte field. JSON is a single serialised document, so there is no such thing as changing part of it — you parse it all, edit in memory, and serialise it all back. A database file is divided into fixed-size pages (4,096 bytes on both SQLite builds used here), so an update touches the page holding the row. The consequence is not just speed: the cost of an update stops depending on how much data you already have, which is what lets a store keep growing without every write getting slower.'
+
+  - question: 'Two processes both read a JSON state file, both make a different change, and both write it back with the atomic write from Day 84. What happens, and which ACID letter names the missing guarantee?'
+    options:
+      - 'Both changes survive, because each write was atomic'
+      - 'The second write fails, because the file changed underneath it'
+      - 'One update is silently lost. Atomicity protects a file from being torn in half; ISOLATION is what protects two transactions from each other, and os.replace cannot provide it'
+      - 'The file is corrupted, which is exactly what the atomic write was designed to prevent'
+    answer_index: 2
+    explanation: 'Both writes succeed and both are genuinely atomic — the file is never half-written. And one update vanishes anyway, because each writer built its whole new file from a snapshot taken before the other wrote. This is the sharpest distinction in the lesson: an atomic file write is about one file''s integrity, while isolation is about two concurrent transactions not seeing or clobbering each other''s work. They are different problems, and only the second requires a transaction manager — which in SQLite is the pager. It is also why "we write the file atomically" is not an answer to "what happens when two things write".'
+
+  - question: 'A column is declared INTEGER. You insert the text ''not-a-number''. What happens?'
+    options:
+      - 'SQLite raises an error, because the column is declared INTEGER'
+      - 'It is accepted and stored with storage class text; typeof() then reports text, and WHERE year < 2000 will never match that row — silently'
+      - 'It is converted to the integer 0'
+      - 'It is accepted but the row is flagged, and PRAGMA integrity_check reports it'
+    answer_index: 1
+    explanation: 'A declared type in SQLite is an AFFINITY — a preference applied when a lossless conversion is possible and abandoned when it is not. The text ''1970'' becomes the integer 1970; ''not-a-number'' cannot, so it is stored as text in a column the schema calls INTEGER, with no error, no warning and no log line. The expensive consequence comes later: in SQLite''s sort order every integer sorts before every text value, so that row can never satisfy year < 2000. In the lab, five rows go in and a count returns four, and nothing anywhere says so. Diagnose it with SELECT year, typeof(year); fix it with a STRICT table, which refuses values that genuinely are not the declared type while still allowing the lossless conversion.'
+
+  - question: 'Your schema declares loans.member_id as REFERENCES members(member_id). You insert a loan naming member 999, who does not exist, and SQLite accepts it. What is wrong?'
+    options:
+      - 'The members table needs a UNIQUE constraint on member_id as well'
+      - 'Foreign keys only apply to STRICT tables'
+      - 'The REFERENCES clause must name the table before it is created'
+      - 'PRAGMA foreign_keys is off. SQLite defaults it to OFF for backward compatibility, per connection — and without it a REFERENCES clause enforces nothing at all'
+    answer_index: 3
+    explanation: 'This is the single most consequential default in SQLite. Foreign key enforcement is off unless you turn it on, it is a per-connection setting rather than a property of the file, and it is not remembered between sessions. So the same schema can enforce the rule in one script and ignore it in the next. The lab proves it directly: the identical write that is refused with the pragma on is accepted with it off, and a check asserts exactly that. Write PRAGMA foreign_keys = ON at the top of every SQL script and connection.execute("PRAGMA foreign_keys = ON") in every Python connection. Without it, the most valuable line in your schema is a comment.'
+
+  - question: 'You add an index to a table. What changes?'
+    options:
+      - 'How long some queries take, and how much space and write cost the table carries. No answer to any query changes'
+      - 'Which rows some queries return, because indexed columns are searched more thoroughly'
+      - 'The order rows are returned in, permanently'
+      - 'Nothing measurable until the table exceeds one million rows'
+    answer_index: 0
+    explanation: 'An index is a promise about speed, never about meaning — this is Codd''s data independence, and it is why you can tune storage without touching a single query. The lab shows the planner changing its mind about the identical statement (SCAN books plus a temporary B-tree for the sort, versus SEARCH books USING INDEX books_year) while the same four rows come back in the same order. Note the other half of the trade, which people forget: an index costs disk space and makes every INSERT, UPDATE and DELETE slower, because the index must be maintained too. Indexing everything is its own mistake. Measure with EXPLAIN QUERY PLAN before adding one.'
+
+  - question: 'Which of these is the honest reason to move from SQLite to a client-server database such as PostgreSQL?'
+    options:
+      - 'The database has grown past a few hundred megabytes'
+      - 'You need transactions, or foreign keys, or ACID guarantees'
+      - 'Several machines must write to it, or you need user accounts and permissions inside the database, or it would have to live on a network filesystem'
+      - 'You have started writing joins across more than two tables'
+    answer_index: 2
+    explanation: 'The deciding question is never data volume — SQLite handles far more than its reputation suggests, and it has full transactions, foreign keys and ACID already. The real limits are structural: one writer at a time for the whole database (WAL mode lets readers continue during a write but does not change that); no users, roles or passwords inside the file, so filesystem permissions are the entire access control; and a dependence on operating-system file locking that is unreliable over NFS and SMB, which makes a database on a network share a database you will eventually corrupt. Each of those is a description of a client-server database. SQLite''s own position is that it competes with fopen(), not with Postgres — the question is usually "database or custom file format", not "SQLite or Postgres".'
+
+  - question: 'In Python, why write connection.execute("SELECT * FROM members WHERE name = ?", (name,)) rather than an f-string?'
+    options:
+      - 'It is faster, because the driver caches the compiled statement'
+      - 'Because the value is never parsed as SQL — it is bound to the prepared statement and compared as data, so it cannot become part of the statement'
+      - 'Because f-strings do not escape single quotes correctly on Windows'
+      - 'It is purely a style convention; both are equally safe once you validate the input'
+    answer_index: 1
+    explanation: 'The statement is compiled once, with a placeholder, before any value is involved. Binding a value afterwards cannot change the statement''s structure, so a hostile input like "Ada''; DROP TABLE loans; --" is simply a string that matches no member name — which the lab demonstrates, leaving the loans table intact. Two precisions matter. Escaping is not an equivalent fix: writing your own quote-doubling means being right about every encoding and dialect quirk forever, while parameters move the problem to the engine, which is where it belongs. And parameters are for VALUES, not identifiers — you cannot write ORDER BY ?, so if a column name must be chosen at runtime, validate it against an allow-list you wrote. Prepared statements are also often faster, but that is a bonus, not the reason.'
+
+  - question: 'You are aggregating over an evaluation log of twenty million rows on your laptop — summing and grouping a few columns at a time. Which tool fits best, and why?'
+    options:
+      - 'PostgreSQL, because twenty million rows requires a server'
+      - 'SQLite, because it is embedded and there is nothing to install'
+      - 'A managed cloud data warehouse, because this is analytical work'
+      - 'DuckDB: like SQLite it is embedded, serverless and file-based, but it stores data by column rather than by row, which is the right layout for reading a few columns across very many rows'
+    answer_index: 3
+    explanation: 'DuckDB is the analytical counterpart to SQLite and makes almost the same trade in the opposite direction. Both are embedded, serverless and free — no process, no port, no credential. The difference is physical layout: SQLite stores rows together, which suits an application doing many small reads and writes of whole records; DuckDB stores columns together, so summing one column across twenty million rows touches only that column''s data instead of walking every record. The rule of thumb worth keeping is SQLite for the application, DuckDB for the analysis, and using both in one project is entirely normal. A server or a warehouse would work, but neither is needed for one laptop and one file, and both cost operational effort or money that this workload does not require.'

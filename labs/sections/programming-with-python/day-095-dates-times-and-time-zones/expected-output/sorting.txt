@@ -1,0 +1,148 @@
+====================================================================
+UTC ISO 8601 text: lexicographic order IS chronological order
+====================================================================
+  2026-08-16T11:30:00Z  ordered
+  2026-08-16T15:00:00Z  packed
+  2026-08-16T16:00:00Z  dispatch
+  2026-08-16T18:00:00Z  checkout
+
+  sorted as text     == sorted as instants : True
+
+  It works because the format was designed so it would: the fields
+  run most-significant first, every one is zero-padded to a fixed
+  width, and the offset is always the same. Character 1 outranks
+  character 2 in exactly the way a year outranks a month.
+  That is what lets a database with no date type — SQLite, a CSV, a
+  key in a key-value store — do ORDER BY, MIN, MAX, BETWEEN and a
+  range scan on a plain text column and be right.
+
+====================================================================
+Local text: lexicographic order is NOT chronological order
+====================================================================
+  Same four events, each stored as the local clock in its own office:
+
+  2026-08-16T14:00:00  checkout
+  2026-08-16T17:00:00  dispatch
+  2026-08-16T17:00:00  ordered
+  2026-08-16T20:30:00  packed
+
+  sorted as text     : ['checkout', 'dispatch', 'ordered', 'packed']
+  sorted as instants : ['ordered', 'packed', 'dispatch', 'checkout']
+  same order?        : False
+
+  Reversed, in this case. The strings are all well-formed ISO 8601
+  and every one of them is true. They are simply not comparable to
+  each other, because they are measured against different rulers.
+
+====================================================================
+Local text WITH the offset: still not sortable as text
+====================================================================
+  2026-08-16T14:00:00-04:00  checkout
+  2026-08-16T17:00:00+01:00  dispatch
+  2026-08-16T17:00:00+05:30  ordered
+  2026-08-16T20:30:00+05:30  packed
+
+  sorted as text     : ['checkout', 'dispatch', 'ordered', 'packed']
+  sorted as instants : ['ordered', 'packed', 'dispatch', 'checkout']
+  same order?        : False
+
+  This is the subtle one. These strings carry their offsets, so
+  nothing is lost — a parser can recover every instant exactly. But
+  a text sort compares the digits left to right and never reaches
+  the offset on the end, so an index, a sorted file or an ORDER BY
+  over the raw column is still wrong. Losslessness and sortability
+  are different properties. UTC text has both.
+
+====================================================================
+The third failure: two instants, one local string
+====================================================================
+  2026-10-25T00:30:00Z  ->  London local  2026-10-25T01:30:00
+  2026-10-25T01:30:00Z  ->  London local  2026-10-25T01:30:00
+
+  identical local strings? True
+  Two instants an hour apart collapse to one string, so no sort of
+  any kind can order them and no query can tell them apart. This is
+  not a sorting bug you can fix with a better comparator; the
+  information is gone at the moment of writing.
+
+====================================================================
+ISO 8601 and RFC 3339 are not the same thing
+====================================================================
+  Renderings of one instant:
+    isoformat()              2026-10-25T01:30:00+00:00
+    strftime Z form          2026-10-25T01:30:00Z
+    basic ISO 8601 form      20261025T013000Z
+    ordinal date (ISO 8601)  2026-298T01:30:00Z
+    ISO week date            datetime.IsoCalendarDate(year=2026, week=43, weekday=7)
+
+  ISO 8601 is a large standard: it allows the basic form with no
+  separators, week dates, ordinal dates, durations, intervals and
+  reduced precision. RFC 3339 is a small profile of it for the
+  internet: date, T or a space, time, and a mandatory offset. Every
+  RFC 3339 timestamp is valid ISO 8601; the reverse is not true —
+  '2026-W43-7' is ISO 8601 and is not a timestamp at all.
+  Write RFC 3339 with Z. It is the intersection everything reads.
+
+  What Python actually parses on this machine:
+    fromisoformat('2026-10-25T01:30:00+00:00'     ) -> 2026-10-25T01:30:00+00:00
+    fromisoformat('2026-10-25T01:30:00Z'          ) -> 2026-10-25T01:30:00+00:00
+    fromisoformat('2026-10-25 01:30:00Z'          ) -> 2026-10-25T01:30:00+00:00
+    fromisoformat('20261025T013000Z'              ) -> 2026-10-25T01:30:00+00:00
+    fromisoformat('2026-W43-7'                    ) -> 2026-10-25T00:00:00
+    fromisoformat('2026-10-25T01:30:00+0100'      ) -> 2026-10-25T01:30:00+01:00
+    fromisoformat('Sun, 25 Oct 2026 01:30:00 GMT' ) -> ValueError: Invalid isoformat string: 'Sun, 25 Oct 2026 01:30:00 GMT'
+
+  `fromisoformat` was strict before Python 3.11 and accepts most of
+  ISO 8601 from 3.11 onward, including the trailing Z. Note the
+  week-date line: it parses, and it silently becomes a midnight.
+  The last line is RFC 2822, the email date format, which
+  `fromisoformat` refuses — `email.utils.parsedate_to_datetime`
+  is the standard-library function for that one.
+
+====================================================================
+strftime and strptime: the two traps
+====================================================================
+  Trap 1 — %Z parses almost nothing, and throws the zone away:
+    UTC  -> datetime.datetime(2026, 10, 25, 1, 30)
+         tzinfo is None — the zone name is gone
+    GMT  -> datetime.datetime(2026, 10, 25, 1, 30)
+         tzinfo is None — the zone name is gone
+    BST  -> ValueError: does not match the format
+    EST  -> ValueError: does not match the format
+    %z with a numeric offset is the one that works:
+    datetime.datetime(2026, 10, 25, 1, 30, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+    And an abbreviation could not identify a zone even if it parsed:
+    IST is India, Ireland and Israel; CST is at least three places.
+
+  Trap 2 — the order of the numbers is a cultural convention:
+    05/03/2026 parsed as %d/%m/%Y -> 2026-03-05
+    05/03/2026 parsed as %m/%d/%Y -> 2026-05-03
+    Both parse. Both succeed. They are two months apart, and no
+    error is raised in either direction. This is exactly the failure
+    ISO 8601 was written to end.
+
+  %c and %x follow the C locale, so their output changes with the
+    environment: %c here gives Sun Oct 25 01:30:00 2026
+    and %x gives 10/25/26
+    Never write either into a file another program will read.
+
+====================================================================
+'Add one month' is not a timedelta
+====================================================================
+  start                       2026-01-31
+  + timedelta(days=30)        2026-03-02
+  + timedelta(days=31)        2026-03-03
+
+  Neither is 'one month later', because a month is not a fixed
+  number of days — it is 28, 29, 30 or 31 depending on which one and
+  which year. timedelta carries days, seconds and microseconds and
+  deliberately has no months or years field, because it could not
+  give them a length.
+
+  So 'the 31st of the next month' has to be a policy decision:
+    31 January + 1 month = 28 February (clamp to the month end)?
+    or 3 March (overflow the extra days)?
+    or an error, because the caller has not said which they meant?
+  Pick one, write it down, and put it in a named function. The
+  standard library has calendar.monthrange to tell you the length;
+  it deliberately does not choose the policy for you.

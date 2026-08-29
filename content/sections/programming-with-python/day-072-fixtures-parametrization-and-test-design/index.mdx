@@ -1,0 +1,811 @@
+---
+day: 72
+title: 'Fixtures, Parametrization, and Test Design'
+---
+
+## Why this matters
+
+Yesterday you learned to write a test that means something: arrange, act, assert; run it; read the report; and — the part that separates a test from a decoration — prove it can fail. Today you write the tenth one, and the fortieth, and you meet the problem that kills more test suites than any bug ever has.
+
+Here is the shape of it. You write a test that builds a store, puts three records in it, and checks a total. Then you need a test for the duplicate-reference rule, so you copy those six lines and change the last one. Then the unknown-reference rule, so you copy them again. By the eighth copy you have a suite that passes, that nobody would reject in review, and that has quietly become impossible to change: the day the constructor takes one more argument, you are editing eight places, and the day you miss one, you get a failure whose cause is a two-line diff buried in a file you were not thinking about.
+
+The consequences are not abstract. A suite that is expensive to add to is a suite people stop adding to, and untested code is where the bugs live. A suite that is slow because every one of its two hundred tests rebuilds the same database is a suite that gets run once a day instead of once a minute, which means you find your mistakes hours after making them instead of seconds after. And a suite that is *so* factored — so full of clever shared setup — that no reader can tell what a given test actually arranges is worse than the copy-paste version, because at least the copy-paste version was legible.
+
+That tension is the whole subject of today. Remove the duplication, but do not remove the ability to read a test on its own. pytest gives you two instruments for it — **fixtures** for repeated arrangement and **parametrization** for repeated assertion shape — and a handful of design rules for knowing when you have gone too far. And parametrization in particular is not just a testing convenience: one assertion body, many cases, each reported independently by name, is precisely the shape of a model evaluation suite. You are learning today the structure you will use, unchanged, when the thing under test is a language model.
+
+## The idea in plain language
+
+Look at a suite that has grown by copy-paste and you will find exactly two kinds of repetition, and they need two different tools.
+
+The first is **repeated arrangement**. Eight tests all need "a store with three records in it". The setup is identical; the assertions are all different. What you want is to give that arrangement a *name*, define it once, and let each test ask for it. That is a **fixture**: the arrange step, extracted and named.
+
+The second is **repeated assertion shape**. Five tests all say "this bad input must be refused". The assertion is identical; only the input differs. What you want is to write the assertion once and hand it a list of inputs — but still get five separate results, so that when one breaks you are told which one. That is **parametrization**.
+
+Get those two backwards and you get the two classic failures. Use a fixture where you needed parametrization and you end up with a loop inside one test, which stops at the first failure and tells you nothing about the rest. Use parametrization where you needed a fixture and you end up threading setup data through decorators that have no business knowing about it.
+
+There is a third idea underneath both, and it is the one that actually makes a suite trustworthy: **independence**. Every test must be able to run alone, and in any order, and give the same answer. That sounds obvious and is violated constantly, almost always by accident, almost always through shared mutable state that somebody introduced to make things faster. Most of the design half of today is really about protecting independence while removing duplication — because it is easy to get one at the cost of the other.
+
+## Historical background
+
+The lineage of everything today runs through one small idea from the 1990s. **Kent Beck** wrote **SUnit** for Smalltalk — a testing framework so compact its original description fits on a few pages — built around a class with a `setUp` method that ran before each test and a `tearDown` that ran after. Beck and **Erich Gamma** ported the design to Java as **JUnit**, and from there the shape spread to nearly every language: a test class, a setup hook, a teardown hook, and methods whose names begin with `test`.
+
+Python got it as **PyUnit**, written by **Steve Purcell**, which entered the standard library as the `unittest` module in Python 2.1. It is still there, still maintained, and still the right answer in some situations — you will see it run for real later in this lesson. The `setUp`/`tearDown` design has one strong virtue and one deep limitation. The virtue: it is dead simple to explain. The limitation: there is exactly *one* setup per test class, so if two tests in the same class need different arrangements, you either split the class or you set up things that one of the tests does not need. Setup is all-or-nothing, and it does not compose.
+
+**pytest** started as part of the `py` library, written by **Holger Krekel** out of work on the PyPy project, and was released as a standalone tool with pytest 2.0 in 2010. Its early distinguishing feature was plain `assert` statements — no `assertEqual`, no `assertTrue` — made readable by rewriting the assertion bytecode so a failure could show the values involved. But the design that changed how people write tests came in **pytest 2.3**, in 2012, which introduced the `@pytest.fixture` decorator, fixture **scopes**, and resolution by argument name. That last piece is the unusual one, and it is worth naming precisely: a test declares what it needs by the *names of its parameters*, and the framework supplies them. It is dependency injection, with the injection key being a Python identifier in a function signature.
+
+Two later refinements complete the picture. `yield`-based teardown, first as a separate `yield_fixture` decorator and then, from pytest 3.0 in 2016, as the ordinary way to write any fixture: everything before the `yield` is setup, everything after is teardown. And the parametrization mark, which turns one function into many test items at collection time.
+
+The design half of today has its own short history. **Mike Cohn** published the **test pyramid** in *Succeeding with Agile* (Addison-Wesley, 2009): many fast unit tests at the base, fewer service tests above, very few slow end-to-end tests at the top. It became the default advice of a decade, and it has drawn serious, well-argued criticism ever since — which we will look at honestly rather than repeating the picture as scripture.
+
+## What it is — and what it is not
+
+A **fixture** is a function that produces something a test needs, registered under a name, and requested by writing that name as a parameter of the test. A **parametrized test** is one function plus a list of argument sets, which pytest expands at collection time into one independent test item per set.
+
+A fixture is **not** a setup method. `setUp` runs before every test in its class whether that test wants the setup or not; a fixture runs only for tests that ask for it, and different tests in the same file can ask for different ones. A fixture is **not** imported — you never write `from conftest import empty_store`, and doing so defeats the mechanism. A fixture is **not** a global variable, even a session-scoped one; it is a factory that pytest calls, caches per scope, and tears down.
+
+Parametrization is **not** a loop. This distinction is the single most important technical point in the lesson, so hold on to it: a loop inside one test produces **one** test item that stops at the first failing iteration, and reports one failure with no information about the iterations it never reached. Parametrization produces **N** test items that each run to completion and each report separately. You can see the difference without running anything, which is why `--collect-only` appears so often below.
+
+And a marker is **not** behaviour. `@pytest.mark.slow` does nothing on its own; it is a label you can later select on. The behaviour comes from `-m slow` or from configuration.
+
+| Common misconception | The reality |
+| --- | --- |
+| "A fixture is just pytest's version of `setUp`." | `setUp` is one arrangement for a whole class, all-or-nothing. Fixtures compose: one can request another, and each test asks only for what it needs. |
+| "Session scope makes the suite faster, so use it." | Session scope makes the suite faster *and* shares state between tests. Safe for immutable data, dangerous for anything a test can mutate. |
+| "Parametrizing five cases means one test now." | It means five test items. `--collect-only -q` will tell you the number; if it says one, the decorator did not expand. |
+| "More fixtures is better factored." | A fixture used once is a helper function with extra indirection and its definition in a different file. |
+| "`xfail` is how you skip a broken test." | `xfail` records a *known* failure and, with `strict=True`, fails the run if it starts passing. Skipping is `skip`, and it is much easier to abuse. |
+| "If the suite passes, the tests work." | Only if you have proved they can fail. A suite that stays green against deliberately broken code is measuring nothing. |
+
+## Why it was created and what problems it solves
+
+Each mechanism defeats a specific, nameable failure.
+
+**Fixtures defeat setup drift.** When six tests each build their own store inline, the six copies begin the same and end different — one gains an extra record because a test needed it, another loses a field after a refactor that missed it. Now the tests disagree about what "a store with three records" means, and a reader cannot tell which version is intentional. One named fixture makes the arrangement a single, reviewable fact.
+
+**Fixture scope defeats the slow suite.** Some setup is genuinely expensive: starting a database, loading a model, parsing a large corpus. Rebuilding it per test can turn a two-second suite into a four-minute one, and a four-minute suite is one people stop running. Scope lets you say "build this once per module" or "once per run" — and, crucially, lets you say it *per fixture*, so the expensive immutable thing is shared while the cheap mutable thing stays fresh.
+
+**`yield` teardown defeats the leaked resource.** If cleanup lives at the end of the test body, a failing assertion skips it, and now the temporary directory survives, the file handle stays open, the environment variable stays changed, and the *next* test fails for reasons that have nothing to do with it. pytest runs the code after `yield` whether the test passed, failed, or raised.
+
+**`conftest.py` defeats the import tangle.** Shared setup has to live somewhere. If it lives in a module you import, your test files acquire an import graph, and moving a test file breaks it. `conftest.py` is found by location, not by import, so a fixture is available to exactly the tests underneath it and to nothing else.
+
+**Parametrization defeats the copy-paste assertion, and the loop that replaces it.** Both the five near-identical tests and the one test with a loop lose information. Parametrization keeps the code of the loop and the reporting of the five tests.
+
+**Markers defeat the all-or-nothing run.** Some tests are slow, or need a network, or exercise one subsystem. A label lets you run the fast ones in a tight loop while you work and everything before you push.
+
+**`xfail` defeats the deleted test.** You find a genuine gap you are not going to fix today. The tempting moves are to delete the test or comment it out, and both lose the knowledge. `xfail` keeps the test running, records that it is expected to fail and why, and — with `strict=True` — turns the day it starts passing into a loud, deliberate event.
+
+## How it works
+
+Start with the mechanism that surprises people, because everything else builds on it.
+
+### Fixtures: dependency injection by parameter name
+
+A fixture is an ordinary function with a decorator:
+
+```python
+@pytest.fixture
+def empty_store(store_path):
+    return PracticeStore(store_path).initialise()
+```
+
+A test uses it by naming it as a parameter:
+
+```python
+def test_a_new_store_is_empty(empty_store):
+    assert empty_store.all() == []
+```
+
+There is no import, no decorator on the test, no base class, and no `self`. The link between the two is the string `empty_store`, appearing once as a function name and once as a parameter name. Rename either and pytest will tell you, immediately and by name:
+
+```text
+E       fixture 'empty_store' not found
+```
+
+This is worth understanding explicitly rather than absorbing as magic, because it is unusual and it has real consequences. It is **dependency injection**: the test declares what it depends on and something else supplies it. Most injection frameworks key on a type, or on a registered token, or on a configuration file. pytest keys on an *identifier in a function signature*, which is why the mechanism needs no configuration at all — and also why fixture names are part of your public interface, why a typo is an error rather than a `None`, and why a good fixture name is a noun describing a state of the world (`empty_store`, `loaded_store`) rather than a verb describing a procedure (`setup_store`).
+
+Fixtures compose, and that is the property `setUp` never had:
+
+```python
+@pytest.fixture
+def loaded_store(empty_store, sample_sessions):
+    for session in sample_sessions:
+        empty_store.add(session)
+    return empty_store
+```
+
+A fixture requesting two other fixtures builds a small dependency graph, and pytest resolves the whole chain before the test body runs. A test asking for `loaded_store` silently gets `tmp_path` → `store_path` → `empty_store` → `loaded_store`, in that order, and gets the teardowns in the reverse order on the way out.
+
+![Diagram: how a parameter name becomes a fixture — three conftest.py layers from the project root down to the test module, each contributing named fixtures to a registry, the built-in fixtures pytest always provides, a test function whose parameter names are the request, and the four scopes that decide how often each fixture body runs](./assets/fixture-resolution-architecture.svg)
+
+### Scope: an observable number of executions
+
+A fixture's **scope** decides how often its body actually runs. There are four, and the default is the safest:
+
+- `function` — once per test. The default.
+- `class` — once per test class.
+- `module` — once per test file.
+- `session` — once per pytest run.
+
+Scope is not documentation. It is a count, and you can watch it. The lab's `scopes/conftest.py` defines one fixture at each of three scopes, each printing when its body runs, and five tests across two modules request them. Run with `-s` (which stops pytest swallowing output) and this is the real captured result:
+
+```text
+$ cd examples && pytest scopes -s -q
+
+    [session] body ran
+
+    [module ] body ran
+
+    [funct  ] body ran
+.
+    [funct  ] teardown ran
+
+    [funct  ] body ran
+.
+    [funct  ] teardown ran
+
+    [funct  ] body ran
+.
+    [funct  ] teardown ran
+
+    [module ] teardown ran
+
+    [module ] body ran
+.
+    [funct  ] body ran
+x
+    [funct  ] teardown ran
+
+    [module ] teardown ran
+
+    [session] teardown ran
+
+4 passed, 1 xfailed in 0.01s
+```
+
+Count the lines and the whole concept is in front of you. One `[session] body ran` for five tests across two files. Two `[module ] body ran` — one per file. Four `[funct  ] body ran`, one per test that asked. And the teardowns nest correctly: the module teardown fires when the file is done, the session teardown at the very end.
+
+Now look at the second-to-last group, because it carries the other lesson. That `x` is a test that fails on purpose, and `[funct  ] teardown ran` appears *after* it. Teardown after `yield` runs whether the test passed or failed — which is the whole reason to write cleanup there instead of at the bottom of the test body, where a failed assertion would jump straight past it.
+
+The rule for choosing a scope is short and it is not about speed:
+
+> Widen the scope of a fixture only when the thing it produces cannot be mutated by a test.
+
+In the lab, `sample_sessions` is `scope="session"` because it produces frozen dataclasses, which no test can change. Every store fixture is `function`-scoped because a store is mutable state on disk, and sharing it would mean test five's result depends on whether test three ran first. Speed is a reason to *want* a wider scope; immutability is the only thing that makes it *safe*.
+
+### `conftest.py` and where a fixture is visible
+
+Fixtures shared between files go in a file called `conftest.py`. You never import it. pytest collects a test file, walks up the directory tree, and every `conftest.py` it passes contributes fixtures to that file's registry. Nearer definitions shadow farther ones.
+
+The consequence people trip on is that visibility flows **downward only**. A fixture defined in `tests/store/conftest.py` is available to everything inside `tests/store/`, and invisible to `tests/values/test_money.py`. The lab proves this rather than asserting it: its harness writes a test file at the top of `examples/` that asks for a fixture defined in `examples/scopes/conftest.py`, and requires pytest to refuse it with `fixture 'session_scoped' not found`.
+
+Two practical notes. First, `pytest --fixtures test_store.py` lists every fixture visible to that file, with its scope and its docstring — the fastest way to answer "what can I ask for here?". Second, a `conftest.py` is executable Python that runs automatically before any test does, from every directory pytest walks through. That is a good reason to read the test directory of an unfamiliar project before running its suite, and an excellent reason never to put a credential in one.
+
+### The built-in fixtures worth knowing today
+
+pytest ships fixtures you never define. Three earn their place immediately.
+
+**`tmp_path`** hands you a fresh, empty `pathlib.Path` directory, unique to the test that asked for it, and keeps the last few runs on disk so you can inspect a failure afterwards. It ties straight back to Day 64: everything you learned about writing files applies, except that now the file is somewhere safe.
+
+```python
+def test_tmp_path_is_a_fresh_empty_directory(tmp_path):
+    assert list(tmp_path.iterdir()) == []
+    store = PracticeStore(tmp_path / "practice.csv").initialise()
+    assert store.path.exists()
+```
+
+**`capsys`** captures whatever the code printed, so you can assert on output without changing the code to return it instead:
+
+```python
+def test_capsys_captures_what_was_printed(capsys, loaded_store):
+    describe(loaded_store)
+    captured = capsys.readouterr()
+    assert captured.out == "3 sessions, 135 minutes\n"
+    assert captured.err == ""
+```
+
+**`monkeypatch`** changes something about the world for the duration of one test and undoes it afterwards. Introduced lightly here — Day 74 goes properly into testing at boundaries — but the guarantee is worth seeing now, because the undo is the entire point:
+
+```python
+def test_monkeypatch_sets_an_environment_variable(monkeypatch, tmp_path):
+    monkeypatch.setenv("PRACTICE_HOME", str(tmp_path))
+    assert config_dir() == str(tmp_path)
+
+
+def test_the_environment_is_back_to_normal():
+    assert config_dir() == "/etc/practice"
+```
+
+Both of those tests pass, in that order, in a real run. Assign to `os.environ` yourself and the second one fails — and it fails in a way that will eventually have a test talking to the wrong endpoint because a test three files earlier changed a variable and never changed it back.
+
+### Parametrization: N cases, N independent tests
+
+Here is the transformation. Five tests that differ in one value each:
+
+```python
+def test_refuses_a_ref_without_the_prefix():
+    with pytest.raises(InvalidSession):
+        Session("001", date(2026, 5, 4), "python", 45)
+
+
+def test_refuses_zero_minutes():
+    with pytest.raises(InvalidSession):
+        Session("S-001", date(2026, 5, 4), "python", 0)
+
+# ...and three more just like them
+```
+
+become one function and a table:
+
+```python
+@pytest.mark.parametrize(
+    ("ref", "topic", "minutes"),
+    [
+        ("001", "python", 45),
+        ("S-1", "python", 45),
+        ("S-001", "Python", 45),
+        ("S-001", " python ", 45),
+        ("S-001", "python", 0),
+        ("S-001", "python", MAX_MINUTES + 1),
+    ],
+    ids=[
+        "ref-without-prefix",
+        "ref-too-short",
+        "topic-not-lower-case",
+        "topic-padded-with-spaces",
+        "minutes-zero",
+        "minutes-over-the-cap",
+    ],
+)
+def test_refuses_a_bad_value(ref, topic, minutes):
+    with pytest.raises(InvalidSession):
+        Session(ref, date(2026, 5, 4), topic, minutes)
+```
+
+Note the spelling: `parametrize`, not `parameterize`. It catches everyone once.
+
+Now the check that proves it worked, and it does not require running a single assertion:
+
+```text
+$ cd examples && pytest --collect-only -q test_sessions.py
+test_sessions.py::test_accepts_a_valid_session[shortest-allowed]
+test_sessions.py::test_accepts_a_valid_session[typical]
+test_sessions.py::test_accepts_a_valid_session[longest-allowed]
+test_sessions.py::test_refuses_a_bad_value[ref-without-prefix]
+test_sessions.py::test_refuses_a_bad_value[ref-too-short]
+test_sessions.py::test_refuses_a_bad_value[topic-not-lower-case]
+test_sessions.py::test_refuses_a_bad_value[topic-padded-with-spaces]
+test_sessions.py::test_refuses_a_bad_value[minutes-zero]
+test_sessions.py::test_refuses_a_bad_value[minutes-over-the-cap]
+```
+
+Six items, not one. Each has a **test id** — the function name plus the label in square brackets — and each is a thing pytest can run, report, select, and skip on its own. That is what `ids=` buys you. Without it, pytest generates ids from the values where it can and falls back to `[ref0]`, `[ref1]`, `[ref2]` where it cannot, and a failure report that says `[ref4]` tells you nothing you did not already have to go and look up.
+
+![Flowchart: one parametrized test function expanding into six independent test items — what you write, collection pairing every case with the body, the six named items, each running alone with fresh fixtures, and each reported separately so one failing case does not hide the other five](./assets/parametrize-expansion-flow.svg)
+
+**Stacking decorators gives the cross product.** Two `parametrize` marks on one function multiply:
+
+```python
+@pytest.mark.parametrize("topic", ["python", "linear-algebra", "statistics"])
+@pytest.mark.parametrize("minutes", [1, 45, MAX_MINUTES])
+def test_every_topic_accepts_every_legal_duration(topic, minutes):
+    session = Session("S-001", date(2026, 5, 4), topic, minutes)
+    assert session.topic == topic
+```
+
+Three and three become nine, and the real collection shows the ordering — the **bottom** decorator's parameter varies slowest and appears first in the id:
+
+```text
+test_sessions.py::test_every_topic_accepts_every_legal_duration[1-python]
+test_sessions.py::test_every_topic_accepts_every_legal_duration[1-linear-algebra]
+test_sessions.py::test_every_topic_accepts_every_legal_duration[1-statistics]
+test_sessions.py::test_every_topic_accepts_every_legal_duration[45-python]
+test_sessions.py::test_every_topic_accepts_every_legal_duration[45-linear-algebra]
+test_sessions.py::test_every_topic_accepts_every_legal_duration[45-statistics]
+test_sessions.py::test_every_topic_accepts_every_legal_duration[600-python]
+test_sessions.py::test_every_topic_accepts_every_legal_duration[600-linear-algebra]
+test_sessions.py::test_every_topic_accepts_every_legal_duration[600-statistics]
+
+9/21 tests collected (12 deselected) in 0.00s
+```
+
+Multiplication is powerful and it is a trap. Three stacked decorators of five values each is a hundred and twenty-five test items from twelve lines of code, and most of them will be telling you the same thing. Use the cross product when the *combination* is what might break — a currency and an amount, a locale and a date format — and a flat list of hand-chosen tuples when it is not.
+
+**A single case can carry its own marks.** `pytest.param` wraps one case so you can mark it individually:
+
+```python
+pytest.param(
+    date(2026, 5, 4) + timedelta(days=3650),
+    marks=pytest.mark.xfail(
+        strict=True,
+        reason="the stated rules never forbade a session dated in the future",
+    ),
+)
+```
+
+That is the honest way to record a known gap. The case still runs; it is reported as `xfailed` rather than `failed`; the suite still exits 0; and `strict=True` means that if somebody implements the rule and this case starts passing, the run fails until the marker is deleted. Compare that to deleting the test, which loses the knowledge, or commenting it out, which loses it and leaves litter.
+
+### Markers and selection
+
+A **marker** is a label:
+
+```python
+@pytest.mark.slow
+def test_the_file_on_disk_is_plain_readable_csv(loaded_store):
+    ...
+```
+
+Register it in configuration, or a typo silently marks nothing:
+
+```ini
+[pytest]
+addopts = --strict-markers
+markers =
+    validation: a test of the Session value rules — fast, no files touched
+    slow: a test that reads the CSV file back off disk
+```
+
+With `--strict-markers`, `@pytest.mark.slwo` is an error instead of a warning. That matters more than it sounds: without it, `pytest -m slow` quietly runs zero tests and reports success, and you believe you exercised something you did not.
+
+You then have two selectors, and they answer different questions. `-m` selects by marker and supports boolean expressions. `-k` matches a substring of the test id — parameter ids included — and needs no code change at all, which makes it the one you use while debugging. All three numbers below are from a real run of the lab's suite:
+
+```text
+$ pytest --collect-only -q -m validation | tail -2
+21/41 tests collected (20 deselected) in 0.01s
+
+$ pytest --collect-only -q -m "not slow" | tail -2
+40/41 tests collected (1 deselected) in 0.01s
+
+$ pytest --collect-only -q -k refuses | tail -2
+11/41 tests collected (30 deselected) in 0.01s
+```
+
+### The design half: what makes a suite good
+
+Mechanisms are the easy part. Here is the judgment.
+
+**One reason to fail.** A test should be able to fail for exactly one reason, and its name should say what that reason is. `test_refuses_a_duplicate_ref` is a good name because a failure tells you what broke before you read a line of output. `test_store_works` is a bad name for the same reason a variable called `data` is a bad name. When you find yourself writing a test with four unrelated assertions, you have found three more tests.
+
+**Test independence, and why `-p no:randomly` should never be needed.** There is a well-known pytest plugin, `pytest-randomly`, that shuffles test order on every run specifically to expose tests that depend on each other. The revealing thing is what people do when it turns their suite red: they add `-p no:randomly` to their configuration and move on. That flag is a confession. If shuffling the order breaks your suite, the suite has shared mutable state, and the bug is real — it is just currently hidden by the alphabet. The fix is to narrow a scope, or to make the shared thing immutable, never to pin the order.
+
+**The trap of over-fixturing.** This is the failure mode of people who have just learned fixtures, and it is genuinely worse than the duplication it replaces. It looks like this: a test whose body is two lines, requesting a fixture defined in a `conftest.py` two directories up, which requests three more, one of which is parametrized. Every individual step is defensible. The result is a test that no reader can understand without opening four files, which means nobody can tell whether it is testing the right thing, which means it will quietly stop testing anything.
+
+The counter-rule is blunt and worth applying literally: **a fixture used by exactly one test is a helper function wearing a costume.** Write the helper, inside the test file, next to the test:
+
+```python
+def test_a_fixture_and_a_helper_can_coexist(empty_store):
+    def three_sessions(first_number):
+        return [
+            Session(f"S-{first_number + n:03d}", date(2026, 8, n), "pytest", n * 10)
+            for n in (1, 2, 3)
+        ]
+
+    for session in three_sessions(200):
+        empty_store.add(session)
+    assert empty_store.total_minutes() == 60
+```
+
+A helper is better than a fixture when it is used once, when it takes arguments that change per test, when it produces a plain value rather than a resource needing teardown, or when reading it at the point of use is the thing you care about most. A fixture is better when several test files need the same arrangement, when there is teardown, when it needs to compose with other fixtures, or when it needs a scope. That is the entire decision, and it is not close in either direction once you name which case you are in.
+
+**The test pyramid, honestly.** Mike Cohn's pyramid says: a broad base of fast unit tests, a middle layer of service or integration tests, a thin cap of slow end-to-end tests. The economics behind it are real. Unit tests are fast and precise; end-to-end tests are slow, flaky, and when one fails it tells you that *something* in a chain of twelve components is wrong.
+
+The criticism is also real, and you should know it rather than discovering it the hard way. Three strands. First, a suite of purely unit tests can be entirely green while the system does not work at all, because every unit is correct and the wiring between them is not — heavy mocking makes this worse, which is why Day 74 spends its time on where to draw the boundary rather than on how to mock everything. Second, the pyramid's shape assumes integration tests are expensive, and for a lot of modern code they are not: an in-memory database or a temporary directory makes a "integration" test cost about what a unit test costs, so the middle layer should be fatter than the picture suggests. Guillermo Rauch's compressed version — *write tests, not too many, mostly integration* — captures that objection, and Kent C. Dodds' "testing trophy" redraws the shape accordingly. Third, "unit" was never well defined; arguing about whether a test that touches two classes is a unit test is an argument about words.
+
+The durable content, once you strip the shape away, is this: **prefer tests that are fast, deterministic, and precise about what they tell you, and buy slow or broad tests only where they cover a risk the fast ones cannot.** That principle survives every version of the argument. In the lab, `test_sessions.py` is the fast base — 21 items, no files touched at all — and the single test marked `slow`, which reads the CSV back off disk, is the deliberate purchase.
+
+**And the check that validates all of it.** Yesterday's discipline does not go away: prove the suite can fail. The lab's harness copies the finished suite, changes `if self.minutes <= 0:` to `if self.minutes < 0:`, and requires the run to go red. This is the real output:
+
+```text
+FAILED test_sessions.py::test_refuses_a_bad_value[minutes-zero] - Failed: DID...
+1 failed, 38 passed, 2 xfailed in 0.04s
+```
+
+Read `1 failed, 38 passed` carefully, because it is today's argument compressed into one line. The suite noticed. It named the exact case. And the other five cases of that same function still ran and still passed, so you know the damage is bounded. A `for` loop over six inputs inside one test would have stopped at the first failure and told you that one test was broken, with no information about the other five.
+
+## An everyday analogy
+
+Watch a professional kitchen before service and you are watching test design.
+
+The prep is called **mise en place** — everything in its place. Nobody dices an onion when an order comes in. Onions are diced in the morning, stock is made in the morning, sauces are reduced in the morning, and each thing sits in a labelled container. When a ticket arrives the cook calls for what the dish needs *by name*, and it is there. That is a fixture: the arrangement, done in advance, given a name, requested by name. And notice that the cook does not receive the whole prep list with every ticket — a dish that needs no stock does not get stock. That is what makes fixtures different from a `setUp` method that runs everything for everybody.
+
+The prep schedule is **scope**. Stock is made once for the whole service, because it takes four hours and nobody can change it once it is made. A cutting board is wiped between every single dish, because it is exactly the thing that carries something from one plate to the next. No head chef would make one board per service to save time, and no head chef would make fresh stock per plate. The rule is the same one you apply to fixtures: share the thing that cannot be contaminated, and never share the thing that can. Session scope is stock. Function scope is the cutting board. Sharing the board is how you get a suite that passes on Tuesday and fails on Wednesday for no visible reason.
+
+The wash-down is **teardown after `yield`**. The station gets cleaned when the dish leaves — and it also gets cleaned when the dish is sent back, or dropped, or burned. In fact it especially gets cleaned then. Cleanup that only happens on success is not cleanup.
+
+The kitchen's layout is **`conftest.py` discovery**. The walk-in fridge serves the whole kitchen. The sauce station's own mise en place serves the sauce station, and the pastry section cannot reach it — which is not an oversight but the point, because a section that could reach into every other section's prep would be a kitchen where nobody could work in parallel.
+
+**Parametrization** is the tasting menu with variations. The same dish goes out in the standard version, the vegetarian version, the no-nuts version, the smaller portion. One recipe, four executions — and every plate leaves with its own ticket, so when one comes back you know precisely which one and why. Do it as a loop instead and you get a kitchen that hears "table nine sent something back" with no idea which plate.
+
+And the analogy names the failure too, because kitchens suffer from it. A mise en place can be so elaborate — so many components, prepped so far in advance, in containers whose labels reference other containers — that a cook plating a dish genuinely cannot tell you what is in it. Every individual prep decision was reasonable. The cumulative result is a kitchen where nobody can answer a question about the food. That is the over-fixtured suite, exactly.
+
+## Examples in practice
+
+Take the whole arc on the lab's real suite, with real numbers at every step.
+
+**The starting point.** Thirteen tests, all passing, eight copies of the same six-line setup:
+
+```text
+$ cd starter && pytest -q
+.............                                                            [100%]
+13 passed in 0.01s
+
+$ cd starter && pytest --collect-only -q | tail -2
+
+13 tests collected in 0.01s
+
+$ grep -c "store = PracticeStore(path)" starter/test_practice_store.py
+8
+```
+
+Thirteen functions, thirteen items. One to one, because nothing is parametrized.
+
+**The finished suite.** The same assertions, plus the built-in fixture demonstrations and the scope demonstration:
+
+```text
+$ cd examples && pytest -q
+....x.........................x..........                                [100%]
+39 passed, 2 xfailed in 0.04s
+
+$ cd examples && pytest --collect-only -q | tail -2
+
+41 tests collected in 0.01s
+```
+
+Twenty-two test functions produce forty-one items, because four of them are parametrized: 3 + 6 + 9 + 3 = 21 from `test_sessions.py`, 7 + 3 = 10 from `test_store.py`, 5 from `test_builtin_fixtures.py`, 5 from `scopes/`. Add them up yourself — the arithmetic is the point. More cases, less code, every case reported by name.
+
+**The `conftest.py` that made it possible**, in full, is five fixtures and one deliberate scope decision:
+
+```python
+@pytest.fixture(scope="session")
+def sample_sessions():
+    """Three immutable sessions across two topics: 45 + 30 + 60 = 135 minutes."""
+    return (
+        Session("S-001", date(2026, 5, 4), "python", 45),
+        Session("S-002", date(2026, 5, 5), "linear-algebra", 30),
+        Session("S-003", date(2026, 5, 6), "python", 60),
+    )
+
+
+@pytest.fixture
+def store_path(tmp_path):
+    return tmp_path / "practice.csv"
+
+
+@pytest.fixture
+def empty_store(store_path):
+    return PracticeStore(store_path).initialise()
+
+
+@pytest.fixture
+def loaded_store(empty_store, sample_sessions):
+    for session in sample_sessions:
+        empty_store.add(session)
+    return empty_store
+
+
+@pytest.fixture
+def audited_store(loaded_store):
+    before = len(loaded_store.all())
+    yield loaded_store
+    after = len(loaded_store.all())
+    print(f"[audit] sessions before: {before}, after: {after}")
+```
+
+One fixture is session-scoped and four are not, and the reason is one word: mutability. `Session` is a frozen dataclass, so no test can change what `sample_sessions` returns. A `PracticeStore` writes to a file, so sharing one across tests would make every result depend on the order.
+
+The `audited_store` fixture shows teardown in a form you can see. This is a real run:
+
+```text
+$ cd examples && pytest -s -q test_store.py::test_teardown_reports_the_final_size
+.[audit] sessions before: 3, after: 4
+
+1 passed in 0.01s
+```
+
+**A test file after the refactor** reads like a specification rather than a script:
+
+```python
+def test_refuses_a_duplicate_ref(loaded_store):
+    with pytest.raises(DuplicateRef):
+        loaded_store.add(Session("S-001", date(2026, 7, 1), "python", 15))
+
+
+@pytest.mark.parametrize(
+    ("topic", "expected"),
+    [("python", 105), ("linear-algebra", 30), (None, 135)],
+    ids=["python-only", "linear-algebra-only", "every-topic"],
+)
+def test_total_minutes_adds_the_right_sessions(loaded_store, topic, expected):
+    assert loaded_store.total_minutes(topic) == expected
+```
+
+Check that arithmetic against the fixture: the two Python sessions are 45 and 60, which is 105; the one linear-algebra session is 30; all three are 135. Every number in the test is derivable from the fixture above it, which is exactly the property that makes a fixture readable rather than mysterious.
+
+**Selection, in practice.** While working on the value rules you would run only those, in a fraction of the time:
+
+```text
+$ pytest -q -m validation | tail -1
+```
+
+Before pushing, you would run everything. And when a colleague says "the refusal tests are failing", `-k refuses` gets you to the eleven relevant items without you needing to know which files they live in.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Security.** Three concrete things. First, `tmp_path` is a security control and not merely a convenience: a test that writes to a hard-coded path can overwrite real data, collide with a parallel run, or leave residue that makes the next run pass for the wrong reason. Second, `monkeypatch`'s automatic undo is *containment* — a hand-rolled patch of an environment variable survives the test that made it, so a test that changed a credential path or an endpoint can silently change what a later test talks to. Third, and least obvious: `conftest.py` is executable code that pytest runs automatically, before any test, from every directory it walks through. It looks like configuration, so it gets read less carefully than application code, which makes it a favourite hiding place for a hard-coded key someone added "just to get the suite running". Read a stranger's test directory before you run their suite.
+
+**Privacy.** Test suites are where production data quietly ends up. Somebody exports real records to reproduce a bug, saves them as a fixture file, and now personal data is in version control forever, visible to every person with repository access and to every future clone — including, eventually, a public one. A fixture that *generates* data has no such problem, and generating three plausible practice sessions takes less time than exporting three real ones. Where you genuinely need production shapes, anonymise deliberately and write down what you did.
+
+**Performance.** The numbers here are small enough to be honest about. The lab's forty-one items run in about four hundredths of a second, because the fixtures are cheap and the file operations are tiny. Scope matters when setup is genuinely expensive — a database, a model, a large corpus — and then it matters enormously: a two-second per-test setup across two hundred tests is nearly seven minutes at function scope and two seconds at session scope. But the correct order of operations is to *measure first*. Widening a scope to save time you have not measured buys you a small speedup and a large class of order-dependent bugs, and that is a bad trade every time.
+
+**Scalability.** Scalability of a suite is measured in the cost of the next test. In the starter, adding a test costs six lines of copy-pasted setup plus the risk of copying a stale version. In the refactored suite, adding a *case* costs one line in a list. That is the ratio that decides whether a team's coverage grows or stagnates. It also scales in a second direction: parametrized cases are independent by construction, so they parallelise cleanly across processes, while tests sharing a mutable session-scoped fixture do not.
+
+**Cost.** The dominant cost of a test suite is not the time it takes to run; it is the time people spend understanding it and the confidence they lose when it lies. That is why the over-fixturing trap is expensive despite producing shorter files, and why an `xfail` with a written reason is cheaper than a deleted test. There is a genuine counter-cost to today's techniques and it deserves naming: every fixture is another name a reader has to learn, and every layer of `conftest.py` is another file they have to find. Extract when the duplication is real and repeated. Leave it inline when it is not.
+
+## Alternatives: free, open source, and commercial
+
+Five ways to solve the problems today's tools solve. Every one of them is free and open source; the split that matters is between what ships with Python and what you install.
+
+| Approach | What it is | When to choose it | Cost |
+| --- | --- | --- | --- |
+| pytest fixtures | Named, composable, scoped arrangements resolved by parameter name | The default for new Python projects; anywhere setup varies between tests in the same file | Free and open source (MIT), installed with `pip` |
+| `unittest` `setUp`/`tearDown` | The standard library's class-based framework, one setup per test class | An existing `unittest` codebase, or a context where installing anything is genuinely impossible | Free, in the standard library |
+| Plain factory functions | Ordinary helper functions that build objects, called explicitly | One-off arrangements, arrangements that take arguments, anywhere reading the test at the point of use matters most | Free, no dependency at all |
+| `factory_boy` with `pytest-factoryboy` | Declarative factories for model objects, with sequences and sub-factories | Large object graphs with many required fields, especially with an ORM behind them | Free and open source, installed with `pip` |
+| Hypothesis | Property-based testing: describe the shape of valid input, let the library generate cases and shrink failures | When the interesting inputs are too numerous to list, and you can state a property rather than a table | Free and open source, installed with `pip` |
+
+**pytest fixtures — how, with an example.** Covered above at length. Choose them when arrangements are shared, composable, or need teardown. The worked example is the lab's `conftest.py`: `tmp_path` → `store_path` → `empty_store` → `loaded_store`, one chain, five names, forty-one test items on top of it.
+
+**`unittest` — how, with an example.** Subclass `unittest.TestCase`, name your methods `test_*`, do setup in `setUp` and cleanup in `tearDown`, and assert with the `assert*` methods. This is the standard library, so it is already installed and it runs for real. Here is a genuine capture:
+
+```python
+class PracticeStoreTest(unittest.TestCase):
+    def setUp(self):
+        print("  setUp ran")
+        self.sessions = [Session("S-001", 45), Session("S-002", 30)]
+
+    def tearDown(self):
+        print("  tearDown ran")
+
+    def test_total(self):
+        self.assertEqual(sum(s.minutes for s in self.sessions), 75)
+
+    def test_refuses_zero(self):
+        with self.assertRaises(ValueError):
+            Session("S-003", 0)
+```
+
+```text
+$ python3 -u -m unittest -v test_unittest_style
+test_refuses_zero (test_unittest_style.PracticeStoreTest.test_refuses_zero) ...   setUp ran
+  tearDown ran
+ok
+test_total (test_unittest_style.PracticeStoreTest.test_total) ...   setUp ran
+  tearDown ran
+ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.000s
+
+OK
+```
+
+`setUp` and `tearDown` really did run once per test — that part is equivalent to a function-scoped fixture. The difference appears the moment two tests in one class need *different* arrangements: `setUp` has no way to express that, so you either split the class or over-prepare. For the parametrization problem, `unittest` offers `subTest`, and it is worth seeing exactly where it stops short:
+
+```python
+class SubTestDemo(unittest.TestCase):
+    def test_rejections(self):
+        for minutes in (0, -5, 601, 1.5):
+            with self.subTest(minutes=minutes):
+                self.assertFalse(is_valid(minutes))
+```
+
+Break the implementation so that zero is wrongly accepted, and this is the real output:
+
+```text
+FAIL: test_rejections (test_subtest_fail.SubTestDemo.test_rejections) (minutes=0)
+...
+AssertionError: True is not false
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (failures=1)
+```
+
+`subTest` does the important thing — the other three iterations still ran, and the failure names `minutes=0`. But look at the count: **`Ran 1 test`**. There is still only one test item. You cannot select one case with `-k`, you cannot mark one case `xfail`, and you cannot see the cases at all before running them. That is the gap `parametrize` closes. Two final notes: pytest runs `unittest.TestCase` classes natively — the file above gives `2 passed` under pytest with no changes — so migrating is incremental rather than a rewrite, and `unittest` remains the honest answer when your organisation forbids third-party dependencies in a particular codebase.
+
+**Plain factory functions — how, with an example.** Write a function, call it:
+
+```python
+def make_store(path, *, sessions=()):
+    store = PracticeStore(path).initialise()
+    for session in sessions:
+        store.add(session)
+    return store
+
+
+def test_totals(tmp_path):
+    store = make_store(tmp_path / "p.csv", sessions=SAMPLE)
+    assert store.total_minutes() == 135
+```
+
+Choose this when the arrangement is used once, when it takes arguments that differ per test, or when the reader benefits from seeing the setup at the point of use. It is not a lesser option — it is frequently the *better* option, and the fact that pytest offers fixtures is not a reason to stop writing functions. Note also that this composes with fixtures rather than competing with them: the example still uses the built-in `tmp_path`.
+
+**`factory_boy` with `pytest-factoryboy` — how, with an example.** `factory_boy` (a Python port of the idea behind Ruby's factory library) lets you declare how to build an object once, with defaults and sequences, and then override only the fields a given test cares about. `pytest-factoryboy` registers those factories as pytest fixtures automatically. Sketched — and marked as sketched, because neither library is installed on the machine these captures came from, so this one was **not** run:
+
+```python
+class SessionFactory(factory.Factory):
+    class Meta:
+        model = Session
+
+    ref = factory.Sequence(lambda n: f"S-{n:03d}")
+    topic = "python"
+    minutes = 45
+```
+
+Choose it when your objects have a dozen required fields and each test cares about one of them, which is the normal situation with an ORM model and the reason the pattern exists. Do not reach for it for a four-field dataclass; a plain function is clearer and has no dependency.
+
+**Hypothesis — how, with an example.** Instead of listing cases, you describe the *shape* of valid input and state a property that must hold for all of it. Hypothesis generates hundreds of examples, and when it finds a failure it **shrinks** it — repeatedly simplifying the input until it has the smallest example that still fails, which is usually far more informative than the random one it found first. The idea comes from QuickCheck, by Koen Claessen and John Hughes, for Haskell; Hypothesis is David MacIver's Python implementation. Sketched, and again **not** run here, since the library is not installed on this machine:
+
+```python
+@given(minutes=st.integers(min_value=1, max_value=600))
+def test_any_legal_duration_is_accepted(minutes):
+    assert Session("S-001", date(2026, 5, 4), "python", minutes).minutes == minutes
+```
+
+Choose it when the input space is large and you can state a property — round-trips (`parse(render(x)) == x`), invariants (a total is never negative), and equivalences (the fast implementation agrees with the slow one) are the classic three. Keep listing cases by hand when the interesting inputs are a small known set, or when each case documents a specific stated rule, as the lab's six refusals do. The two coexist happily: hand-written cases pin the rules you were told about, Hypothesis hunts for the ones nobody thought of.
+
+## Comparison with related concepts
+
+| Concept A | Concept B | Key difference |
+| --- | --- | --- |
+| Fixture | Helper function | A fixture is requested by parameter name, composes, has a scope, and can tear down. A helper is called explicitly and reads at the point of use. Used once? Helper. |
+| Fixture | `setUp` | A fixture runs only for tests that ask for it and can request other fixtures; `setUp` runs for every test in its class, all-or-nothing, and cannot compose |
+| Parametrization | A loop inside a test | N independent items that each run to completion and report by id, versus one item that stops at the first failure |
+| `parametrize` | `subTest` | `subTest` reports each iteration but still collects as one test — you cannot select, mark, or list the cases |
+| `-m` (marker) | `-k` (keyword) | `-m` selects labels you put in the code and registered in config; `-k` matches a substring of the test id and needs no code change |
+| `xfail` | `skip` | `xfail` runs the test and expects it to fail, and with `strict=True` fails the run when it starts passing; `skip` does not run it at all |
+| `xfail(strict=True)` | `xfail` | Strict turns an unexpected pass into a failure, so a fixed gap cannot leave a stale marker behind |
+| `session` scope | A module-level constant | A session fixture is still built lazily by pytest, torn down deterministically, and overridable per directory; a constant is none of those |
+| `tmp_path` | A hard-coded path | `tmp_path` is unique per test, cleaned up on a rotation, and cannot collide with a parallel run or clobber real data |
+| Test pyramid | Testing trophy | Same underlying economics; the trophy argues the integration layer should be fatter because integration tests got cheap |
+
+## When to use it — and when not to
+
+**Extract a fixture when** the same arrangement appears in three or more tests, when it needs teardown, when several files need it, or when it needs to compose with another arrangement. Three is a real threshold and not a superstition: at two occurrences the duplication is still legible and the extraction still speculative; at three you are watching a pattern rather than a coincidence.
+
+**Do not extract a fixture when** it will have one user, when the arrangement is one line, when the "fixture" would take parameters that vary per test (that is a function), or when the reader's ability to see the setup beside the assertion is the most valuable thing about the test. A test that reads top to bottom with no indirection is worth a few duplicated lines.
+
+**Widen a scope when** the setup is measurably expensive *and* what it produces cannot be mutated by a test. Both halves are required. **Never widen it** to speed up something you have not timed, and never widen it for anything with mutable state — the speedup is small and the order-dependent failure it buys you will cost a whole afternoon six months from now.
+
+**Parametrize when** several tests share an assertion body and differ only in data, when a rule has a natural table of cases, or when you want boundary values visible as a list somebody can review. **Do not parametrize when** the cases need genuinely different assertions — forcing them into one body with an `if` in it is worse than two tests — or when the parameter list has grown so long that nobody reads it, which is the signal to reach for Hypothesis instead.
+
+**Use a marker when** a meaningful subset of the suite deserves separate treatment: slow, networked, one subsystem. **Do not** use markers to route around a broken test. A test excluded by default is a test that will stop working with nobody noticing, and you will find out when it matters.
+
+**Use `xfail` when** you have found a genuine gap you are not fixing now and want the knowledge to survive in the suite. Always give a `reason`, and prefer `strict=True`. **Do not** use it to silence a flaky test — flakiness is a defect in the test or the code, and marking it expected-to-fail converts a signal into noise.
+
+This is the middle of Week 11, and the pieces now interlock. Day 71 gave you the anatomy of a test and the discipline of proving it can fail; today gave you the tools to write forty of them without writing the same six lines forty times, plus the judgment to know when you have over-corrected. Tomorrow, Day 73, inverts the order entirely — the test first, then the code — and every fixture and parametrized case you wrote today is the raw material that makes that inversion practical rather than painful. Day 74 takes the `monkeypatch` you met lightly today and builds the whole discipline of testing at boundaries on it.
+
+And here is where it points. Parametrization is not a testing convenience that happens to be useful for AI work; it is *the shape of an evaluation suite*. When you evaluate a model later in this course, you will write one assertion body — does the output contain the required field, does the classifier agree with the label, does the retrieved passage contain the answer — and hand it a dataset of cases. Each case will need to run independently, because one bad example must not stop the other four hundred. Each will need a readable id, because "case 287 failed" is useless and "case `refund-request-in-spanish` failed" is a bug report. Each will need to be selectable, because you will want to re-run only the failures. And you will need markers, because some of your evaluation cases will be cheap and local and some will cost real money per call, and you will absolutely want `-m "not expensive"` on your laptop.
+
+The fixture machinery transfers just as directly. A loaded model, an embedding index, a client object — these are the expensive, immutable, session-scoped fixtures. A conversation state, a scratch directory, a fake response — these are the cheap, mutable, function-scoped ones. Getting that split wrong in an evaluation harness produces exactly the failure you now know how to recognise: a suite whose results depend on the order it ran in, which in an evaluation context means numbers you cannot reproduce and therefore cannot report. The habit you are building today on a CSV of practice sessions is the habit that makes a model evaluation trustworthy.
+
+## Knowledge check
+
+Try these from memory before looking back:
+
+1. Name the two distinct kinds of duplication in a test suite, and say which pytest tool addresses each.
+2. Explain how pytest decides which fixture to give a test. What exactly is the lookup key, and what happens when it does not match?
+3. A fixture produces a mutable object and you want to make it `session`-scoped for speed. Say precisely what could go wrong, and what symptom you would see.
+4. Why does a `yield` fixture's teardown run when the test has failed, and why does that matter more than a `try`/`finally` inside the test body?
+5. A colleague converts five tests into one test with a `for` loop over five inputs. What have they lost, and what single command would you run to demonstrate it?
+6. Distinguish `-k` from `-m`, and give one situation where each is clearly the right choice.
+7. What does `strict=True` add to `pytest.mark.xfail`, and what problem does it prevent?
+8. State the rule for when a plain helper function is better than a fixture, and give two examples that fit it.
+
+## Hands-on exercise
+
+Time to refactor an inherited suite and measure the difference. In the Day 72 lab, **A Suite That Scales**, you are given a working CSV-backed practice-log module and a test suite that passes — thirteen tests, eight copies of the same six lines of setup, and five tests that differ by one value each. Work in the lab directory; every command below is run from there.
+
+This is the first lab in the course with a third-party dependency, so install it once. You set up virtual environments on Day 43:
+
+```bash
+cd labs/sections/programming-with-python/day-072-fixtures-parametrization-and-test-design
+python3 -m venv .venv
+.venv/bin/pip install -r requirements/requirements.txt
+.venv/bin/pytest --version
+```
+
+That prints `pytest 9.1.1`, and it is the only step that needs the network. Now measure the starting point before you change anything:
+
+```bash
+cd starter
+../.venv/bin/pytest -q
+../.venv/bin/pytest --collect-only -q | tail -2
+grep -c 'store = PracticeStore(path)' test_practice_store.py
+cd ..
+```
+
+Then work through `starter/refactoring-worksheet.md`, exercises 0 to 7: name the arrangements before extracting them, create a `conftest.py` with a `tmp_path`-based fixture, build a second fixture on top of the first, convert the five rejection tests into one parametrized test with readable `ids=`, add a stacked pair of decorators for a cross product, register a marker, and add a `yield` fixture whose teardown you can prove runs after a failure.
+
+When you want to see the target, the finished reference is in `examples/`:
+
+```bash
+cd examples
+../.venv/bin/pytest -q
+../.venv/bin/pytest --collect-only -q test_sessions.py
+../.venv/bin/pytest scopes -s -q
+cd ..
+bash tests/run_tests.sh
+```
+
+### Expected output
+
+The refactored reference produces exactly this (a real captured session):
+
+```text
+$ cd examples && pytest -q
+....x.........................x..........                                [100%]
+39 passed, 2 xfailed in 0.04s
+
+$ cd examples && pytest --collect-only -q | tail -2
+
+41 tests collected in 0.01s
+
+$ cd examples && pytest --collect-only -q -k refuses | tail -2
+
+11/41 tests collected (30 deselected) in 0.01s
+
+$ cd examples && pytest --collect-only -q -m validation | tail -2
+
+21/41 tests collected (20 deselected) in 0.01s
+```
+
+And the scope demonstration prints the session fixture body once, the module fixture body twice, and the function fixture body four times, each with a matching teardown — including one after the test that fails on purpose.
+
+The test harness prints one line per check and ends with `38 checks, 0 failure(s).`
+
+### Validate your work
+
+1. `cd starter && ../.venv/bin/pytest -q` reports `13 passed` both before and after your refactor. The assertion count must not change.
+2. `grep -c 'store = PracticeStore(path)' starter/test_practice_store.py` prints `8` before and `0` after.
+3. `cd examples && ../.venv/bin/pytest --collect-only -q | tail -2` reports exactly `41 tests collected`.
+4. `../.venv/bin/pytest --collect-only -q -k refuses | tail -2` reports exactly `11/41 tests collected (30 deselected)`.
+5. Every test id in `../.venv/bin/pytest --collect-only -q test_sessions.py` ends in a name a human chose. Seeing `[ref0]` means an `ids=` list is missing.
+6. In `pytest scopes -s -q`, the session fixture body appears once and the function fixture body four times — count them with `grep -c`.
+7. Break it on purpose: copy `examples/` to a temporary directory, change `if self.minutes <= 0:` to `if self.minutes < 0:` in the copy, run the suite there, and confirm you get `1 failed, 38 passed, 2 xfailed` naming `test_refuses_a_bad_value[minutes-zero]`.
+8. `bash tests/run_tests.sh` ends with `38 checks, 0 failure(s).` and exits 0.
+9. Every row of the worksheet is filled in, including the measurement table and the closing design question, in sentences rather than single words.
+
+### Troubleshooting
+
+The lab's `troubleshooting.md` covers the full list. The five you are most likely to meet: `FAIL: pytest not found`, which means the install step was skipped or the harness needs `PYTEST=/path/to/pytest`; `fixture 'empty_store' not found`, which is a misspelled name, a `conftest.py` in the wrong directory, or a fixture defined in a subdirectory and requested from above it; `'slwo' not found in 'markers' configuration option`, which is `--strict-markers` doing exactly its job; a collected count that did not go up, which usually means `parametrize` was spelled `parameterize`; and a `[audit]` print you cannot see, which needs `-s`.
+
+The one worth stopping for is "passes alone, fails in the suite". That is shared mutable state, it is a real defect, and the fix is to narrow a scope or make the shared thing immutable — never to pin the test order.
+
+### Common mistakes
+
+- **Extracting a fixture used by one test.** You have written a helper function, moved it to another file, and replaced its call with a parameter name. That is a net loss.
+- **Widening a scope to make things faster without checking mutability.** The suite gets quicker and then starts failing depending on order, and the connection between the two events is not obvious weeks later.
+- **Converting five tests into a loop instead of a parametrization.** It looks identical in the source and loses everything in the report. `--collect-only -q` tells you which one you wrote.
+- **Omitting `ids=`.** The suite works and the failure report stops being useful. `[minutes-zero]` versus `[minutes4]` is the whole difference.
+- **Spelling it `parameterize`.** pytest uses the shorter spelling. Everyone does this once.
+- **Marking a test `xfail` to quiet a flaky failure.** Flakiness is a defect. `xfail` is for a gap you have understood and written down.
+- **Putting a rule in a fixture.** A fixture arranges; it does not assert. An assertion hidden in setup fails in a place that does not tell you which test triggered it.
+
+## Practice assignment
+
+Take a suite you have already written — the Day 71 lab's tests, or the tests you wrote for the Week 10 project — and refactor it under measurement.
+
+Before touching anything, record four numbers: lines in the test file, occurrences of the most-repeated setup line (use `grep -c`), test functions written by hand, and test items pytest collects. Then do the work: extract every arrangement used three or more times into a named fixture in a `conftest.py`, giving each a name that is a noun describing a state of the world; choose a scope for each one and write a one-sentence justification that mentions mutability; convert every group of tests sharing an assertion body into a parametrized test with hand-written `ids=`; add at least one stacked pair of decorators where the *combination* is genuinely what might break; register two markers and use them; and record any genuine gap you find as an `xfail` with `strict=True` and a written reason.
+
+Then record the four numbers again, plus a fifth: assertions lost, which must be zero. Finally, do the thing that makes it all mean something — copy the code under test somewhere temporary, break exactly one line, and confirm the suite goes red and names the case. Your deliverable is the before-and-after numbers, the refactored suite, the captured output of the deliberate break, and one paragraph naming the fixture you decided *not* to extract and why.
+
+## Extension challenge
+
+Three extensions, each forcing a real judgment rather than more typing.
+
+**Make a scope wrong and live with the consequences.** Change `empty_store` in the lab's `conftest.py` to `scope="module"` and run `pytest -q test_store.py`. Tests will fail, and which ones fail will depend on the order they run in. Now write down two things: the exact mechanism (which test's leftover state broke which later test), and the one-word reason `sample_sessions` is safe at session scope while `empty_store` is not. Then put it back. Deliberately breaking a scope once teaches more than any rule about it.
+
+**Build the argument for a helper.** Pick the lab fixture used by the fewest tests, inline it as a plain helper function inside the test file, and put the two versions side by side. Then answer, in writing: which version lets a stranger see what the test sets up without opening another file, and at how many users would you switch back? Defend a specific number. "It depends" is not an answer; "three, because at two the extraction is still speculative" is.
+
+**Write the evaluation-suite skeleton.** Without a model and without a network, write a parametrized test that has the shape of a model evaluation. Make a small dataset of five cases — an input, an expected property, and a readable id — and a single assertion body that applies a stub scoring function. Give the expensive part (a fake "client" that just returns a canned answer) a session-scoped fixture and the per-case state a function-scoped one. Mark two cases as `expensive` and confirm `-m "not expensive"` deselects exactly two. Then write one paragraph on what would have to change when the stub becomes a real model call — and which of today's guarantees, exactly, would stop being true. That paragraph is the bridge into Day 74, and into everything you will build after it.

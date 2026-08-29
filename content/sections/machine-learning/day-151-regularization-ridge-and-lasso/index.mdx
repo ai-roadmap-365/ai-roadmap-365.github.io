@@ -1,0 +1,858 @@
+---
+day: 151
+title: 'Regularization: Ridge and Lasso'
+---
+
+## Why this matters
+
+Fit a lasso model on the diabetes dataset, in its raw measurement units —
+age in years, bmi as a ratio, blood pressure in mm Hg — at a perfectly
+reasonable penalty strength, `alpha=1.0`. Ask which of the ten features
+survived:
+
+```text
+  units               n kept   kept
+  raw                 10/10    age, sex, bmi, bp, s1, s2, s3, s4, s5, s6
+  standardized         7/10    sex, bmi, bp, s1, s3, s5, s6
+  sklearn's "scaled"   3/10    bmi, bp, s5
+```
+
+Same data. Same model. Same `alpha`. Same random seed. Three completely
+different answers, and the difference has nothing to do with which
+features matter. It is the units.
+
+Lasso's whole reputation rests on a promise: give it a pile of candidate
+predictors and it will quietly drop the ones that do not pull their
+weight, leaving you a short, interpretable list. Fit it on unscaled data
+and that promise silently breaks — not with an error, not with a warning,
+just with a penalty that never had a chance to bite, because a coefficient
+of 5.8 on a feature measured in the hundreds looks enormous to the penalty
+and a coefficient of 300 on a feature measured in fractions of a point
+looks tiny, regardless of which one the data actually needs. Ship that raw
+model and you have not done feature selection. You have kept everything
+and told yourself a story about it.
+
+Day 145 already measured what a penalty buys in general: a ridge term
+rescued a wildly overfit degree-24 polynomial by a factor of 39,588 in
+mean squared error, at the cost of training error that rises
+monotonically as the penalty grows — the standard variance-for-bias trade.
+That result does not distinguish ridge from lasso, because it did not need
+to. Today's question is different and more specific: given two penalties
+that both shrink coefficients, why does one of them occasionally produce
+an *exact* zero and the other one never does, and what follows from that
+difference once you have to choose which features survive, how much
+scaling matters, and what happens when two of your predictors are nearly
+the same column twice?
+
+Every number in what follows was measured on this machine today, on
+`sklearn.datasets.load_diabetes` and on synthetic data built with a known
+answer, using scikit-learn 1.9.0. Nothing here is a textbook claim taken
+on faith.
+
+## The idea in plain language
+
+Imagine an airline with a strict total weight limit across everything you
+check in, and imagine two different airlines that enforce it in two
+different ways.
+
+**The first airline — call it Ridge Air — charges an overweight fee
+proportional to the *square* of how far each bag is from empty.** A bag
+that is 20 kg over pays four times the fee of a bag that is 10 kg over,
+not twice. Under that pricing, trimming a heavy bag by a kilogram saves
+you real money, and it is always worth doing a little trimming on every
+bag you are carrying. But there is never a moment where it is worth
+emptying a bag all the way to zero, because the marginal fee for the very
+last kilogram in an already-light bag is nearly nothing — the square of a
+small number is smaller still. Ridge Air's passengers arrive with every
+bag a little lighter than they packed, and none of them empty.
+
+**The second airline — Lasso Air — charges a flat per-bag fee, the same
+regardless of how much is in it, as long as it is not empty.** Under that
+pricing, a bag holding only a little is now a bad deal: you are paying the
+full flat fee to carry almost nothing. The rational move is to consolidate
+that bag's contents into another one and leave it home entirely — paying
+zero fee for a bag with zero weight. Lasso Air's passengers arrive with
+some bags trimmed a little and other bags **left at home altogether.**
+
+That is the whole difference between an L2 penalty (ridge) and an L1
+penalty (lasso), translated out of the math. A penalty on the *square* of
+a coefficient has a marginal cost that shrinks toward zero as the
+coefficient shrinks, so there is never a reason to push all the way to
+zero — you get everywhere-a-little-lighter, never empty. A penalty on the
+*absolute value* of a coefficient has a constant marginal cost no matter
+how small the coefficient already is, so once a coefficient's contribution
+is small enough, dropping it to exactly zero saves as much as it would at
+any other size — and it is entirely rational to do that.
+
+Hold onto Ridge Air and Lasso Air. Every measurement in this lesson maps
+onto one of those two pricing schemes, right down to the practically
+important detail of what happens when the airline weighs your bags in a
+different unit.
+
+## Historical background
+
+Ridge regression's mathematical ancestor is older than machine learning
+itself. **Andrey Tikhonov**, a Soviet mathematician, introduced the
+general technique of adding a stabilizing penalty term to an
+ill-posed inverse problem in the 1940s, and the approach is still known
+today as **Tikhonov regularization** in numerical analysis. The specific
+application to linear regression — adding a penalty proportional to the
+sum of squared coefficients to stabilize estimates when predictors are
+correlated — was popularized in statistics by **Arthur Hoerl and Robert
+Kennard**, whose 1970 paper in *Technometrics*, "Ridge Regression: Biased
+Estimation for Nonorthogonal Problems," gave the method its name and its
+standard form in applied statistics.
+
+Lasso came later and with a different motivation. **Robert Tibshirani**
+introduced it in a 1996 paper in the *Journal of the Royal Statistical
+Society, Series B*, titled "Regression Shrinkage and Selection via the
+Lasso" — the name is an acronym for Least Absolute Shrinkage and Selection
+Operator, and the "Selection" in that name is the point: Tibshirani was
+explicit that the goal was not merely to shrink coefficients but to
+produce models that automatically zeroed out irrelevant predictors,
+something ridge had never done. The paper connected the method to
+existing ideas in signal processing — basis pursuit and total-variation
+denoising both exploit the same geometric fact about the L1 norm — but its
+framing as a statistical variable-selection tool is what made it spread
+through applied statistics and later machine learning.
+
+**ElasticNet** arrived nine years after that. **Hui Zou and Trevor
+Hastie** — Hastie a coauthor, with Tibshirani, of the textbook this
+lesson's sources cite — published "Regularization and Variable Selection
+via the Elastic Net" in 2005, motivated by a specific weakness of plain
+lasso that this lesson measures directly in a later section: when
+predictors are highly correlated, lasso tends to pick one and ignore the
+rest, somewhat arbitrarily, rather than treating the correlated group as a
+unit. ElasticNet's combined L1-plus-L2 penalty was designed to keep
+lasso's sparsity while restoring some of ridge's stability on correlated
+groups.
+
+All three methods predate deep learning by decades, but the same
+mathematical idea — a penalty added to a loss function to control
+complexity — is exactly what weight decay is inside a neural network's
+optimizer, and exactly what dropout and early stopping approximate by
+different means. Regularization did not start with machine learning, and
+its vocabulary — ridge, lasso, elastic net, weight decay — is one
+continuous conversation across seventy years of applied mathematics.
+
+## What it is — and what it is not
+
+**Regularization, precisely:** a term added to a model's training
+objective that penalizes some measure of the model's complexity — here,
+the size of its coefficients — so that the fitting procedure is pushed
+toward simpler solutions even when a more complex one fits the training
+data slightly better.
+
+**Ridge regression:** linear regression with an L2 penalty — the fitting
+procedure minimizes the sum of squared residuals plus `alpha` times the
+sum of the *squared* coefficients.
+
+**Lasso:** linear regression with an L1 penalty — the fitting procedure
+minimizes the sum of squared residuals plus `alpha` times the sum of the
+*absolute values* of the coefficients.
+
+**ElasticNet:** both penalties combined, with a second hyperparameter
+(`l1_ratio` in scikit-learn) controlling the mix between them.
+
+What all three are **not**:
+
+- **Not a way to fix bad data.** A penalty shrinks coefficients toward
+  zero; it does not clean noisy labels, impute missing values, or correct
+  measurement error. Day 143's stage ordering still applies — anything
+  fitted, including the choice of `alpha`, is fitted on training rows
+  only.
+- **Not a substitute for having the right features.** If the informative
+  signal genuinely is not present in your predictors, no penalty will
+  invent it. Regularization controls how much the model can rely on the
+  predictors you gave it; it cannot supply predictors you did not.
+- **Not feature engineering.** Regularization decides how much weight
+  each existing column gets. Deciding which columns exist in the first
+  place — encoding, transforming, combining — is a separate step that
+  happens before this one.
+- **Ridge is not feature selection.** This lesson measures, directly, that
+  ridge zeros zero coefficients — literally zero of them — at every alpha
+  from 0.001 to 1.0 on real data. Calling ridge a feature-selection method
+  is a category error the measurements below rule out completely.
+- **Lasso is not guaranteed to select the *correct* features.** It is
+  guaranteed to select a *sparse* set. Whether that set matches the truth
+  depends on the noise level and the correlation structure of your
+  predictors, and this lesson measures a case where it does not.
+
+## Why it was created and what problems it solves
+
+Ordinary least squares has an exact closed-form solution as long as the
+predictor matrix is well-behaved. Day 150 already measured what happens
+when it is not: strongly correlated predictors make `(X^T X)` nearly
+singular, and OLS responds by inflating coefficients to enormous,
+unstable values that swing wildly with small changes in the data — two
+nearly identical columns can walk away with wildly different, even
+oppositely signed, coefficients whose *sum* is sensible even though
+neither individual value is trustworthy.
+
+Ridge regression's entire original motivation, in Hoerl and Kennard's
+1970 paper, was to fix exactly that. Adding `alpha` times the sum of
+squared coefficients to the objective adds a term to `(X^T X)` before it
+is inverted, which keeps the matrix comfortably invertible even when the
+predictors are nearly collinear. The coefficients that come out are
+*biased* — shrunk away from their unbiased OLS values — but the trade is
+usually worth it, because the reduction in variance is often far larger
+than the bias introduced, which is precisely the trade Day 145 quantified
+in general.
+
+Lasso solves a different problem that ridge does not touch at all: as the
+number of candidate predictors grows into the dozens or hundreds, having
+a nonzero coefficient on every single one makes a model hard to interpret,
+hard to audit, and often no better in practice than a model that uses only
+the handful of predictors that actually matter. Tibshirani's 1996 paper
+was explicit that the goal was simultaneous shrinkage *and* selection —
+one fitting procedure that does the job a separate feature-selection step
+used to do by hand, and does it in a way that is provably connected to a
+single, well-understood optimization problem rather than a greedy search
+heuristic.
+
+ElasticNet exists because lasso, on its own, has a specific and measurable
+weakness precisely where ridge is strong: correlated predictors. Zou and
+Hastie's 2005 paper built the combined penalty to inherit ridge's grouping
+behavior — treating correlated predictors as a unit rather than picking
+one arbitrarily — while keeping lasso's ability to zero out predictors
+that genuinely do not matter.
+
+## How it works
+
+### The three objectives, side by side
+
+Ordinary least squares minimizes only the residual sum of squares:
+
+```text
+minimize:  sum_i (y_i - X_i . beta)^2
+```
+
+Ridge adds a penalty proportional to the sum of squared coefficients:
+
+```text
+minimize:  sum_i (y_i - X_i . beta)^2  +  alpha * sum_j beta_j^2
+```
+
+Lasso adds a penalty proportional to the sum of absolute coefficients:
+
+```text
+minimize:  sum_i (y_i - X_i . beta)^2  +  alpha * sum_j |beta_j|
+```
+
+ElasticNet mixes the two, with `l1_ratio` controlling the balance:
+
+```text
+minimize:  sum_i (y_i - X_i . beta)^2
+           + alpha * l1_ratio * sum_j |beta_j|
+           + alpha * (1 - l1_ratio) / 2 * sum_j beta_j^2
+```
+
+`alpha` controls how much any penalty matters at all — `alpha=0` recovers
+plain least squares in every case. `l1_ratio=1.0` recovers pure lasso;
+`l1_ratio=0.0` recovers pure ridge, *in shape* — the next subsection
+explains a gotcha in that last equivalence that a real measurement caught.
+
+In every case the intercept is left out of the penalty. Only the slopes
+are taxed; shifting the whole prediction up or down costs nothing, which
+is why every one of these models still needs, and gets, an intercept term
+fitted freely.
+
+### Why the shapes differ: constraint regions and corners
+
+There is an equivalent way to write ridge and lasso that makes the
+airline analogy exact. Instead of adding a penalty to the loss, imagine
+minimizing the plain residual sum of squares subject to a hard budget on
+the coefficients:
+
+```text
+ridge, as a constraint:  minimize RSS  subject to  sum_j beta_j^2 <= t
+lasso, as a constraint:  minimize RSS  subject to  sum_j |beta_j| <= t
+```
+
+For every `alpha` there is a matching `t`, and the two formulations find
+the same solution. Picture the unconstrained least-squares solution as a
+point in coefficient space, and picture the RSS as a set of nested
+elliptical contours around that point — closer to the center means lower
+error. The constrained solution is the point where the smallest ellipse
+that still touches the feasible region touches it.
+
+Ridge's feasible region — `sum beta_j^2 <= t` — is a **circle** (a sphere
+in more than two dimensions). A circle is smooth everywhere; wherever an
+ellipse first touches it, that point generically has every coordinate
+nonzero, because there is nothing special about the axes from the
+circle's point of view.
+
+Lasso's feasible region — `sum |beta_j| <= t` — is a **diamond** (an
+octahedron in more than two dimensions). A diamond has **corners, and the
+corners sit exactly on the axes.** When the loss ellipse is elongated or
+tilted relative to the diamond — which is common, especially with
+correlated predictors — the first point of contact is very often one of
+those corners, and a corner on an axis means one or more coordinates are
+**exactly zero.**
+
+This lesson measured that geometry directly on the smallest case that
+still shows it: two features correlated at 0.9999, with an
+unregularized (ordinary least squares) solution of `[1.9564, 1.9381]`.
+
+```text
+  alpha    ridge coefficients      lasso coefficients
+  0.001    [1.9564, 1.9381]        [1.9583, 1.9352]
+  0.500    [1.9558, 1.9337]        [1.9588, 1.4176]
+  1.000    [1.9551, 1.9295]        [1.9593, 0.8990]
+  3.000    [1.9507, 1.9141]        [0.8919, 0.0000]
+  8.000    [1.9345, 1.8820]        [0.0000, 0.0000]
+```
+
+At `alpha=3.0`, lasso's second coefficient is **exactly** `0.0` — not
+rounded, not small, exactly the corner of the diamond landing on an axis.
+Ridge's second coefficient at the same `alpha` is `1.9141`, and even at
+`alpha=8.0` — where lasso has zeroed both coefficients completely —
+ridge's are still `1.9345` and `1.8820`. Across a much wider sweep, 60
+log-spaced alphas from 0.001 to 100 on the full ten-feature diabetes
+dataset, **every single one of lasso's ten coefficients hits exactly zero
+somewhere in the sweep, and not one of ridge's ten ever does.**
+
+![Diagram: two panels, side by side, each showing a two-dimensional coefficient space with a shaded constraint region, a set of tilted elliptical loss contours centered on the unconstrained least-squares solution, and a marked point where the smallest contour first touches the region. The left panel, labeled Ridge, L2 penalty, shows a circular region; its contact point sits off both axes, so both coefficients stay nonzero, and a caption reports that ridge zeroed 0 of 10 measured coefficients at every alpha tried. The right panel, labeled Lasso, L1 penalty, shows a diamond-shaped region with corners sitting exactly on the axes; its contact point sits at one of those corners, on the horizontal axis, so the vertical coefficient is exactly zero, and a caption reports that lasso zeroed 8 of 10 measured coefficients by alpha=1.0. Below both panels, a measured table on two features correlated at 0.9999 lists ridge and lasso coefficients at alpha 0.001, 1.0, 3.0 and 8.0: ridge's two coefficients stay nonzero the whole way, ending at 1.9345 and 1.8820, while lasso's second coefficient reaches exactly 0.0000 at alpha=3.0 and both of lasso's coefficients are exactly 0.0000 by alpha=8.0](./assets/penalty-geometry-architecture.svg)
+
+### The order coefficients drop in is not arbitrary
+
+The same sweep shows *which* coefficient zeros first and which zeros
+last, and the order tracks how much work each feature was doing:
+
+```text
+  feature   zeros at alpha =
+  s3        0.0032   (first)
+  age       0.0126
+  s2        0.0126
+  s4        0.0495
+  s1        0.1597
+  s6        0.2360
+  sex       0.3487
+  bp        1.1242
+  s5        2.0188
+  bmi       2.4538   (last)
+```
+
+`s3` can least afford the fight against the penalty and gives up first.
+`bmi`, which Day 150's own measurements already flagged as the single
+strongest predictor in this dataset, survives longest. Lasso is not
+zeroing coefficients in some fixed or alphabetical order — it is zeroing
+the ones that contribute least to reducing the residual first, exactly the
+way Lasso Air's passengers would leave the emptiest bag home first.
+
+### The gotcha a real measurement caught: alpha is not portable between models
+
+Here is a mistake that is easy to make and expensive to make silently.
+Ridge's objective, as scikit-learn implements it, sums the squared
+residuals across every row. ElasticNet's objective *averages* them, over
+`n_samples`. So `Ridge(alpha=a)` is **not** the same model as
+`ElasticNet(alpha=a, l1_ratio=0)`, even though both are pure L2 penalties
+in shape — the two alphas live on different scales, off by exactly a
+factor of the training-set size.
+
+Measured directly, at `n_train = 331`: comparing `Ridge(alpha=0.1)`
+against `ElasticNet(alpha=0.1, l1_ratio=0.0)` without correcting for that
+factor gives a test R2 of 0.3690 for ridge and **0.0555** for the
+"equivalent" ElasticNet call — a dramatically worse fit, because the
+uncorrected ElasticNet call is effectively applying a penalty 331 times
+stronger than the ridge call it was supposed to match. Correct for the
+factor — fit `Ridge(alpha=0.1 * 331)` instead — and the two models agree
+on their coefficients to within `0.0001`:
+
+```text
+  Ridge(alpha=0.1 * 331) coefficients[:3]        : [6.3098, 1.2290, 22.6076]
+  ElasticNet(alpha=0.1, l1_ratio=0) coefficients[:3] : [6.3097, 1.2290, 22.6076]
+```
+
+This is not a contrived trap. It is exactly the kind of mistake that
+happens when someone swaps `ElasticNet(l1_ratio=0)` in for `Ridge`
+expecting the same tuning to carry over, and it will silently
+over-regularize a model with no error message at all. Read the
+documentation for whichever library and penalty combination you are
+using before you assume two `alpha` values mean the same thing across two
+different model classes.
+
+## An everyday analogy
+
+Return to Ridge Air and Lasso Air, and check every measurement above
+against the story.
+
+**Ridge Air's fee is proportional to weight squared, so nobody arrives
+with an empty bag.** Measured: ridge zeroed zero of ten coefficients at
+every alpha from 0.001 to 1.0, and zero of ten across a 60-point sweep up
+to `alpha=100`. Every bag gets a little lighter as the fee rises; none of
+them ever reaches zero.
+
+**Lasso Air's flat per-bag fee makes leaving an under-packed bag at home
+the rational move.** Measured: lasso zeroed progressively more
+coefficients as `alpha` rose — 0, then 1, then 3, then 8 of 10 — and the
+order it zeroed them in tracked exactly how little weight each one was
+carrying, `s3` first and `bmi` last.
+
+**Two nearly identical suitcases, packed with the same shared cargo.**
+This is the correlated-predictors case, and it is the clearest place the
+two airlines diverge. Picture two bags that are nearly duplicates of each
+other — say, a carry-on and a checked bag both stuffed with roughly the
+same set of clothes, because you packed in a hurry and did not notice the
+overlap. Ridge Air, charging by the square of each bag's own weight, has
+no reason to prefer one bag over the other — it is cheaper to spread the
+weight evenly across both than to load either one heavily, so it
+**splits** the cargo close to fifty-fifty. Measured directly on two
+predictors correlated at `0.999918`, with a true combined coefficient of
+6.0: ridge landed on `[3.048, 2.9742]` at `alpha=1.0` — split almost
+exactly evenly, and still split almost evenly (`[2.9724, 2.9646]`) even at
+`alpha=10.0`, ten times stronger. Lasso Air, charging a flat fee per
+nonempty bag, has every reason to consolidate: pay the flat fee once, on
+one bag, and leave the other one home entirely. Measured: lasso put
+`5.0848` on one coefficient and drove the other to **exactly** `0.0` at
+`alpha=1.0`, and at `alpha=10.0` it had zeroed both — flat-fee logic
+applies even when a bag is genuinely useful, once the fee outweighs what
+carrying it is worth.
+
+**The airline that weighs your bags in the wrong units.** This is the
+scale-dependence result, and the analogy makes the mechanism obvious the
+moment you say it out loud: imagine Lasso Air's flat fee is `$50` per
+nonempty bag, but one gate agent weighs bags in kilograms and another
+weighs the exact same bags in grams. A bag holding `2` kilograms reads as
+`2000` when weighed in grams — a thousand times larger number, for
+identical physical cargo — and the flat fee has no way to know the
+difference. Whichever bags happen to be measured in the "biggest" numbers
+look heaviest to the fee and survive; the ones measured in small numbers
+look negligible and get dropped, regardless of what is actually inside
+them. That is exactly what raw-units lasso did to the diabetes dataset at
+the top of this lesson: it kept all ten features, because in raw
+measurement units none of the coefficients looked small enough to be worth
+the flat fee of dropping. The penalty was real. It was just being applied
+in the wrong units to do anything useful.
+
+## Examples in practice
+
+**Example 1 — the headline contrast**, on
+`sklearn.datasets.load_diabetes(return_X_y=True)` with
+`train_test_split(test_size=0.25, random_state=0)`:
+
+| alpha | lasso zeros | lasso test R2 | ridge zeros | ridge test R2 |
+| --- | --- | --- | --- | --- |
+| 0.001 | 0/10 | 0.3588 | 0/10 | 0.3586 |
+| 0.01 | 1/10 | 0.3541 | 0/10 | 0.3567 |
+| 0.1 | 3/10 | 0.3550 | 0/10 | 0.3690 |
+| 1.0 | 8/10 | 0.2782 | 0/10 | 0.3570 |
+
+Read the ridge column first, because it is the control: zero zeroed
+coefficients, at every alpha tried, full stop. Now read the lasso column:
+it climbs steadily. Notice, too, that lasso's best test R2 in this table
+(0.3550, at `alpha=0.1`) is not far below ridge's best (0.3690, at the
+same alpha) — a sparser model here is not paying a large accuracy
+penalty for interpretability, at least not yet, at `alpha=0.1`. Push
+further to `alpha=1.0` and lasso's R2 drops to 0.2782 while ridge's
+recovers to 0.3570 — past a certain point, lasso's extra sparsity does
+start costing real accuracy.
+
+![Diagram: two panels of ten coefficient bars each, ridge on the left and lasso on the right, as alpha sweeps from 0.001 to 100. In the ridge panel every bar shrinks together and stays visibly above a dashed floor at every point along the sweep. In the lasso panel eight of ten bars shrink further and then drop to exactly the floor, one after another in sequence, and stay there for the rest of the sweep, while the remaining two bars shrink but never reach the floor. A caption beneath both panels states the measured results: every one of lasso's ten coefficients hits exactly zero somewhere in the sweep, not one of ridge's ten ever does, the order is not arbitrary since s3 zeros first at alpha=0.0032 and bmi zeros last at alpha=2.4538, and at alpha=1.0 on the real data lasso has zeroed 8 of 10 coefficients with test R2 0.2782 while ridge has zeroed 0 of 10 with test R2 0.3570](./assets/coefficient-path-flow.svg)
+
+**Example 2 — letting cross-validation choose.** Hand-picking `alpha`
+from a short list, as the table above does, is a teaching device, not a
+real workflow. `LassoCV(cv=5)` searches a grid automatically and picked
+`alpha=0.07874` on the training split — a value between the 0.01 and 0.1
+rows above — zeroing 4 of 10 coefficients and keeping `sex`, `bmi`, `bp`,
+`s1`, `s3` and `s5`, with a test R2 of 0.3562, competitive with the
+hand-picked values.
+
+**Example 3 — does lasso recover the *right* features, not just *some*
+features?** The diabetes dataset has no known ground truth — nobody knows
+the "true" set of relevant predictors, only what predicts well. To check
+recovery honestly, this lesson built a synthetic dataset with
+`sklearn.datasets.make_regression(n_features=20, n_informative=5)`, which
+returns the exact indices of the five features that actually matter. At
+`alpha=1.0` and a modest noise level, lasso recovered **precision 1.0,
+recall 1.0** — the exact five, no more and no fewer. That is a genuinely
+strong result and it does not hold unconditionally: push the noise up to
+10 or 30 and raise `alpha` to 80 in the same setup, and recall falls to
+0.2 and then to 0.0 — the penalty had become strong enough, on noisy
+enough data, to zero out every one of the truly informative features.
+Averaged over ten different dataset seeds at a saner `alpha=1.0`, mean
+precision falls from 1.0 at low noise to 0.6792 as noise rises — lasso
+starts keeping extra, non-informative features when the signal is harder
+to separate from the noise. Regularization is not a one-way ratchet
+toward a better model; it is a knob, and it can be turned too far.
+
+**Example 4 — the practical scale-dependence result, once more, in
+full**, all at `alpha=1.0` on identical data:
+
+| Units | Features kept | Which ones |
+| --- | --- | --- |
+| Raw measurement units | 10 of 10 | all ten |
+| Standardized (unit variance) | 7 of 10 | sex, bmi, bp, s1, s3, s5, s6 |
+| scikit-learn's own `scaled=True` (unit L2 norm) | 3 of 10 | bmi, bp, s5 |
+
+Notice that even the two "scaled" columns disagree — unit-variance
+scaling and unit-norm scaling are both legitimately called "scaled data,"
+and they select 7 and 3 features respectively at the identical nominal
+`alpha`. There is no such thing as one universal `alpha=1.0`; there is
+only `alpha=1.0` *relative to whatever units the coefficients happen to
+be in.* Standardize your features — `sklearn.preprocessing.StandardScaler`
+is the ordinary choice — before you fit a penalized model, every time,
+without exception, and treat any lasso or ridge result fitted on unscaled
+inputs as not yet meaningful.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Performance and scalability.** Ridge has a closed-form solution — one
+linear-algebra call, the same normal-equations machinery Day 149 built by
+hand, adjusted by adding `alpha` to the diagonal before inverting.
+Measured directly: a fitted `Ridge` model carries no `n_iter_` attribute
+at all, because there was nothing to iterate. Lasso has no closed form,
+because the absolute-value penalty is not differentiable at zero, and
+scikit-learn solves it by coordinate descent — an iterative algorithm.
+Measured iteration counts on the diabetes training split, at
+`max_iter=50000`: 368 iterations at `alpha=0.001`, 62 at `alpha=0.01`, 135
+at `alpha=0.1`, and just 6 at `alpha=1.0` — heavier penalties converge
+faster here, because a strong penalty pushes the solution toward a
+simpler, more quickly reached optimum. None of these hit the iteration
+ceiling; a `Lasso` fit that does hit `max_iter` emits a
+`ConvergenceWarning` and should not be trusted without either raising the
+limit or investigating why convergence is slow. At the scale of ten or a
+few dozen features, this difference is invisible in wall-clock time. At
+thousands of features it becomes a real engineering consideration, and it
+is one reason ridge remains the default choice when the goal is purely
+predictive accuracy and interpretability is not required.
+
+**Security and privacy.** A sparser model is a smaller attack and
+audit surface. A production model that depends on 3 features rather than
+10 needs 3 columns of potentially sensitive input at inference time
+instead of 10, is easier for a reviewer to reason about end to end, and
+is easier to monitor for drift in the handful of inputs that actually
+matter. That benefit is only real when the sparsity reflects genuine
+irrelevance rather than an unscaled penalty accidentally dropping
+predictive features — which is exactly why the scale-dependence result
+above is a security-relevant finding and not only an accuracy one. A
+lasso model fitted on unscaled data and shipped as "the important
+features" can quietly discard real signal while giving every appearance
+of principled feature selection.
+
+**Cost.** Both ridge and lasso are implemented in scikit-learn, which is
+free, open source, and requires no account, license, or per-call billing.
+The real cost is engineering time: choosing `alpha` properly means
+running cross-validation, which multiplies fitting cost by the number of
+folds and the size of the alpha grid searched. `LassoCV`'s iterative
+solve makes that multiplication more expensive than `RidgeCV`'s
+closed-form one, though at the scale used in this lesson — ten features,
+a few hundred rows — the difference is a fraction of a second either way.
+
+## Alternatives: free, open source, and commercial
+
+**scikit-learn — `Ridge`, `Lasso`, `ElasticNet`, and their `*CV`
+variants.** Free and open source (BSD 3-Clause). Used throughout this
+lesson and its lab. Choose it as the default for anything in Python: the
+API is consistent (`fit`, `predict`, `.coef_`), cross-validated variants
+handle the `alpha` search for you, and the closed-form ridge solver and
+coordinate-descent lasso solver are both well tested at the scale this
+course operates at. Example run in this lesson:
+`LassoCV(cv=5, random_state=0).fit(X_train, y_train)` picked
+`alpha=0.07874` on the diabetes training split.
+
+**statsmodels.** Free and open source (BSD 3-Clause). Not installed in
+this lab's environment, so no output from it is reproduced here — it is
+described from its public documentation. `statsmodels.regression.linear_model.OLS.fit_regularized`
+offers L1 and a limited elastic-net penalty on top of the classic
+statsmodels regression API, which is the natural choice if a project is
+already built around statsmodels for its detailed statistical summaries
+(standard errors, confidence intervals, hypothesis tests) and needs
+regularization added without switching libraries. Its regularization
+support is narrower than scikit-learn's — in particular, cross-validated
+alpha selection is not built in the way `LassoCV` provides it — so most
+projects that need heavy hyperparameter search reach for scikit-learn
+instead.
+
+**glmnet (R, with Python bindings).** Free and open source. The original
+implementation associated with the elastic-net paper, written by
+Friedman, Hastie and Tibshirani themselves, and still the reference
+implementation many statisticians reach for first in R. It uses the same
+coordinate-descent algorithm scikit-learn's lasso and ElasticNet solvers
+are built on, and it is described here from documentation only — it was
+not run for this lesson, since this course's labs are Python-only. Choose
+it if your team already works primarily in R, or if you specifically want
+the reference implementation a published paper's results were computed
+with.
+
+**Managed AutoML platforms (for example, cloud provider AutoML tabular
+services).** Paid, usage-based cloud billing — no price is quoted here,
+because it varies by provider, region, and workload, and this lesson does
+not have a bill to report. These platforms typically include regularized
+linear models as one candidate family inside a larger automated search
+over several model types, so you get ridge- or lasso-style regularization
+as a side effect of a broader hyperparameter search rather than as a
+tool you reach for directly. Choose a managed platform when the project's
+constraint is engineering time rather than transparency — you trade
+visibility into exactly which penalty and which `alpha` were chosen for
+not having to run that search yourself. This lesson's lab does not use
+one, and no output from any commercial platform is reproduced anywhere in
+this content.
+
+## Comparison with related concepts
+
+| | OLS | Ridge (L2) | Lasso (L1) | ElasticNet |
+| --- | --- | --- | --- | --- |
+| Closed-form solution | Yes | Yes | No | No |
+| Ever produces an exact zero coefficient | No | No (measured: never, any alpha) | Yes | Yes |
+| Built-in feature selection | No | No | Yes | Yes |
+| Handles correlated predictors well | No — unstable, Day 150 | Splits weight evenly (measured) | Picks one, roughly arbitrarily (measured) | Groups them, by design |
+| Requires feature scaling | Not for correctness, but recommended | Yes | Yes | Yes |
+| Hyperparameters to tune | None | `alpha` | `alpha` | `alpha`, `l1_ratio` |
+
+Two related ideas worth distinguishing explicitly, since they are
+sometimes confused with lasso specifically:
+
+**Stepwise selection** (forward or backward, adding or removing one
+feature at a time based on a fit statistic) also produces a sparse final
+model, but it is a discrete, greedy search over which features to
+include — not a single smooth optimization the way lasso is. It has no
+`alpha` to tune continuously, no coefficient path, and is known to be
+statistically unstable: small changes in the data can flip which features
+survive the search entirely. Lasso's selection is a side effect of a
+convex optimization problem with well-understood behavior as `alpha`
+varies continuously; stepwise selection's is not.
+
+**Principal component regression (PCR)** handles multicollinearity, the
+same problem ridge was invented for, but by an entirely different route:
+it transforms the predictors into uncorrelated principal components
+first, then regresses on a subset of those components. It produces a
+model with zero coefficients on some *components*, but those components
+are linear combinations of the original features, not the original
+features themselves — so PCR trades away the interpretability that lasso
+is specifically designed to preserve.
+
+## When to use it — and when not to
+
+**Reach for ridge when** your predictors are correlated (Day 150's design
+matrix territory), you want every predictor to remain in the model with a
+stabilized coefficient, and interpretability in the sense of a short
+feature list is not the goal — only stable, well-behaved coefficients and
+solid predictive accuracy are.
+
+**Reach for lasso when** you have many candidate predictors and want the
+model itself to identify a smaller, more interpretable subset as part of
+fitting, and you have already scaled your features (non-negotiable — see
+the practical result above) and validated `alpha` by cross-validation
+rather than by eye.
+
+**Reach for ElasticNet when** you have both problems at once: many
+candidate predictors, some of which are strongly correlated with each
+other, and you want a sparse model that does not arbitrarily discard one
+member of a correlated group the way plain lasso measurably does.
+`l1_ratio` gives you a second knob to move continuously between the two
+extremes rather than having to commit to one penalty shape outright.
+
+**Do not reach for any of the three when** you need the model's
+coefficients to support a causal or purely explanatory claim about a
+small, already well-understood set of predictors with little
+multicollinearity. Regularization deliberately biases coefficients toward
+zero to buy variance reduction, which is the right trade for prediction
+but complicates interpreting a coefficient's magnitude as an unbiased
+estimate of an effect. Plain OLS, with its unbiased (if higher-variance)
+coefficients, is the more defensible tool for that narrower job.
+
+**Do not reach for lasso specifically when** the true structure has
+several genuinely important, strongly correlated predictors that you want
+represented together rather than arbitrarily reduced to one survivor —
+that is precisely the case this lesson measured lasso handling worse than
+ridge, and it is exactly the case ElasticNet exists to fix.
+
+### The AI thread
+
+Weight decay — the L2 penalty applied to a neural network's weights
+during training — is the direct descendant of ridge regression, and it is
+turned on by default in the optimizer of essentially every large model
+you will train or fine-tune. It shrinks weights toward zero for exactly
+the reason ridge does here: it stabilizes an otherwise underdetermined
+optimization problem and trades a little bias for a large reduction in
+variance, at the scale of billions of parameters rather than ten. What
+this lesson's geometry explains is why weight decay alone does not make a
+network sparse — it is an L2 penalty, and L2 penalties do not produce
+exact zeros, so a weight-decayed network keeps every parameter, just
+smaller. Getting an actually sparse network — for the same reasons lasso
+gives you an actually sparse regression, smaller inference cost, a
+smaller attack surface, easier auditing — needs an L1-style term or a
+dedicated pruning technique layered on top, not weight decay by itself.
+The next time you read a training config with `weight_decay=0.01` in it,
+you are reading `alpha` from this lesson, doing exactly the job Hoerl and
+Kennard described in 1970, at a scale they could not have imagined.
+
+## Knowledge check
+
+1. At every alpha from 0.001 to 1.0 in the headline table, ridge zeros 0
+   of 10 coefficients while lasso's zero count climbs to 8 of 10. Explain
+   in one sentence why the ridge column is the control that makes the
+   lasso column's climb meaningful.
+2. Explain, in terms of the constraint-region geometry, why an L1 penalty
+   can produce an exact zero coefficient and an L2 penalty essentially
+   never does.
+3. On the two-feature demonstration, lasso's second coefficient is exactly
+   `0.0` at `alpha=3.0` while ridge's is `1.9141` at the same alpha.
+   Predict, without recomputing, what ridge's coefficient would look like
+   at `alpha=30` instead of `3`, and explain your reasoning.
+4. The same alpha, on the same data, selects 10, 7, and 3 features
+   depending on whether the data is raw, standardized to unit variance, or
+   scaled to unit L2 norm. What is the one practical rule that follows
+   from this measurement?
+5. `Ridge(alpha=0.1)` and `ElasticNet(alpha=0.1, l1_ratio=0.0)` are not the
+   same model on the same data. Explain the source of the discrepancy and
+   the correction that resolves it.
+6. On two predictors correlated at 0.999918, ridge splits a true combined
+   coefficient of 6.0 into roughly `3.05` and `2.97`. What does lasso do
+   to the same two predictors, and why does the airline analogy predict
+   that outcome?
+7. Lasso recovers a known sparse ground truth with precision 1.0 and
+   recall 1.0 at `alpha=1.0` and low noise, but recall falls to 0.0 at
+   `alpha=80` and high noise. What does that pair of results rule out as a
+   general claim about regularization?
+8. A fitted `Ridge` model carries no `n_iter_` attribute; a fitted `Lasso`
+   model always does. What property of the L1 penalty causes that
+   difference, and what would you check on a `Lasso` fit that reported
+   `n_iter_` equal to its `max_iter`?
+
+## Hands-on exercise
+
+Today's lab, "What the Penalty Does," measures the ridge-versus-lasso
+contrast in eight groups of exercises: the headline zero-count table and
+`LassoCV`'s own alpha choice; the coefficient path and the order
+coefficients zero in; whether lasso recovers a known sparse ground truth,
+and where that recovery breaks down; the scale-dependence result in full;
+ElasticNet and the alpha-scale mismatch with plain ridge; what each
+penalty does to near-duplicate predictors; ridge's closed form against
+lasso's iterative solve; and the smallest case that shows the constraint-
+region geometry directly.
+
+Fourteen exercises in total. Build the environment, then work through
+`starter/test_regularization_claims.py`, replacing one `pytest.skip` at a
+time with the assertion its message names.
+
+### Expected output
+
+The harness ends with:
+
+```text
+---------------------------------------------------------------
+14 checks, 0 failure(s)
+```
+
+and exits 0. `pytest examples -q` reports `18 passed`, and
+`pytest starter -q` reports `4 passed, 14 skipped` until you begin.
+
+The measured table includes:
+
+```text
+   alpha   lasso-zeros   lasso-R2   ridge-zeros   ridge-R2
+   0.001       0/10      0.3588        0/10      0.3586
+   1.000       8/10      0.2782        0/10      0.3570
+  raw                n_kept=10  standardized  n_kept= 7  unit_norm  n_kept= 3
+  alpha= 1.000  ridge=[3.048, 2.9742, 0.9944]  lasso=[5.0848, 0.0, 0.0]
+```
+
+### Validate your work
+
+1. `bash tests/run_tests.sh; echo "exit=$?"` reports `14 checks, 0
+   failure(s)` and `exit=0`. Capture the harness's own exit status.
+2. `.venv/bin/pytest examples -q` reports `18 passed`.
+3. `.venv/bin/python3 examples/report_measurements.py | diff - expected-output/measured-values.txt`
+   produces no output.
+4. When you have finished every exercise, `pytest starter -q` reports
+   `18 passed`.
+5. Break one assertion on purpose, confirm the harness fails, restore it.
+
+### Troubleshooting
+
+**`import file mismatch`.** You ran `pytest examples starter` together.
+Both directories define modules with the same names. Run them separately.
+
+**`ConvergenceWarning` from `Lasso`.** The default `max_iter=1000` does
+not converge on this dataset at small alphas; this lab sets
+`max_iter=50000` everywhere for exactly that reason. Match it in your own
+code.
+
+**Your near-duplicate split is not an exact zero.** At the default seed
+it is (`[5.0848, 0.0, 0.0]`), but the two columns are correlated at
+0.999918, not identically collinear, so other seeds can leave a tiny
+nonzero residual instead of a perfect zero. What must hold is a heavily
+asymmetric split, not necessarily a bit-exact one.
+
+**`ElasticNet(l1_ratio=0)` does not match `Ridge` at the "same" alpha.**
+Expected — see the alpha-scale gotcha above. Correct by multiplying
+ridge's alpha by the training-set size.
+
+### Common mistakes
+
+**Calling ridge's shrinkage "feature selection."** Ridge shrinks every
+coefficient toward zero; it does not reach zero. The headline table's
+ridge column, at 0 of 10 zeroed for every alpha tried, is the direct
+evidence against this.
+
+**Fitting lasso on unscaled data and trusting the selected features.**
+The scale-dependence result exists precisely to catch this. Standardize
+first, always.
+
+**Treating "more penalty" as strictly safer.** Exercise 3b measures a
+case where pushing `alpha` too high on noisy data drops every one of the
+genuinely informative features. Regularization is a knob, not a ratchet.
+
+**Requiring an exact zero from lasso at every possible dataset seed.**
+The correlation in the near-duplicate exercise is 0.999918, not 1.0
+exactly, so the split can be heavily asymmetric without being bit-exact
+zero at every seed. Assert the asymmetry, not a floating-point coincidence.
+
+## Practice assignment
+
+Take a regression project you already have, or the diabetes dataset used
+throughout this lesson if you do not, and run the ridge-versus-lasso
+audit end to end.
+
+1. **Scale first, and say so.** Fit both a ridge and a lasso model on
+   your predictors, standardized. State explicitly which scaler you used
+   and why unscaled data was not an option.
+2. **Sweep `alpha` and record the zero count for each model.** Confirm
+   that your ridge model's zero count stays at zero across the whole
+   sweep. If it does not, something in your setup is wrong — recheck it
+   before moving on.
+3. **Let cross-validation choose `alpha` for you**, with `LassoCV` or
+   `RidgeCV`, rather than picking a value by eye. Report the chosen alpha
+   and how many features it kept.
+4. **Check your predictors for near-duplicates.** Compute the pairwise
+   correlation matrix and flag any pair above 0.95. For each flagged pair,
+   report what your lasso model did to it — kept both, split the
+   coefficient, or dropped one — and whether that matches this lesson's
+   prediction.
+5. **Write one paragraph** on which penalty you would ship for this
+   specific project, and why, referencing at least one measured number
+   from your own run rather than a general statement about ridge or
+   lasso.
+
+The deliverable is the audit and the written justification, not a model
+with a higher score.
+
+## Extension challenge
+
+Pick one and measure it.
+
+1. **Trace the exact path.** Use `sklearn.linear_model.lasso_path` to
+   compute the exact piecewise-linear coefficient path scikit-learn
+   derives internally, and compare the alphas it reports each coefficient
+   crossing zero at to the ones this lesson's grid search found. Report
+   how close the grid-search estimate came.
+2. **A three-way tie.** Build three near-identical predictors instead of
+   two and measure whether lasso picks exactly one every time, or
+   sometimes splits its selection across two of the three. Report the
+   split rate across several seeds.
+3. **Push the geometry to three dimensions.** Extend the two-feature
+   corner demonstration to three correlated features — an octahedron
+   against a sphere — and measure how the zero count grows with `alpha`
+   compared to the two-feature case.
+4. **Reimplement `LassoCV`'s search by hand** with `KFold` and a manual
+   alpha grid, and confirm you recover the same chosen alpha this
+   lesson's `LassoCV(cv=5)` call did.
+5. **A harder sparse-recovery case.** Rebuild the known-ground-truth
+   experiment with correlated informative features instead of independent
+   ones, and measure whether recovery degrades even without adding noise.
+6. **Standardize inside a pipeline.** Rebuild the scale-dependence
+   exercise using `sklearn.pipeline.Pipeline([("scale", StandardScaler()),
+   ("lasso", Lasso(alpha=1.0))])` instead of standardizing by hand, and
+   confirm the selected feature set matches.

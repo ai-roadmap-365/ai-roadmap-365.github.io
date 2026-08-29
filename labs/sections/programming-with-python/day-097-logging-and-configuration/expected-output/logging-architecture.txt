@@ -1,0 +1,152 @@
+
+======================================================================
+A. The same job, converted: severity, and a result you can pipe
+======================================================================
+--- the developer's view: handler at DEBUG ---
+INFO     prep             preparation starting: 6 records
+DEBUG    prep             processing record 1
+DEBUG    prep             processing record 2
+WARNING  prep             skipping record 2: empty text
+DEBUG    prep             processing record 3
+DEBUG    prep             processing record 4
+DEBUG    prep             processing record 5
+WARNING  prep             skipping record 5: unknown label 'unknown'
+DEBUG    prep             processing record 6
+INFO     prep             preparation done: kept 4 of 6
+--- the operator's view: SAME CODE, handler at INFO ---
+INFO     prep             preparation starting: 6 records
+WARNING  prep             skipping record 2: empty text
+WARNING  prep             skipping record 5: unknown label 'unknown'
+INFO     prep             preparation done: kept 4 of 6
+
+The two views came from one unchanged function. That is the whole
+difference from print(): the decision about what is worth seeing
+moved out of the call site and into configuration.
+(the function returned 4 records, which never touched the log)
+
+======================================================================
+B. The two-level trap: the message that vanishes
+======================================================================
+logger level:  DEBUG   (logging.getLogger('trap').level -> DEBUG)
+handler level: WARNING (log.handlers[0].level -> WARNING)
+--- three calls were made; this is what came out ---
+WARNING  trap             this warning gets through
+
+A record has to pass TWO level checks, and they belong to two
+different objects. The logger's check happens first and decides
+whether a LogRecord is created at all. Each handler then applies
+its own. Setting the logger to DEBUG and wondering where your
+debug output went is the single most common logging question
+there is, and this is the whole answer.
+--- the fix: lower the HANDLER's level too ---
+DEBUG    trap             and now, with a handler that accepts DEBUG
+
+======================================================================
+C. Propagation: why you are seeing everything twice
+======================================================================
+Handlers: one on the root logger, one on 'myapp'. One call, made
+on 'myapp.loader'.
+--- what the myapp handler wrote ---
+MYAPP    | myapp.loader | loaded 3 files
+--- what the root handler wrote ---
+ROOT     | myapp.loader | loaded 3 files
+
+Two lines for one call. A record travels UP the dotted hierarchy —
+myapp.loader, then myapp, then root — and every handler it passes
+emits it. The ancestors' LEVELS are not consulted on the way up,
+only their handlers. That is deliberate and it is why the duplicate
+surprises people.
+
+The usual cause is logging.basicConfig(), which quietly puts a
+handler on the ROOT logger. Add one of your own and you now have
+two.
+--- fix 1: myapp.propagate = False — myapp handler ---
+MYAPP    | myapp.loader | loaded 3 files
+--- fix 1: myapp.propagate = False — root handler ---
+(nothing. Not one line.)
+--- fix 2: handlers in ONE place only — myapp handler ---
+(nothing. Not one line.)
+--- fix 2: handlers in ONE place only — root handler ---
+ROOT     | myapp.loader | loaded 3 files
+
+Both fixes work and they are not equivalent. propagate = False is
+the right answer for a LIBRARY that must not have its records
+escape into an application it knows nothing about. 'configure one
+place' is the right answer for an APPLICATION, because the
+alternative is a tree of loggers each with an opinion about where
+its output goes, and no single place to change it.
+
+======================================================================
+D. exception() against error(str(e)): the traceback is the value
+======================================================================
+--- log.error(str(e)) — what the on-call engineer receives ---
+ERROR    could not parse batch size: invalid literal for int() with base 10: 'sixty-four'
+--- log.exception() — the same failure ---
+ERROR    could not parse batch size
+Traceback (most recent call last):
+  File "<lab>/examples/02_logging_architecture.py", line 279, in demo_d
+    parse_batch_size("sixty-four")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "<lab>/examples/02_logging_architecture.py", line 259, in parse_batch_size
+    return int(text)
+ValueError: invalid literal for int() with base 10: 'sixty-four'
+
+The first version says a value was bad. The second says WHICH LINE
+of WHICH FUNCTION was called with it, and by whom. On a machine you
+cannot attach a debugger to, that difference is the difference
+between a fix and a guess.
+
+str(e) also loses the exception's TYPE. 'invalid literal for int()
+with base 10' happens to name it; plenty of exceptions have empty
+messages and str(e) then logs an empty string.
+
+======================================================================
+E. Lazy formatting: log.info('saw %s', x) rather than an f-string
+======================================================================
+1000 suppressed DEBUG calls with %s formatting: 0 renders
+1000 suppressed DEBUG calls with an f-string:   1000 renders
+
+The f-string is evaluated BEFORE logging is called, because that is
+what an argument is. The %s form hands logging the object and the
+template separately, and logging only joins them if a handler is
+actually going to emit the record.
+
+What it saves is therefore exactly this: the cost of rendering
+arguments for records nobody wanted. On a hot path with expensive
+reprs — a dataframe, a model, a large dict — that is the whole cost
+of the logging call. On a cheap int it is nearly nothing, and the
+honest reason to use %s everywhere is consistency plus one more
+thing: the unformatted template survives onto the record as
+record.msg, so a structured backend can group every occurrence of
+'summary: %s' as one event with different arguments.
+
+======================================================================
+F. The five levels, chosen honestly
+======================================================================
+--- one line at each level, with its numeric value ---
+DEBUG    ( 10)  retrieved 128 rows from the cache in one query
+INFO     ( 20)  run 4711 started: model=small-encoder data=2026-08-01 seed=7
+WARNING  ( 30)  upstream returned 429; retrying in 2s (attempt 2 of 5)
+ERROR    ( 40)  could not write the output file; this batch produced nothing
+CRITICAL ( 50)  no disk space remains; shutting down
+
+The question that decides the level is not 'how alarming does this
+feel' but 'who is this for, and what do they do about it':
+
+  DEBUG    for the developer, tracing their own code. Off in
+           production, on when you are hunting something.
+  INFO     for the operator: the run started, the run finished,
+           this many records. Normal life, worth recording.
+  WARNING  surprising but survivable. The retry worked. The
+           deprecated flag was used. Nobody has to get up.
+  ERROR    work that did not happen. This batch produced nothing.
+           Somebody has to look, though not necessarily now.
+  CRITICAL the process is going down and will stop doing its job.
+
+The failure mode to avoid is level inflation. If routine events are
+logged as WARNING, the warnings stop being read, and the real one
+is invisible in the noise. A level is a promise to the reader about
+what it costs them to ignore the line.
+
+======================================================================
+Six demonstrations complete.

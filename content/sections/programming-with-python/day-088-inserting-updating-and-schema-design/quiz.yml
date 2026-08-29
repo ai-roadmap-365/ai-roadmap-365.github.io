@@ -1,0 +1,72 @@
+questions:
+  - question: 'Inside a transaction, statement one succeeds and statement two fails a CHECK constraint. You then send COMMIT. What happened to statement one''s change?'
+    options:
+      - 'It was committed. A constraint error undoes only the failing statement; the transaction stays open, and COMMIT keeps whatever already succeeded'
+      - 'It was rolled back, because any error inside a transaction aborts the whole transaction automatically'
+      - 'It was committed, but SQLite prints a warning that the transaction was incomplete'
+      - 'Nothing was committed, because COMMIT fails once an error has occurred in the transaction'
+    answer_index: 0
+    explanation: 'This is the single most commonly held backwards belief about transactions, and it is worth getting right because the failure is silent. SQLite''s default conflict resolution for a constraint violation is ABORT, which undoes the effects of the FAILING STATEMENT only. The transaction is not ended, not poisoned, and not marked — it simply stays open, waiting for you. Send COMMIT and you commit the partial work. In the lab this is measured: book 1 starts with 3 copies, a script adds 10, the next statement violates CHECK, the script says COMMIT, and book 1 ends with 13. Change the last line to ROLLBACK and it ends with 3. Atomicity is a promise about the boundary you control, not a promise that the database will guess where the boundary should have been. For anything that changes a schema, use sqlite3 -bail so the shell stops at the first error and COMMIT is never reached.'
+
+  - question: 'Your loans table has 12 rows, 8 of them outstanding. You run `UPDATE loans SET returned = 1;`, having meant to add `WHERE id = 2`. Why is this failure harder to deal with than a crash?'
+    options:
+      - 'Because SQLite has no way to report how many rows an UPDATE changed'
+      - 'Because the 11 wrongly changed rows now hold a plausible value, so nothing looks broken and no query errors — the damage is invisible until somebody asks a question nobody can answer'
+      - 'Because UPDATE statements cannot be run inside a transaction, so there is no way to roll one back'
+      - 'Because the rows are deleted rather than modified, and deletions cannot be recovered'
+    answer_index: 1
+    explanation: 'The statement succeeds. That is the problem. It changed 12 rows when 1 was intended, and the 11 wrong ones were filled with `1` — the same plausible value the correct row received, not garbage you could spot. No error is raised, no log line is written, and every subsequent query runs happily against data that is now wrong. A crash announces itself; this does not, and on a real system the gap between the mistake and the discovery is measured in weeks, by which time your backups have rotated. Note that the rows were modified rather than deleted, and an UPDATE certainly can be wrapped in a transaction — which is exactly the discipline that prevents this: write the SELECT first, read the row count, keep the WHERE clause byte for byte, then check changes() before committing.'
+
+  - question: 'In `INSERT ... ON CONFLICT(isbn) DO UPDATE SET copies = excluded.copies`, what does `excluded.copies` refer to?'
+    options:
+      - 'The value currently stored in the table, before this statement ran'
+      - 'A NULL placeholder, because the conflicting row was excluded from the insert'
+      - 'The value this INSERT was trying to write — the new value, which the constraint stopped from being inserted'
+      - 'The value from the previous row in the VALUES list'
+    answer_index: 2
+    explanation: 'The SQLite documentation is precise here: inside a DO UPDATE, plain column names refer to the original unchanged value already in the table, and to reach the value that WOULD have been inserted had the constraint not failed, you add the `excluded.` qualifier. So `copies = excluded.copies` means take the new value, while `copies = copies` would mean keep the old one — a statement that parses, runs, reports success and does nothing. Getting this backwards is the usual first mistake with UPSERT and it is completely silent, which is why it is worth learning as a sentence rather than as syntax. UPSERT itself arrived in SQLite 3.24.0 in 2018, borrowing its syntax from PostgreSQL, and its real advantage over insert-then-update is atomicity: there is no window between checking and acting for another connection to slip into.'
+
+  - question: 'You add `REFERENCES books(id) ON DELETE RESTRICT` to a column, then delete a book that is out on loan. The delete succeeds and leaves orphaned rows. What went wrong?'
+    options:
+      - 'RESTRICT only applies to UPDATE statements, not DELETE'
+      - 'The foreign key needs an index on the referencing column before it is enforced'
+      - 'Nothing — RESTRICT permits the delete and simply records a warning'
+      - 'PRAGMA foreign_keys was off. SQLite does not enforce foreign keys by default, and the pragma must be set on every connection'
+    answer_index: 3
+    explanation: 'SQLite ships with foreign key enforcement OFF. The setting is per connection, not per database, so it cannot be stored in the file — every program, every script and every console session must set `PRAGMA foreign_keys = ON` for itself, every time. Until then a REFERENCES clause parses, is stored in the schema, and is checked by nothing at all: it is decoration. The lab proves this rather than asserting it, deleting a parent with enforcement off and finding two orphaned children left behind, then finding them again afterwards with PRAGMA foreign_key_check — which is the audit worth running after any bulk load. This is also why the documented table-rebuild procedure turns the pragma off deliberately and runs foreign_key_check before turning it back on.'
+
+  - question: 'You want to add a CHECK constraint to an existing table. What does the SQLite documentation say to do?'
+    options:
+      - 'Use ALTER TABLE ... ADD CONSTRAINT, which is supported alongside renaming and adding columns'
+      - 'Create a new table with the full definition plus the new rule, copy the rows across, drop the old table, and rename the new one into its place'
+      - 'Use PRAGMA add_check to attach the constraint without rebuilding'
+      - 'Drop and recreate the database from a .dump file, since constraints cannot be changed after creation'
+    answer_index: 1
+    explanation: 'SQLite documents exactly four ALTER TABLE operations: rename the table, rename a column, add a column, and drop a column. Adding a CHECK, a UNIQUE or a foreign key is not among them, and the documented procedure for anything else is the create-copy-drop-rename rebuild. Four details make it safe and each is a mistake somebody has made: put all four steps in ONE transaction, because between DROP and RENAME the database has no such table and a power cut there would destroy it; retype the ENTIRE definition including every existing constraint and both foreign keys, because whatever you omit is silently dropped and does not error; set PRAGMA foreign_keys = OFF outside the transaction, since the pragma is a no-op inside one; and run PRAGMA foreign_key_check afterwards, because nothing was checking while enforcement was off. Note that ALTER TABLE ... ALTER COLUMN for NOT NULL does exist as of SQLite 3.53.0, which is recent enough that you should check your build rather than assume.'
+
+  - question: 'Why does the migration runner set `PRAGMA user_version` inside the same transaction as the migration''s statements, rather than immediately afterwards?'
+    options:
+      - 'Because PRAGMA statements are only permitted inside an explicit transaction'
+      - 'Because it is faster to send both in one round trip to the database'
+      - 'So that a failure rolls back the schema change and the version bump together, leaving no state where the change half-happened but the database claims the new version'
+      - 'Because PRAGMA user_version cannot be read again until the transaction that set it has committed'
+    answer_index: 2
+    explanation: 'This is the entire safety property of the runner. PRAGMA user_version is a 32-bit integer in the database header that SQLite never uses itself, and — crucially — it is covered by transactions like any other write. So `BEGIN; <statements>; PRAGMA user_version = 3; COMMIT;` either both happen or neither does. Bump the version in a separate statement afterwards and a crash in between leaves a database whose schema and whose version number disagree, and every later run then either skips a change that never happened or repeats one that did. The lab proves this by breaking a migration on purpose: the runner reports the error, the version stays at 4, and the table the broken file created before its syntax error does not exist. This works only because SQLite''s DDL is transactional — you can roll back a CREATE TABLE — which is not true of every database engine.'
+
+  - question: 'A `loans` table carries a `member_email` column copied from `members`. Which normal form does this violate, and what goes wrong?'
+    options:
+      - 'First normal form — because an email address contains an @ symbol and is therefore not atomic'
+      - 'Second normal form — because the email depends on only part of a composite primary key'
+      - 'Third normal form — because a non-key column depends on another non-key column, so changing an email leaves every existing loan row stale and disagreeing'
+      - 'It violates none of them; copying the email is a normal denormalization and needs no justification'
+    answer_index: 2
+    explanation: 'Third normal form forbids a dependency between non-key columns. Here member_email depends on member_id, which is an ordinary column rather than the key of loans, so the same fact is now stated in two places. When Ada changes her email, every existing loan row still holds the old one, and the database now contains two answers to one question with nothing to say which is right. That is the update anomaly every normal form is a different way of catching, and the unifying idea underneath all of them is simply: state each fact exactly once. First normal form would be about a repeating group such as a comma-separated list of borrowed books in one cell; second normal form is about a dependency on part of a composite key, such as book_title depending on book_id alone. And while denormalization is a legitimate choice, it is one you make deliberately against a measurement, with a mechanism that keeps the copy honest — not by accident.'
+
+  - question: 'What can a generated column guarantee that a denormalized column such as `members.loan_count` cannot?'
+    options:
+      - 'That it can be indexed, which a denormalized column cannot be'
+      - 'That it can never disagree with the data it is derived from, because the database computes it and refuses any attempt to write to it'
+      - 'That it takes no storage space, since VIRTUAL and STORED both compute on read'
+      - 'That it can aggregate across other tables without a subquery'
+    answer_index: 1
+    explanation: 'A generated column is defined by an expression over the other columns of the SAME row, so it is computed rather than stored-and-maintained. You cannot write to it — SQLite answers `cannot UPDATE generated column` — and therefore it cannot drift out of agreement with its source. A denormalized column like loan_count is written by your code, so every code path that changes loans owes it an update, and the one that forgets is a bug with a delay on it. Note the boundary carefully: because the expression may only reference the same row, you CANNOT make loan_count a generated column, which is exactly when you take the maintenance burden on knowingly. On the distractors: VIRTUAL computes on read while STORED computes on write and does take space, and ALTER TABLE ADD COLUMN can only add VIRTUAL ones because adding a STORED column would mean rewriting every existing row. One practical gotcha: PRAGMA table_info does not list generated columns at all — only PRAGMA table_xinfo does.'

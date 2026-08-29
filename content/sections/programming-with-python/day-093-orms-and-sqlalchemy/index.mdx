@@ -1,0 +1,924 @@
+---
+day: 93
+title: 'ORMs and SQLAlchemy'
+---
+
+## Why this matters
+
+Here are two pieces of Python. They return the same answer. One of them sends two statements to the database and the other sends thirty-seven.
+
+```python
+members = session.scalars(select(Member)).all()
+for member in members:
+    print(member.name, len(member.loans))
+```
+
+```python
+members = session.scalars(
+    select(Member).options(selectinload(Member.loans))
+).all()
+for member in members:
+    print(member.name, len(member.loans))
+```
+
+The loop is identical. The output is identical. The difference is one word inside one call, and it is the difference between a page that loads and a page that times out.
+
+Now the part that should genuinely unsettle you: **nothing in the first version looks like a query.** `member.loans` reads like a list attribute. It is a `SELECT`, issued the first time you touch it, once per member. With six members that is seven statements. With thirty-six members it is thirty-seven. With a thousand it is a thousand and one, and by then somebody is on a call about the database.
+
+This is the whole problem with object-relational mappers, stated once at the top. An ORM's promise is that you write Python and it writes SQL. That promise is real and it is worth having. But it means **the most expensive thing your program does is now invisible in your program's source**, and no amount of careful reading will show it to you. You have to look at what was emitted.
+
+So today you will not take the ORM's word for anything. The lab hands you an instrument — a counter that records every statement the engine sends — and every claim in this lesson is a number that came out of it.
+
+Let me be blunt about one more thing before we start, because the industry is not. **An ORM is not a way to avoid learning SQL.** It is close to the opposite. An ORM is a tool for not writing the boring ninety per cent of your SQL by hand, and it only works if you can read the ten per cent that matters and judge whether the statement it chose was any good. This day only works at all because you spent Week 13 writing SQL by hand. Every emitted statement you are about to read is a statement you could have written yourself — that is exactly what makes you able to say "that one is wrong".
+
+The cost of getting this wrong lands in four familiar places. **Round trips**, which is the N+1 problem above and the reason a page gets slower as your data grows rather than as your traffic grows. **Memory**, when a "just update the flag on these rows" turns into a thousand Python objects nobody wanted. **Confusing errors**, because an object that was fine a line ago now raises `DetachedInstanceError` and the message needs decoding. And **debugging time**, which is the largest of the four, because every one of these bugs is invisible in the code and obvious in the log.
+
+The AI connection is not decorative and it arrives immediately. Nearly every Python service that stores anything reaches for SQLAlchemy — including the ones serving models, logging evaluations, tracking experiments and recording which prompt produced which output. A training pipeline that fetches a batch by looping over records and touching a relationship will make ten thousand round trips per epoch, and the symptom will be a GPU sitting idle at forty per cent utilisation while somebody profiles the model. Understanding the emitted query is what stops that, and it is a skill that transfers to every framework in this list rather than to one of them.
+
+## The idea in plain language
+
+An ORM maps rows to objects. That is the sentence, and everything hard about it follows from one observation:
+
+**Objects and rows have different identities, different lifecycles, and different ideas about when work happens.**
+
+Take them one at a time, because each disagreement produces a specific piece of machinery you will meet today.
+
+**Different identities.** Two objects with equal contents are two objects. Two rows with the same primary key are one row. So if you load book 1 into memory twice, do you have one object or two? If you have two, and somebody edits each, one of those edits will be silently thrown away when they are written back. The ORM's answer is an **identity map**: a dictionary inside the session mapping (class, primary key) to *the* object for that row. Load row 1 twice and you get the same Python object, both times, and the second load emits no SQL at all.
+
+**Different lifecycles.** An object exists the moment you construct it. A row exists when it is committed. Between those two moments the object is in a state that has no equivalent in either model, and there are four such states — transient, pending, persistent, detached — which between them explain nearly every confusing error a beginner meets.
+
+**Different ideas about when work happens.** In plain Python, `book.copies = 9` happens now. In SQL, a change happens when you send an `UPDATE`. An ORM has to decide when that assignment becomes a statement, and the answer is: later, in a batch, at a moment it picks. That is the **unit of work**, and it is why there is no `save()` method to call.
+
+Here is a single session's life, with the counts.
+
+![Diagram: one SQLAlchemy Session followed through six stages — opening with an empty identity map, an added object becoming pending, a loaded object becoming dirty, a query forcing an autoflush that emits an UPDATE and an INSERT before the SELECT that triggered it, the commit that ends the transaction and expires every attribute, and the close that detaches every object so reading one raises DetachedInstanceError — with the statement count under each stage reading zero, zero, zero, three, zero, zero](./assets/unit-of-work-flow.svg)
+
+Read the counts along the top: **0, 0, 0, 3, 0, 0.**
+
+You opened a session: nothing. You added an object: nothing. You changed a loaded object's attribute: nothing. Then you ran a query — and three statements went out, of which you wrote one. The other two were your accumulated work, flushed first so that your query could see it.
+
+That is the shape of the whole day. An ORM does not spread its work evenly across the lines you wrote. It saves it up and spends it all at once, at a moment the unit of work picks. Which is precisely why a query count, and not a stopwatch, is the instrument that finds the problem.
+
+## Historical background
+
+The vocabulary you are about to learn was named in a specific order, and knowing the order stops it feeling arbitrary.
+
+**Edgar F. Codd** published the relational model in **1970**, at IBM's San Jose Research Laboratory. Day 91 covered what that gave us. What matters today is what it did *not* give us: the relational model has no objects, no inheritance and no references — it has relations, tuples and values. Every difficulty in this lesson is a consequence of that, and none of it is a defect in Codd's model.
+
+Object-oriented programming and relational databases then grew up side by side for two decades without meeting comfortably, and by the 1990s the friction had a name: the **object-relational impedance mismatch**. The phrase is borrowed from electrical engineering, where impedance mismatch describes the power lost at a junction between two circuits that do not match — which is a good metaphor, because the loss is at the *boundary* rather than inside either side.
+
+**Hibernate**, for Java, was started by **Gavin King** in **2001** and became the reference implementation of the idea that a mapping layer could be sophisticated rather than a thin wrapper. Much of the vocabulary this lesson uses — session, flush, lazy loading, detached instance — is recognisably the vocabulary Hibernate popularised, and if you ever read Java code you will find yourself unexpectedly fluent.
+
+**Martin Fowler's** *Patterns of Enterprise Application Architecture*, in **2002**, gave the field the names it still uses. Four of its patterns are the skeleton of today: **Unit of Work** (accumulate changes, write them together, work out the order), **Identity Map** (one object per row per session), **Lazy Load** (fetch it when it is asked for), and the distinction between **Data Mapper** (the mapping lives in a separate layer; the domain object knows nothing about the database) and **Active Record** (the object knows how to save itself). That last distinction is the single most useful thing to carry into the alternatives comparison later, because it cleanly separates SQLAlchemy from most of its competitors.
+
+**Django** was released publicly in **2005** and brought an Active Record–style ORM to a large Python audience — models that know how to `.save()` themselves, tightly integrated with the rest of the framework.
+
+**SQLAlchemy** was created by **Michael Bayer** and first released in **2006**, taking the other road deliberately: Data Mapper, with the mapping declared separately from the domain behaviour, and — the decision that defines the library — built as **two layers** rather than one. Core is an SQL expression language you can use entirely on its own. The ORM sits on top of it and emits its work *as* Core expressions. Knowing that those two layers are separate is what makes "drop to Core for this bit" a normal move rather than an admission of failure.
+
+**SQLAlchemy 2.0** arrived in **2023** and is what this lesson uses. It matters here for a practical reason: 2.0 unified the Core and ORM query interfaces around `select()`, and replaced the old `declarative_base()` factory and `Query` object with `DeclarativeBase`, `Mapped` and `mapped_column`. Those older forms still work and you will meet them in existing code — this lesson labels them **legacy** wherever they appear and never uses them. On the machine this lesson was written on, `sqlalchemy.__version__` reports **2.0.51**, running on Python 3.14.0 against SQLite 3.53.3.
+
+## What it is — and what it is not
+
+**An object-relational mapper** is a layer that moves data between a relational database and objects in a programming language, so that rows become instances, columns become attributes, and foreign keys become references you can follow.
+
+Three distinctions do real work.
+
+**Data Mapper against Active Record.** In Active Record, the object knows how to persist itself: `book.save()`. It is compact and it reads beautifully for simple cases. In Data Mapper, the object is ignorant and a separate layer — here, the Session — decides what to write and when. SQLAlchemy is a Data Mapper, which is why you will never call `save()` today and why the Session gets a whole section to itself.
+
+**Core against the ORM.** These are two libraries in one package. Core gives you `Table`, `MetaData`, `select()`, `insert()`, `update()`, the engine, the dialects and the connection pool — a complete SQL expression language, usable with no models and no Session. The ORM adds declarative classes, relationships and the Session on top. The ORM depends on Core; Core does not know the ORM exists.
+
+**An ORM against a query builder.** A query builder helps you construct SQL. An ORM does that *and* takes responsibility for object identity, change tracking and the write order. Core is close to a query builder; the ORM is the part with opinions about your objects.
+
+Now what an ORM is **not**, and each of these is a mistake with a cost attached.
+
+It is **not a way to avoid learning SQL**. It generates SQL, and generated SQL is still SQL you are responsible for. The N+1 problem is invisible to somebody who has never thought about round trips.
+
+It is **not a database abstraction that makes engines interchangeable**. It gets you a long way — the same models run on SQLite here and would run on PostgreSQL — but types, constraint behaviour, locking and the interesting parts of every dialect differ, and pretending otherwise is how you find out in production.
+
+It is **not a cache**. The identity map is per-session and dies with the session. It is a correctness mechanism, not a performance one; the fact that it also saves a query sometimes is a side effect.
+
+It is **not a performance layer**. It is a *convenience and correctness* layer that costs some performance and, by making round trips invisible, makes it easy to lose a great deal more. Every performance win in this lesson comes from telling the ORM to do less, not from the ORM being clever.
+
+And it is **not a security boundary**. It parameterises your statements, which is genuinely valuable and covered later. It has no opinion whatsoever about who is allowed to read which rows.
+
+| It is | It is not |
+| --- | --- |
+| A mapping between two data models that genuinely disagree | A transparent bridge where objects and rows are the same thing |
+| A way to stop hand-writing the boring ninety per cent of your SQL | A way to never read SQL again |
+| Two layers — an expression language, and an object layer on top | One monolithic thing you are either using or not |
+| Judged by the statements it emits | Judged by how clean the Python looks |
+| A correctness mechanism (identity, ordering, transactions) | A performance optimisation |
+| Something you deliberately step outside of, often | An all-or-nothing commitment |
+
+## Why it was created and what problems it solves
+
+Strip away the vocabulary and an ORM exists to solve five specific, nameable problems. Day 90's hand-written repository solved some of them by hand; you will recognise the work.
+
+**The mapping is repetitive and the repetition is where bugs live.** Reading a row into an object means writing out the column order, twice, in two places — the `SELECT` and the constructor — and keeping them in step forever. Add a column and forget one of the two and you get a silent misalignment, not an error. Generating both from one declaration removes the class of bug entirely.
+
+**Two copies of one row will drift apart.** Load book 1 in one function and again in another, change each, write both back: one change is gone, with no error raised. This is the lost-update problem in miniature, and it is why the identity map exists. The toy ORM in the lab demonstrates it in six lines — change the object through one reference, read it through the other, and see the change, because there is only one object.
+
+**Write order is a graph problem you do not want to solve by hand.** Insert a loan that references a member who is also new, and the member must be inserted first, and its generated key must be threaded into the loan's foreign key. With four related objects that is tedious. With a real object graph it is a topological sort, and doing it by hand at every call site is how a codebase acquires "save the parent first, remember!" comments. The unit of work does the sort.
+
+**Transaction boundaries drift towards the wrong place.** Without a unit of work, each function tends to open and commit its own transaction, so an operation that should be atomic becomes six that are not. A Session scopes one transaction to one unit of work, which pushes the boundary to where the intent is.
+
+**Navigating relationships by hand is verbose enough that people denormalise instead.** "Give me this member's loans and each loan's book" is three queries and two dictionaries built by hand. `member.loans[0].book.title` is one expression. That convenience is real — and it is precisely the convenience that produces the N+1 problem, which is the honest form of this bullet: the ORM did not create a new problem, it made an existing cost invisible.
+
+And one problem an ORM **creates**, stated plainly because it is the fair trade: **it puts distance between you and the SQL.** Every performance question now has an extra step — what did it actually send? — and every developer on the team needs to know how to answer it. That is a real cost. The mitigation is the entire design of today's lab: make the emitted SQL routinely visible, and assert on it in tests.
+
+## How it works
+
+We will build one, then use the real one, then measure it.
+
+![Diagram: the seven layers between a domain object and a database row — your domain objects, declarative models, the Session with its identity map and unit of work, Core's expression language, the engine and its connection pool, the DBAPI driver, and the database — with what each layer is responsible for and what it hands down, plus the return path that turns rows back into objects](./assets/orm-layers-architecture.svg)
+
+That is the whole stack, and nothing in it is skipped at runtime. Keep it beside you: almost every question today is really "which layer is this happening at?"
+
+### Building a minimal ORM from first principles
+
+Before SQLAlchemy, write one. The lab's `examples/tiny_orm.py` is about a hundred and sixty lines and does the four things an ORM does. Once you have written this, the real library stops being magic and becomes a much more careful version of code you already understand.
+
+**A column that knows its own name.** The trick is a Python feature you may not have met: when a class body is executed, Python calls `__set_name__` on every attribute that defines it, handing over the name it was assigned to.
+
+```python
+class Column:
+    def __init__(self, sql_type: str, primary_key: bool = False) -> None:
+        self.sql_type = sql_type
+        self.primary_key = primary_key
+        self.name: str | None = None
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        # Python calls this at class-creation time and hands us the attribute
+        # name, so a column never has to repeat its own name.
+        self.name = name
+```
+
+So `id = Column("INTEGER", primary_key=True)` produces a column that knows it is called `id`. No string duplication, no configuration file.
+
+**A base class that collects them.** A small metaclass gathers every `Column` in the class body into `__columns__`:
+
+```python
+class ModelMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        cls = super().__new__(mcls, name, bases, namespace)
+        cls.__columns__ = {
+            key: value for key, value in namespace.items() if isinstance(value, Column)
+        }
+        return cls
+```
+
+**Generating the SQL from the declaration.** Now DDL is a string join over something you already have:
+
+```python
+@classmethod
+def create_table_sql(cls) -> str:
+    pieces = []
+    for column_name, column in cls.__columns__.items():
+        piece = f"{column_name} {column.sql_type}"
+        if column.primary_key:
+            piece += " PRIMARY KEY"
+        pieces.append(piece)
+    return f"CREATE TABLE {cls.__table__} ({', '.join(pieces)})"
+```
+
+Declaring `Member` with three columns produces, and the lab prints this from a real run:
+
+```
+CREATE TABLE members (id INTEGER PRIMARY KEY, name TEXT, email TEXT)
+```
+
+`INSERT` is the same idea with placeholders, and note that the values go in the parameter tuple rather than the string — the toy is parameterised for the same reason the real one is.
+
+**A session with a tray and a ledger.** This is the part worth dwelling on:
+
+```python
+class Session:
+    def __init__(self, connection):
+        self.connection = connection
+        self.identity_map: dict[tuple[type, object], Model] = {}
+        self.pending: list[Model] = []
+        self.statements: list[str] = []
+
+    def add(self, instance):
+        """Make the object pending. No SQL is emitted here — that is the point."""
+        self.pending.append(instance)
+
+    def flush(self):
+        """Turn every pending object into an INSERT. Still no commit."""
+        for instance in self.pending:
+            ...
+            cursor = self.execute(sql, values)
+            key_name = model_class.primary_key_name()
+            if getattr(instance, key_name) is None:
+                setattr(instance, key_name, cursor.lastrowid)
+            self.identity_map[(model_class, getattr(instance, key_name))] = instance
+        self.pending.clear()
+```
+
+Three things are already true, and they are the three things that confuse people about the real library.
+
+`add()` sends nothing. It appends to a list. The lab prints `statements emitted so far: 2` after adding four objects — and those two are the `CREATE TABLE`s.
+
+The primary key does not exist until the flush. Before: `ada.id before flush: None`. After: `ada.id after flush: 1`, and the value came from `cursor.lastrowid`, which is to say the database chose it.
+
+And the flush is what registers the object in the identity map, which is why `get()` can then answer without touching the database:
+
+```python
+def get(self, model_class, key_value):
+    """Fetch by primary key. A hit in the identity map emits NO SQL."""
+    key = (model_class, key_value)
+    if key in self.identity_map:
+        return self.identity_map[key]
+    ...
+```
+
+Run it and the payoff is unambiguous — this is captured output, not an illustration:
+
+```
+5. The identity map: the same row is the same object
+----------------------------------------------------
+first is second      : True
+first is ada         : True
+statements emitted   : 0
+Both lookups were answered from the identity map, so no SELECT was sent.
+
+6. Why the identity map matters
+-------------------------------
+changed via `first`, read via `second`: Ada O.
+```
+
+There is one object. An edit through any reference is visible through every reference, because there are no copies to disagree. That is not an optimisation; it is the correctness property the whole pattern exists for.
+
+The toy is honestly incomplete, and the gaps are instructive. It has no dirty tracking, so it cannot generate an `UPDATE`. It has no relationships, so it cannot lazy-load and therefore cannot have an N+1 problem. It has no dialects, no connection pool and no transaction handling beyond `commit()`. Adding dirty tracking is the first extension exercise in the lab, and doing it teaches more about the real library than reading its documentation for an hour.
+
+### The engine, the pool, and the best learning tool in the library
+
+Now the real thing. It starts with an engine:
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine("sqlite://", echo=True)
+```
+
+An engine is **not a connection**. It is a factory and a pool: it owns the URL, the dialect that decides what SQL to generate, and a set of already-open connections it hands out and takes back. You create one per application, at startup, not one per request. Against a local SQLite file the pooling barely matters. Against PostgreSQL over a network, every connection is a round trip and an authentication handshake, and the pool is the difference between a fast endpoint and a slow one.
+
+`echo=True` is the single best learning tool SQLAlchemy has, and you should leave it on for the whole of your first week. It prints every statement the engine sends, with parameters, at the moment it sends it. Every mystery in this lesson — why is there SQL here, why is there no SQL there — is answered by turning it on and reading.
+
+Two cautions, and they matter. In production `echo=True` prints your data to the log, including whatever personal information is in the parameters; it is a disclosure risk, not just noise. And for *testing*, echo is the wrong instrument, because you cannot assert on a print. That is why the lab uses an event listener instead:
+
+```python
+from sqlalchemy import event
+
+class QueryCounter:
+    def _record(self, conn, cursor, statement, parameters, context, executemany):
+        self.statements.append(normalise(statement))
+        ...
+
+    def __enter__(self):
+        event.listen(self.engine, "before_cursor_execute", self._record)
+        return self
+```
+
+`before_cursor_execute` fires once per statement actually handed to the driver, which is exactly the granularity a query count wants. Note what it records: the statement text and how many parameter *sets* there were — never the parameter values. If you ever ship query counting as telemetry, that is the shape you want.
+
+### Declaring models
+
+The modern 2.0 style is a `DeclarativeBase` subclass, `Mapped[...]` annotations and `mapped_column()`:
+
+```python
+class Base(DeclarativeBase):
+    """One base per application. It owns the MetaData all tables register in."""
+
+
+class Member(Base):
+    __tablename__ = "members"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    email: Mapped[str] = mapped_column(Text, unique=True)
+
+    loans: Mapped[list[Loan]] = relationship(
+        back_populates="member", cascade="all, delete-orphan"
+    )
+```
+
+Three things to notice, because each is a Day 91 decision restated.
+
+The annotation carries information. `Mapped[int]` versus `Mapped[int | None]` is how SQLAlchemy decides `NOT NULL`, so nullability is expressed in the type rather than in a keyword argument — which means your type checker and your schema agree by construction.
+
+`unique=True` on `email` is exactly the Day 91 argument: a surrogate integer primary key, with the natural key kept as a `UNIQUE` constraint. The ORM has not changed the design; it has changed the notation.
+
+And `loans` is not a column. It is a **relationship** — the place where an object reference stands where a join used to be.
+
+For many-to-many, the junction table is passed as `secondary`, and it is a Core `Table` rather than a mapped class:
+
+```python
+book_tags = Table(
+    "book_tags",
+    Base.metadata,
+    Column("book_id", ForeignKey("books.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+    ...
+    books: Mapped[list[Book]] = relationship(secondary=book_tags, back_populates="tags")
+```
+
+Why a `Table` and not a class? Because it is not an entity. It carries nothing but the two foreign keys and has no identity worth talking about. This is Day 91's junction-table test in ORM clothing: **the moment the junction acquires an attribute of its own** — a credit position, a date the tag was applied — **it stops being secondary and becomes a mapped class.** If you find yourself wanting to put a column on a `secondary` table, that is the design telling you something.
+
+`back_populates` declares that two relationship attributes are the two directions of one relationship, so appending to one side updates the other *in Python*, before any SQL is emitted. Without it you get two independent relationships over the same foreign key, and your in-memory graph can disagree with itself until a reload quietly resolves the argument.
+
+### The Session as a unit of work
+
+This is the centre of the day. The Session is the ORM's unit of work: it holds the identity map, tracks which objects are pending, dirty and deleted, decides when to send that work, and owns a transaction while it does.
+
+**The four states.** Every mapped object is in exactly one, and `inspect(obj)` will tell you which. These are captured from a real run:
+
+```
+just constructed          -> transient
+after session.add()       -> pending
+after session.flush()     -> persistent   id=7
+after session.commit()    -> persistent
+after session.close()     -> detached
+```
+
+| State | Has a Session? | Has a row? | What it means in practice |
+| --- | --- | --- | --- |
+| Transient | No | No | A plain object. Nothing is tracking it. |
+| Pending | Yes | No | `add()` has been called. The Session intends to insert it; nothing has been sent. The primary key is still `None`. |
+| Persistent | Yes | Yes | The normal working state. Changes are tracked; the key is assigned. |
+| Detached | No | Yes | The row exists but no Session does. Anything needing the database — refreshing an expired column, loading a lazy relationship — will fail. |
+
+Learn this table and roughly seventy per cent of your confusing ORM errors become self-diagnosing.
+
+**Flush is not commit.** They are different verbs, and confusing them costs an afternoon exactly once. `flush()` sends the pending statements, inside the open transaction. `commit()` ends the transaction, which is what makes the work visible to anybody else.
+
+Arguing this is unconvincing, so the lab measures it: it opens a second, genuinely independent `sqlite3` connection that SQLAlchemy knows nothing about, and asks that connection what it can see.
+
+```
+2. flush is not commit — asked of a second, independent connection
+------------------------------------------------------------------
+before flush, other connection sees: 'Grace Mensah' last
+flush emitted:
+     1. INSERT INTO members (name, email) VALUES (?, ?)
+after flush, other connection sees : 7 members, last 'Grace Mensah'
+  The INSERT was sent. The transaction is open. Nobody else can see it.
+after commit, other connection sees: 8 members, last 'Hana Ito'
+```
+
+The `INSERT` was demonstrably executed — it is right there in the log — and the outside world still counted seven. That is what a transaction *is*, and it is a Day 88 fact wearing ORM clothes. Note the practical consequence: a constraint violation can be raised by a `flush()` long before you ever call `commit()`, which is why the traceback sometimes points at a line containing no database call at all.
+
+**Autoflush** is why that happens. Before running any query, the Session flushes pending changes, so that the query can see your uncommitted work:
+
+```
+3. Autoflush — a query flushes your pending work first
+------------------------------------------------------
+added one pending Member, then ran an unrelated SELECT:
+     1. INSERT INTO members (name, email) VALUES (?, ?)
+     2. SELECT members.id, members.name, members.email FROM members WHERE members.name LIKE ?
+  The INSERT was emitted first, so the SELECT could see it.
+  That is autoflush, and it is why SQL appears at lines you never wrote.
+```
+
+It is nearly always what you want, and it is occasionally very surprising — particularly in a loop that both reads and writes. `with session.no_autoflush:` suspends it for a block; reach for that rarely, and comment why.
+
+One honest detail from the flow diagram, which surprised me when I ran it and which is worth not smoothing over. With both an added member and a changed book, the flush emitted:
+
+```
+1. UPDATE books SET copies=? WHERE books.id = ?
+2. INSERT INTO members (name, email) VALUES (?, ?)
+3. SELECT members.id, members.name, members.email FROM members WHERE members.name LIKE ?
+```
+
+The `UPDATE` went **before** the `INSERT` — the opposite of what "inserts first" folklore suggests. The unit of work sorts by table dependency, and `books` and `members` are independent tables, so the order is SQLAlchemy's own and not the order in which you made the edits. The guarantee you actually get is the one that matters: **foreign keys will resolve.** A guarantee about the order of unrelated statements was never offered, and depending on one would be a bug.
+
+### Querying, always beside the SQL it emits
+
+`select()` in 2.0 is the same construct for Core and the ORM. Read every one beside its output — this pairing is the pedagogy, not decoration.
+
+```python
+select(Book.title, Book.author).where(Book.copies >= 3).order_by(Book.title)
+```
+
+```
+SELECT books.title, books.author FROM books WHERE books.copies >= ? ORDER BY books.title
+```
+
+Two things are worth pointing at. The mapping is almost boringly direct — `where` became `WHERE`, `order_by` became `ORDER BY` — which is the good news: you can predict it, and if you can predict it you can review it. And `3` did not appear in the statement. It became a `?`, bound separately. Every value you pass through the expression language is parameterised by construction, which is Day 90's discipline made automatic.
+
+A join and an aggregate compile just as predictably:
+
+```python
+select(Member.name, func.count(Loan.id).label("open_loans"))
+    .join(Loan, Loan.member_id == Member.id)
+    .where(Loan.returned.is_(False))
+    .group_by(Member.id)
+    .order_by(func.count(Loan.id).desc(), Member.name)
+```
+
+```
+SELECT members.name, count(loans.id) AS open_loans FROM members
+JOIN loans ON loans.member_id = members.id WHERE loans.returned IS 0
+GROUP BY members.id ORDER BY count(loans.id) DESC, members.name
+```
+
+If you can read that — and after Week 13 you can — then you are in a position to say whether it is the query you wanted. That is the entire skill.
+
+### The N+1 problem, counted
+
+Now the headline. Here is the innocent loop, with the counter running:
+
+```
+1. The innocent-looking loop
+----------------------------
+members: 6   loans reached: 24
+statements emitted: 7
+     1. SELECT members.id, members.name, members.email FROM members ORDER BY members.id
+     2. SELECT loans.id AS loans_id, loans.book_id AS loans_book_id, ...
+     3. SELECT loans.id AS loans_id, loans.book_id AS loans_book_id, ...
+     4. SELECT loans.id AS loans_id, loans.book_id AS loans_book_id, ...
+     5. SELECT loans.id AS loans_id, loans.book_id AS loans_book_id, ...
+     6. SELECT loans.id AS loans_id, loans.book_id AS loans_book_id, ...
+     7. SELECT loans.id AS loans_id, loans.book_id AS loans_book_id, ...
+  That is 1 + 6.
+```
+
+Seven statements for six members. The scoreboard after the two fixes:
+
+```
+4. The scoreboard
+-----------------
+    lazy (default)    7 statements   <- 1 + N
+    selectinload      2 statements   <- 1 + 1, whatever N is
+    joinedload        1 statement    <- 1, but wider rows
+```
+
+The lab then proves the property rather than the number, which is the more useful assertion: at 6 members lazy is 7 and eager is 2; at 36 members lazy is **37** and eager is still **2**. One grows with your data and one does not, and that is the distinction that matters in a system nobody is watching.
+
+**So is `joinedload` simply the winner at one statement?** No, and understanding why is the difference between knowing the fix and knowing the subject.
+
+`joinedload` adds an `OUTER JOIN` to the same query. Every member's columns are then repeated once per loan. The lab prints the arithmetic:
+
+```
+rows the JOIN actually returned : 24
+distinct Member objects built   : 6
+```
+
+Twenty-four rows on the wire to build six objects. With a wide parent row and a large collection, that duplication is the entire cost, and it is paid in bytes. It is also why `.unique()` is mandatory on a `joinedload` of a collection — SQLAlchemy refuses to guess whether you wanted 6 or 24, and raises a genuinely helpful error if you forget:
+
+```
+The unique() method must be invoked on this Result, as it contains results that include joined eager loads against collections
+```
+
+`selectinload` instead sends a second `SELECT` with an `IN` clause listing the parent keys. No join, no duplication, one extra round trip.
+
+| | `selectinload` | `joinedload` |
+| --- | --- | --- |
+| Statements | Always 2 | Always 1 |
+| Mechanism | Second `SELECT ... WHERE key IN (...)` | `OUTER JOIN` on the same query |
+| Row duplication | None | Parent columns repeated per child |
+| Needs `.unique()` | No | Yes, for collections |
+| Best for | One-to-many and many-to-many collections | Many-to-one, and small collections |
+| Fails badly when | Round trips are very expensive | The parent row is wide and the collection is large |
+
+The rule of thumb that follows: **`joinedload` for many-to-one, `selectinload` for one-to-many.** In a many-to-one — `loan.book` — each child has exactly one parent, so no multiplication can occur and the join is free. The lab confirms it: `with joinedload(Loan.book): 1 statement, 8 titles`.
+
+And one detail that will confuse you if nobody warns you. A lazy many-to-one over 24 loans emits **9** statements, not 25:
+
+```
+loans: 24   distinct titles: 8
+statements emitted: 9
+  Not 1 + 24, because the identity map answers the second request for a
+  book already loaded. The count is 1 + the number of DISTINCT books.
+```
+
+The identity map caps the damage at 1 + the number of *distinct* parents. It is still an N+1; the N is just smaller than you feared. Do not let that lull you — the distinct count is a property of your data, and it grows.
+
+**Lazy against eager is a per-relationship, per-query decision**, and it should be. Whether you need a member's loans depends entirely on what the caller is about to do. You can change the default on the relationship itself (`lazy="selectin"`), and it is occasionally the right call for a relationship you almost always need — but it makes the decision globally, in a place far from the code that pays for it, which is how a codebase acquires eager loads nobody can remove.
+
+### DetachedInstanceError, both of them
+
+This is the error that stops people, and its cure is knowing that it is two errors.
+
+**Case one, a column:**
+
+```
+raised DetachedInstanceError:
+    Instance <Member at 0xADDR> is not bound to a Session; attribute refresh operation cannot proceed
+  commit() expired every attribute; close() removed the connection
+  that would have refreshed them. Nothing is left to read.
+```
+
+The cause is a default you probably did not know about: `commit()` **expires** every loaded attribute, so the next read will be fresh rather than stale. Normally the Session just refreshes it. But if the Session has closed, there is no connection to refresh it with, and there is no retained value either — because it was thrown away deliberately.
+
+The fix is to stop throwing it away:
+
+```python
+with Session(engine, expire_on_commit=False) as session:
+    member = session.get(Member, 1)
+    session.commit()
+print(member.name)   # 'Ada Okonkwo'
+```
+
+**Case two, a relationship:**
+
+```
+raised DetachedInstanceError:
+    Parent instance <Member at 0xADDR> is not bound to a Session; lazy load operation of attribute 'loans' cannot proceed
+```
+
+Same exception, genuinely different problem — and `expire_on_commit=False` **will not help**. There is nothing to keep: the relationship was always going to be a separate `SELECT`, and that `SELECT` never happened. The fix is to decide in advance:
+
+```python
+with Session(engine) as session:
+    ada = session.scalars(
+        select(Member).options(selectinload(Member.loans)).where(Member.id == 1)
+    ).one()
+print(len(ada.loans))   # 4
+```
+
+Which is the eager-loading decision again, arriving from a different direction. That is not a coincidence — both problems are the same underlying fact, that a relationship is a query in disguise, seen from two angles.
+
+**Read the message.** "Attribute refresh operation cannot proceed" and "lazy load operation of attribute" are pointing at the two different causes, and applying the wrong remedy is the classic wasted afternoon.
+
+### Where a Session begins and ends
+
+A Session is a unit of work, so it should bracket a unit of *intent*. In a web application that is one request: begin at the start, commit or roll back at the end, close, and never share it between threads or requests.
+
+Two wrong answers fail in opposite directions and both are common.
+
+A **global** Session, created once at startup, never lets go. It accumulates every object ever loaded into an unbounded identity map, holds a transaction open indefinitely (which blocks other writers on a real database), and is not safe across threads.
+
+A Session **per query** throws away the thing that makes an ORM worth having. The same row loaded twice becomes two objects that can disagree, every object is detached the moment you try to use it, and — this is where most `DetachedInstanceError` reports actually come from — the objects you return are already dead.
+
+In a script, one Session for the script is usually right. In a batch job, one per batch. The question to ask is always: what is the smallest set of changes that must all happen or all not happen? That is your Session.
+
+## An everyday analogy
+
+Think of the Session as **a clerk at the records desk of an archive.**
+
+The archive is the database. The records are rows. You cannot go into the archive yourself — you make requests at the desk, and the clerk fetches.
+
+**The ledger is the identity map.** When the clerk fetches record 1 for you, they write in their ledger: "record 1 → the blue card on this desk." Ask for record 1 again and they do not walk to the archive; they point at the blue card that is already in front of you. That is why the second lookup emits no SQL. And it is why, when you scribble a correction on that card, everyone at the desk sees the correction — there is one card, not two, so two people cannot make conflicting edits to two copies. The ledger is cleared at the end of the clerk's shift, which is why the identity map dies with the Session.
+
+**The tray is the pending list.** Hand the clerk a new record to file and they do not walk to the archive immediately. They put it in the out-tray. That is `add()`, and it is why nothing is sent and why your new record has no archive reference number yet — the archive assigns those, and the archive has not seen it.
+
+**Filing the tray is the flush.** The clerk walks over and files everything, in an order they work out themselves so that a record referring to another gets filed after it. Your card now has its reference number. But the tray is not the same thing as *publishing*: the changes are in the clerk's working area and no other desk can see them yet.
+
+**Ending the shift and publishing the ledger is the commit.** Now the rest of the building can see your changes. This is the distinction the second connection in the lab makes concrete: after filing, the other desk still counted seven records; after publishing, eight.
+
+**Autoflush is the clerk being conscientious.** You ask "how many records match this?" and the clerk, holding three unfiled items in the tray that would change the answer, files them first so their answer is right. Hence SQL at a line where you wrote a question, not a change.
+
+**The N+1 problem is asking badly at the desk.** "Give me the six members" — the clerk makes one trip. Then, for each member, "and what have they borrowed?" — six more trips. Six extra walks for six questions you already knew you were going to ask. `selectinload` is saying up front: "the six members, and their loan records too." One extra trip, total, regardless of how many members there turn out to be.
+
+**`joinedload` is asking for it all on one giant sheet.** One trip, but the clerk copies each member's details onto the sheet once per loan, so you get a sheet with twenty-four lines for six people and have to deduplicate. Fine when each item has exactly one parent. Wasteful when it has forty.
+
+**`DetachedInstanceError` is the desk having closed.** You still have your cards. But the reference numbers on them were rubbed out when the shift ended (that is `expire_on_commit`), and nobody is there to look anything up. Worse, if you never asked for the loan records, the space on your card where they would go is not blank — it is a *promise* to fetch them later, and there is now no one to fetch them.
+
+The analogy holds all the way down, and it holds in the one place analogies usually break: **the clerk is not a cache.** They are not there to make things fast; they are there to make sure there is one card per record and that things get filed in a workable order. Any speed you get is incidental, and any speed you lose is because you asked badly.
+
+## Examples in practice
+
+Everything below was captured from a real run on 2026-08-16: macOS 26.5.2 on Apple Silicon, Python 3.14.0, SQLAlchemy 2.0.51, SQLite 3.53.3 as linked into Python. The full transcripts are in the lab's `expected-output/` directory, where they are compared byte for byte on every test run.
+
+**Example 1 — the toy ORM's identity map.** Two lookups of the same key, zero statements, and one object:
+
+```
+first is second      : True
+first is ada         : True
+statements emitted   : 0
+```
+
+**Example 2 — the state machine, observed rather than recited.** The lab calls `inspect()` at each step rather than printing a script:
+
+```
+just constructed          -> transient
+after session.add()       -> pending
+after session.flush()     -> persistent   id=7
+after session.commit()    -> persistent
+after session.close()     -> detached
+```
+
+**Example 3 — flush against commit, adjudicated by a third party:**
+
+```
+after flush, other connection sees : 7 members, last 'Grace Mensah'
+after commit, other connection sees: 8 members, last 'Hana Ito'
+```
+
+**Example 4 — the N+1 scoreboard and the scaling property:**
+
+```
+    lazy (default)    7 statements   <- 1 + N
+    selectinload      2 statements   <- 1 + 1, whatever N is
+    joinedload        1 statement    <- 1, but wider rows
+```
+
+with, from the test suite, `MEMBERS 6 LAZY 7 EAGER 2` and `MEMBERS 36 LAZY 37 EAGER 2`.
+
+**Example 5 — the many-to-many, where the count really bites.** Eight books and their tags:
+
+```
+    lazy         9 statements
+    selectinload 2 statements
+```
+
+**Example 6 — bulk work, and a result that contradicts the usual advice.** This one deserves the most space, because I set out to demonstrate something and measured something else.
+
+The received wisdom is: for bulk inserts, drop to Core, it is far fewer queries. Here is what the counter actually reported for 500 rows:
+
+```
+    add() + flush() per row    500 execution(s)    500 row(s)
+    add_all() + one flush        1 execution(s)    500 row(s)
+    Core insert(), one call      1 execution(s)    500 row(s)
+```
+
+**A batched ORM insert and a Core insert cost the same single cursor execution.** The unit of work sorts the pending objects by table and batches them into one `executemany`, exactly as Core does. On SQLAlchemy 2.0.51, the round-trip argument for preferring Core on inserts is not supported by the measurement.
+
+The gap that *is* dramatic is 500 against 1, and it is entirely about whether the `flush()` sits inside the loop. That is the actionable lesson, it is free, and it is a different lesson from the one I expected to write.
+
+This is also why the lab's counter records two numbers rather than one. A **cursor execution** is one statement handed to the driver — the round-trip count. A **parameter set** is one row it carried. A single `executemany` is one execution carrying five hundred rows. Conflate the two and you will reach a conclusion the machine does not support, in either direction.
+
+Core does have a real advantage on inserts, and it is honest to state it as a mechanism rather than as a number I did not measure: no `Loan` instances are constructed, nothing enters the identity map, and there is no dependency graph to sort. That is memory and CPU, not round trips.
+
+Where Core wins on the count is the bulk **UPDATE**, and here the difference is structural:
+
+```
+ORM, object by object : 2 cursor execution(s), 14 parameter set(s), 1 of them batched
+                        13 Loan objects built in memory
+Core UPDATE           : 1 cursor execution(s), 1 parameter set(s), 0 of them batched
+                        0 Loan objects built, 13 rows changed
+```
+
+The ORM had to `SELECT` the rows before it could change them, because it changes *objects* and it has no objects until it loads them. Core changes *rows*, so it never reads them. Scale it up and the shape becomes obvious:
+
+```
+ORM with ~1000 more open loans : 2 cursor execution(s), 1014 parameter set(s)
+                                 1013 Loan objects built in memory
+Core with the same rows        : 1 cursor execution(s), 1 parameter set(s)
+                                 0 Loan objects built, 1013 rows changed
+```
+
+The execution counts barely move. The object count moves by a thousand. **That** is the bulk-operation argument, stated in the units it is actually true in.
+
+## Implications: security, privacy, performance, scalability, and cost
+
+**Security — what the ORM does for you.** Everything expressed through `select()`, `insert()`, `update()`, `where()` and `values()` compiles to a statement with bound parameters. Look at any captured line: `WHERE books.copies >= ?`. The value never becomes part of the statement text; it is handed to the driver separately, so there is no string for a quote character to break out of. Day 90 made you do this by hand. The ORM does it by construction, and you have to work to defeat it.
+
+**Security — what it does not do.** Three specific gaps. **Raw SQL is still raw SQL**: `text("... WHERE name = '" + name + "'")` is exactly as injectable as it looks, and `text()` supports bound parameters (`:name`) precisely so you never need to do that. **Identifiers are not parameters**: a table name, a column name or a sort direction cannot be bound, because parameters bind values only — so if a user chooses the sort column, validate that choice against a fixed allow-list of column objects you control. And **`filter_by(**request.args)` is a different hole**: not injection but mass assignment, where a client that can name any column can filter on, or with `values()` write to, a column you never meant to expose.
+
+**Security — authorization is not a query concern at all.** A perfectly parameterised `select(Loan)` returns every loan in the table. The ORM has no opinion about who may see them. Constraints stop bad *data*; they do nothing about a bad *reader*. That was true of the schema on Day 91 and it is true of the object model today.
+
+**Privacy.** `echo=True` prints your parameters, which is to say your data, into the log. It is the best learning tool in the library and a disclosure risk in a deployed service, and the same caution applies to raising the `sqlalchemy.engine` log level. If you build query telemetry, record the statement text and the parameter *count*, never the values — which is what the lab's counter does, deliberately.
+
+**Performance.** Every performance win available here comes from telling the ORM to do less. The largest single win is eager loading, because it converts a cost that grows with your data into one that does not. The second largest is not flushing in a loop. Neither is exotic, and neither is visible without measurement. The ORM's own overhead — constructing objects, tracking changes — is real but is usually dwarfed by round trips, which is why "count the statements" is the right first question and "profile the Python" is the second.
+
+**A denial-of-service note that is easy to miss.** The N+1 problem is not only a performance bug. An endpoint that lazily loads a relationship per result issues one query per row, so if a client controls the page size, a client controls how many queries your database runs. That turns a slow page into an availability problem, and it is why counting queries belongs in your tests rather than in your intentions.
+
+**Scalability.** Two things scale badly and both have been measured above. Loading objects to change them scales with the number of matching rows — a thousand rows is a thousand Python objects, whatever the statement count says. And lazy loading scales with the number of parents. Both have the same shape of fix: decide in advance what you need.
+
+**Cost.** SQLAlchemy is free and open source under the MIT licence, with no paid tier and no commercial edition; so is pytest; so is SQLite, which is public domain. The costs on this day are not licence costs. They are the round trips your design implies, the memory your object graph occupies, and the engineering time spent learning to see both. Where an ORM costs real money is the same place any database costs real money — in a managed database billed by connection, by I/O or by instance size, an N+1 loop is a line item. No prices are quoted here because they vary by provider and change, and an approximate price is worse than none.
+
+## Alternatives: free, open source, and commercial
+
+Every option below is free and open source. There is no commercial ORM in mainstream Python use, which is itself worth noting — this is a solved-in-the-open problem.
+
+**A statement about what was actually run.** Only **SQLAlchemy 2.0.51** is installed in this lab's environment, and every number, statement and transcript in this lesson comes from it. The other tools below are described from their own documentation and from their published design. **No output is reproduced for any of them**, and none of the counts above should be assumed to transfer.
+
+**SQLAlchemy Core.** *When to choose it:* bulk writes where you do not want objects; reporting queries that are shaped like SQL rather than like an object graph; anywhere you would otherwise fight the ORM. *How to use it:* `insert()`, `select()`, `update()` executed on a `Connection` or on a `Session` — the same expression language, no Session semantics. *Example:* the lab's `update(Loan).where(Loan.returned.is_(False)).values(returned=True)`, one statement, zero objects. *Cost:* free, MIT, same package. *The price:* no Python-level default, validator or event of yours runs, because no object was created.
+
+**The SQLAlchemy ORM.** *When to choose it:* the default for an application with a domain model — anything where you have entities with behaviour, relationships you navigate, and writes that must be transactional as a group. *How to use it:* everything in this lesson. *Example:* `session.add(member)` and a commit. *Cost:* free, MIT. *The price:* the learning curve is genuinely the steepest in this list, and it is steep in a specific way — the concepts (unit of work, identity map, loader strategies) are not optional and cannot be picked up by copying examples.
+
+**Django's ORM.** *When to choose it:* you are building a Django application. That is very nearly the whole answer, and it is not a criticism — the ORM's integration with migrations, the admin, forms and the rest of the framework is the point, and using it outside Django means giving up what makes it good. *How to use it:* Active Record–flavoured models with `.save()` and `.objects` managers; migrations are generated for you, which is a genuine advantage over the SQLAlchemy default. *Example:* `Member.objects.prefetch_related("loans")`, which is the same idea as `selectinload` under a different name. *Cost:* free, BSD. *The price:* it is not designed to be the persistence layer of a non-Django application, and the mapping is more opinionated and less separable.
+
+**Peewee.** *When to choose it:* a small application where SQLAlchemy's concept load is not worth paying and you want something you can read the source of in an afternoon. *How to use it:* a compact Active Record–style API, deliberately small. *Example:* `Member.select().where(Member.name == "Ada")`. *Cost:* free, MIT. *The price:* less power at the edges — complex eager loading, unusual joins, dialect-specific features — and a smaller ecosystem when you need help.
+
+**Tortoise ORM.** *When to choose it:* an async application where you want async-native models rather than async bolted on. *How to use it:* Django-like models with `await` throughout. *Example:* `await Member.filter(name="Ada").prefetch_related("loans")`. *Cost:* free, Apache 2.0. *The price:* async makes everything harder to debug, and SQLAlchemy 2.0 has a well-supported async story of its own (`AsyncSession`), so "I need async" is no longer by itself a reason to leave.
+
+**SQLModel.** *When to choose it:* a FastAPI application (Day 82) where you are tired of writing a pydantic model and a SQLAlchemy model that describe the same fields. *How to use it:* one class that is both, built on top of SQLAlchemy and pydantic. *Example:* a `Member` class that FastAPI can validate a request body against *and* that maps to a table. *Cost:* free, MIT. *The price:* it is a layer over SQLAlchemy, so when something goes wrong you are debugging SQLAlchemy anyway — which is an argument for learning this lesson first, not instead.
+
+**Hand-written SQL with Day 90's repository pattern.** *When to choose it:* the queries are the interesting part of the system — reporting, analytics, anything where you would spend your time persuading an ORM to emit the statement you already know you want. Also: small tools, and any codebase where adding a dependency needs justifying. *How to use it:* `sqlite3` or a driver directly, every value bound, the SQL behind a repository class so call sites stay clean. *Example:* the Day 91 report. *Cost:* free, standard library. *The price:* you write the identity handling, the write ordering and the mapping yourself — or you decide you do not need them, which for a read-mostly reporting tool is often correct.
+
+| Option | Pattern | Choose it when | Main cost |
+| --- | --- | --- | --- |
+| SQLAlchemy Core | Expression language | Bulk writes, reporting, escaping the ORM | Your Python-level logic does not run |
+| SQLAlchemy ORM | Data Mapper | An application with a real domain model | Steepest concept load here |
+| Django ORM | Active Record | You are building Django | Not meant to travel outside it |
+| Peewee | Active Record | Small app, want to read the source | Less power at the edges |
+| Tortoise ORM | Active Record, async | Async-native models | Async is harder to debug |
+| SQLModel | Over SQLAlchemy | FastAPI, one class for both jobs | You still debug SQLAlchemy |
+| Hand-written SQL + repository | None | Queries are the interesting part | You build identity and ordering yourself |
+
+**Migrations, stated honestly.** SQLAlchemy does not manage schema change; **Alembic**, from the same author, is the tool for it — it compares your models against the database and generates versioned migration scripts you edit and commit. That is what its documentation describes and it is a fair summary of what it is for. **Alembic is not installed in this lab's environment and no Alembic output is reproduced anywhere in this lesson.** The lab's test suite asserts that it is still absent, precisely so this paragraph cannot go quietly stale. If you take one thing from it, take this: `Base.metadata.create_all()` is a development convenience that creates missing tables and will never alter an existing one, and reaching production without a migration tool is a decision, not an oversight.
+
+## Comparison with related concepts
+
+**An ORM against Day 90's repository pattern.** These are not opposites and it is a common confusion. A repository is a *boundary*: a class that hides how data is fetched behind methods named for what the application wants. An ORM is a *mechanism* for implementing that boundary. The best structure in a large application is usually both — repositories that internally use the ORM — because then the ORM's vocabulary does not leak into every layer, and swapping a slow ORM query for hand-written SQL is a change inside one class.
+
+**An ORM against a query builder.** A query builder helps you build SQL and hands you rows. An ORM does that and additionally owns object identity, change tracking and write ordering. Core is close to a query builder; the ORM is the part with opinions.
+
+**The identity map against a cache.** Both avoid work by remembering. A cache is an optimisation, is usually shared, and is allowed to be stale. The identity map is a *correctness* mechanism, is strictly per-Session, and dies with it. Treating it as a cache leads directly to the global-Session mistake, where the identity map becomes an unbounded, unmanaged, never-invalidated store.
+
+**Flush against commit.** Covered above, and worth restating as a table because the confusion is so productive of bugs.
+
+| | `flush()` | `commit()` |
+| --- | --- | --- |
+| Sends SQL | Yes | Yes (it flushes first) |
+| Ends the transaction | No | Yes |
+| Visible to other connections | No | Yes |
+| Assigns generated primary keys | Yes | Yes |
+| Can raise a constraint error | Yes | Yes |
+| Expires loaded attributes | No | Yes, by default |
+| Can be undone by `rollback()` | Yes | No |
+
+**Lazy against eager loading.** Lazy is per-attribute-access and adaptive; you pay only for what you touch, in as many round trips as it takes. Eager is per-query and predictive; you pay once for what you declared, whether or not you use it all. Neither is correct in general, which is why it is a per-query option rather than a setting.
+
+**`selectinload` against `joinedload`.** Compared in full above. The short version: two statements with no duplication, against one statement with duplication.
+
+**An ORM against an ODM.** Day 92's document stores have their own mapping layers (an object-document mapper). The identity and lifecycle problems are the same; the *shape* problem largely disappears, because a document can nest and a row cannot — which is exactly the trade Day 92 examined from the other side.
+
+## When to use it — and when not to
+
+**Use an ORM when:**
+
+- You have a **domain model** — entities with behaviour and relationships you navigate — rather than a set of reports.
+- Writes are **transactional as a group**: several related objects must be created or changed together, and the write order matters.
+- The application is **long-lived and will be maintained by people who are not you**. The structure an ORM imposes is worth real money on a five-year codebase.
+- You are doing **CRUD over a normalised schema**, which is the shape ORMs are best at and where the generated SQL is almost always what you would have written.
+- You want your **schema and your types to agree by construction**, which `Mapped[int]` versus `Mapped[int | None]` gives you for free.
+
+**Do not use an ORM — or step outside it — when:**
+
+- **Bulk operations.** Not because of the statement count, which this lesson measured and found more subtle than advertised, but because loading a thousand objects to change a flag on a thousand rows is a thousand objects you did not need. Use Core's `update()` or `insert()`.
+- **Complex reporting queries.** Window functions, recursive CTEs, multi-level aggregation — everything Day 91 taught in its second half. These are shaped like SQL, not like an object graph, and expressing them through an ORM is a translation exercise with no payoff. Write the SQL, run it through Core or `text()` with bound parameters, and map the result to a small dataclass if you want types.
+- **The query is the product.** Analytics tools, dashboards, data pipelines: if the interesting part of your system is the query, an ORM is a layer between you and your work.
+- **Extreme write throughput**, where per-object overhead and identity tracking are pure cost.
+- **The schema is not yours** and does not follow the conventions an ORM assumes — no primary keys, composite keys everywhere, a legacy design nobody may change. Mapping is possible and often more work than the SQL.
+
+**And the point that matters most: dropping to Core or to raw SQL is normal.** It is not a defeat, it is not an admission that the ORM failed, and it does not mean you chose the wrong tool. SQLAlchemy is built as two layers precisely so that this is a one-line change inside the same transaction. A codebase where ninety per cent is ORM and ten per cent is hand-written SQL for the queries that deserve it is a healthy codebase. A codebase where somebody spent three days making the ORM emit a particular window function is not.
+
+The signal to watch for is simple: **when you find yourself fighting the ORM, stop fighting it.** You already know SQL. Write the SQL.
+
+## Knowledge check
+
+Eight questions accompany this lesson, including one on the difference between flush and commit and one on what actually fixes an N+1. Before you take them, answer these five out loud — if you cannot, reread the section named after each.
+
+1. You call `session.add(obj)` and print `obj.id`. It is `None`. Why is that correct behaviour, and what would have to happen for it not to be `None`? *(The Session as a unit of work)*
+2. A `SELECT` appears in your log at a line where you wrote no query. Name the mechanism and say why it is usually desirable. *(Autoflush)*
+3. You have six parents and see seven queries. You have thirty-six parents and see thirty-seven. What is the fix, and what number should you see afterwards for each? *(The N+1 problem, counted)*
+4. `DetachedInstanceError` twice, on `member.name` and on `member.loans`. Why does one fix work for the first and not for the second? *(DetachedInstanceError, both of them)*
+5. Somebody tells you Core is dramatically fewer queries than the ORM for bulk inserts. What did the measurement in this lesson show, and where does Core genuinely win? *(Examples in practice, example 6)*
+
+## Hands-on exercise
+
+The lab is `labs/sections/programming-with-python/day-093-orms-and-sqlalchemy/`, and it is called "See What the ORM Does" because you never take the ORM's word for anything in it.
+
+Install first — this is the one step that needs the network, and nothing after it does:
+
+```bash
+cd labs/sections/programming-with-python/day-093-orms-and-sqlalchemy
+python3 -m venv .venv
+.venv/bin/pip install -r requirements/requirements.txt
+.venv/bin/python3 -c "import sqlalchemy; print(sqlalchemy.__version__)"
+```
+
+Then read and run the five demonstrations **in order**, because the order is the argument:
+
+```bash
+export PYTHONPATH=examples
+.venv/bin/python3 examples/demo_toy.py
+.venv/bin/python3 examples/demo_sqlalchemy.py
+.venv/bin/python3 examples/demo_unit_of_work.py
+.venv/bin/python3 examples/demo_n_plus_one.py
+.venv/bin/python3 examples/demo_bulk.py
+```
+
+Read `examples/tiny_orm.py` before you read `examples/models.py`. A hundred and sixty lines of your own ORM buys more understanding than a chapter of documentation, because afterwards every term in the real library is a term you have implemented.
+
+Then the exercises. `starter/queries.py` contains nine numbered exercises, and here is the thing to understand before you begin: **every function in it already returns the right answer.** None of the exercises are about correctness. They are about what the ORM sent to get there.
+
+```bash
+.venv/bin/pytest starter -q
+```
+
+You will see `1 passed, 9 skipped`. Each skipped test names the exercise that makes it pass. Do the exercise, delete that test's `@pytest.mark.skip` line, rerun.
+
+The nine, in order: filter in the database rather than in Python; replace two queries and a dictionary with one grouped outer join; fix a one-to-many N+1 with `selectinload`; fix a many-to-one N+1 with `joinedload`; separate a flush from a commit and observe the middle state through an outside connection; name the four object states by inspecting them; fix a detached column read; fix a detached relationship read; and replace an object-by-object update loop with one Core `UPDATE`.
+
+### Expected output
+
+The baseline, before you have written anything:
+
+```
+.sssssssss                                                               [100%]
+1 passed, 9 skipped in 0.06s
+```
+
+The identity map, from `demo_toy.py`:
+
+```
+5. The identity map: the same row is the same object
+----------------------------------------------------
+first is second      : True
+first is ada         : True
+statements emitted   : 0
+```
+
+The N+1 scoreboard, from `demo_n_plus_one.py`:
+
+```
+4. The scoreboard
+-----------------
+    lazy (default)    7 statements   <- 1 + N
+    selectinload      2 statements   <- 1 + 1, whatever N is
+    joinedload        1 statement    <- 1, but wider rows
+```
+
+And the full suite:
+
+```
+87 checks, 0 failure(s).
+```
+
+Every one of those transcripts lives in `expected-output/` and is compared byte for byte by section 8 of the harness. That is deliberately strict: this lab's claim is that emitted SQL is observable and stable, and a capture allowed to drift would prove nothing.
+
+### Validate your work
+
+1. `.venv/bin/python3 -c "import sqlalchemy; print(sqlalchemy.__version__)"` prints `2.0.51`, matching `requirements/requirements.txt`.
+2. All five demonstrations exit 0. Any traceback is a setup problem, not a code problem.
+3. `bash tests/run_tests.sh` reports `87 checks, 0 failure(s).` and exits 0.
+4. `.venv/bin/pytest starter -q` reports `1 passed, 9 skipped` before you start, and `10 passed` when you are done.
+5. Each exercise's test asserts a **statement count**. If it passes, the ORM really did what you think it did — that is the whole guarantee, and it is a stronger one than "the output looked right".
+6. Nothing is left behind: after the run, `find . -name '*.db' -not -path '*/.venv/*'` and the equivalent for `__pycache__` are both empty. The harness checks this too.
+
+### Troubleshooting
+
+**`ModuleNotFoundError: No module named 'models'`** — the demos import `models`, `library` and `counting` as plain modules, so `examples/` must be importable. Use `PYTHONPATH=examples`, or run from inside the directory. The pytest exercises need no such incantation because `starter/conftest.py` does it for you.
+
+**`ModuleNotFoundError: No module named 'sqlalchemy'`** — you ran a different interpreter from the one you installed into. Use `.venv/bin/python3`, not a bare `python3`.
+
+**`DetachedInstanceError`** — read the rest of the message. "Attribute refresh operation cannot proceed" wants `expire_on_commit=False`. "Lazy load operation of attribute" wants eager loading. Applying the wrong one is the classic wasted afternoon, and the two are covered in full above.
+
+**`InvalidRequestError: The unique() method must be invoked`** — you used `joinedload` on a collection. The `OUTER JOIN` really does return one row per child, so add `.unique()`. You do not need it for a many-to-one.
+
+**SQL appearing where you wrote no query** — autoflush. See the section above; it is nearly always what you want.
+
+**`expected-output/<name>.txt differs from this run`** — you changed something in `examples/`. If that was intentional, re-capture; then read the diff before committing it, because a changed statement count is exactly the regression this lab exists to catch.
+
+The lab's `troubleshooting.md` covers all of these and more, organised by cause: the environment, the session, the query count, and the tests.
+
+### Common mistakes
+
+**Assuming `add()` writes.** It records an intention. Nothing is sent, and the primary key stays `None` until a flush. The counter says zero, and the counter is right.
+
+**Confusing flush with commit.** A flush sends SQL inside an open transaction; a commit ends the transaction. A constraint violation raised by an autoflush, at a line containing no database call, is the classic confusing consequence.
+
+**Attaching `selectinload` to the wrong thing.** It belongs on the query that loads the parents, not on the loop that reads them. If you attach it and still see 1 + N, check that you are counting around the loop rather than around the query — the lazy loads happen when the attribute is touched, which is later than it looks.
+
+**Reaching for `joinedload` because one statement beats two.** Sometimes right, often not. On a collection it duplicates every parent column per child — 24 rows to build 6 objects in this lab's data — and requires `.unique()`. Many-to-one, yes; one-to-many, usually `selectinload`.
+
+**Flushing inside a loop.** 500 executions instead of 1, for no benefit whatsoever. This is the single most expensive habit in the lesson and the cheapest to fix.
+
+**Loading objects in order to change them.** The ORM must `SELECT` before it can `UPDATE`, because it changes objects. A thousand matching rows is a thousand Python objects you did not want. Use Core's `update()` — and know that your Python-level defaults and validators will not run, which is the price.
+
+**Testing with a stopwatch.** A duration is a flake waiting for a loaded machine and it names no cause. A count is deterministic, identical everywhere, and it names the defect: "this loop issued seven queries where two would do" is a bug report. This is the most transferable habit in the lab, and it applies far beyond ORMs.
+
+**Keeping one global Session.** It never releases its identity map, holds a transaction open indefinitely, and is not thread-safe. One Session per unit of intent — in a server, per request.
+
+## Practice assignment
+
+Take the Day 91 library schema you designed and map it with SQLAlchemy 2.0, then hold yourself to the standard this lab sets.
+
+1. **Map at least five tables**, including the self-referencing category tree and the `book_authors` junction that carries `author_position`. That junction is the interesting one: because it has an attribute of its own, it must be a **mapped class**, not a `secondary` table. Write down why, in a comment, in your own words.
+
+2. **Reproduce three Day 91 report queries** through the ORM. For each, print the emitted SQL beside the Python that produced it, and compare it with the SQL you wrote by hand in Week 13. Where they differ, decide which you prefer and say why. At least one of the three should be a query you conclude is better written as raw SQL through `text()` with bound parameters — and if you cannot find one, look at the recursive CTE.
+
+3. **Write a query-counting test for each report.** Assert an exact number. Then deliberately introduce an N+1 by removing an eager load, confirm the test fails and names the count, and put it back. A test you have not seen fail is a test you do not know works.
+
+4. **Provoke both forms of `DetachedInstanceError`** in your own code, on purpose, and fix each with the correct remedy. Write two sentences distinguishing them.
+
+5. **Do one bulk operation twice**, through the ORM and through Core, and record both the cursor executions and the objects constructed. Report what you measured, not what you expected — and if your numbers disagree with this lesson's, say which SQLAlchemy version produced them. This lesson's own bulk finding contradicted the brief it was written from, and that is how it should have gone.
+
+The deliverable is a directory with your models, your queries, your tests, and a short `FINDINGS.md` recording every count you measured and every place your measurement disagreed with what you expected.
+
+## Extension challenge
+
+**Give the toy ORM dirty tracking.** It can insert and select; it cannot write a change back. Record each attribute's loaded value, compare on flush, and emit an `UPDATE` naming only the columns that actually changed. You will immediately meet the design questions SQLAlchemy answers: do you compare values or intercept assignment? What about a mutable list attribute that was modified in place rather than replaced? This single exercise explains more about the real library than any amount of reading, because every awkward case you hit is a case SQLAlchemy had to decide too.
+
+**Then give it a relationship.** A `loans` attribute on the toy `Member` that issues its own `SELECT` on first access. Watch your own N+1 appear in your own statement log. Then implement an eager version — one extra query with an `IN` clause — and you will have built `selectinload`.
+
+**Measure `joinedload`'s real cost.** Give one member two hundred loans and compare the bytes returned by `joinedload` against `selectinload` for the same result set. The row multiplication this lesson describes becomes a number you measured rather than a claim you accepted.
+
+**Take the habit somewhere else.** Wrap a `QueryCounter` around any code from Days 90 or 91 and assert on the number. The library is not the transferable part — the instinct to ask "how many round trips did that take?" before asking "how long did it take?" is.
+
+---
+
+**The AI thread.** Nearly every Python service that stores anything reaches for SQLAlchemy, and in AI work that includes almost all of the infrastructure around the model rather than the model itself: the service that logs each inference request and its latency, the experiment tracker that records which hyperparameters produced which metric, the evaluation harness that stores a thousand model outputs against a thousand references, the feature store, the annotation tool, the queue of documents waiting to be embedded. None of that is glamorous and all of it is on the critical path, because a training run that is starved of data is a training run that is wasting a GPU.
+
+The specific failure is worth naming exactly, because it is common and it is invisible. A `Dataset` whose `__getitem__` fetches a record and then touches a relationship — the sample's annotations, its source document, its label set — issues one query per item. A batch of thirty-two is thirty-three round trips. An epoch over ten thousand examples is ten thousand and one. The symptom is not an error; it is a GPU at forty per cent utilisation and a week spent profiling the model, the data loader workers and the disk, while the actual cause sits in a line that reads `sample.annotations` and looks like an attribute access. Nobody profiles an attribute access.
+
+Understanding the emitted query is what stops that, and the fix is one `selectinload` — but only if somebody knows to look. That is why this day insists on the instrument rather than the library. The habit of asking "how many statements did that send?", and of writing a test that asserts the answer, generalises to every ORM in every language and to a good deal that is not an ORM at all. It is the same instinct that Day 89 built with `EXPLAIN QUERY PLAN`, pointed at a different layer: measure the thing that is invisible, before it costs you a week.
