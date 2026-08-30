@@ -5,8 +5,32 @@ set -u
 LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$LAB_DIR"
 
-PYTHON="${PYTHON:-../../../../.venv-tools/bin/python3}"
-PYTEST="${PYTEST:-../../../../.venv-tools/bin/pytest}"
+# Resolve the interpreter rather than hard-coding one. The repository's
+# .venv-tools is gitignored, so pointing straight at it made this lab
+# unrunnable for anyone who cloned the public repository. Order: an explicit
+# override, then a lab-local .venv, then the repo tools venv if it happens to
+# exist, then whatever is on PATH.
+resolve_tool() {
+  tool="$1"
+  override="$2"
+  if [ -n "${override}" ] && [ -x "${override}" ]; then echo "${override}"; return 0; fi
+  for candidate in ".venv/bin/${tool}" "../../../../.venv-tools/bin/${tool}"; do
+    if [ -x "${candidate}" ]; then echo "${candidate}"; return 0; fi
+  done
+  if command -v "${tool}" >/dev/null 2>&1; then command -v "${tool}"; return 0; fi
+  return 1
+}
+
+PYTHON="$(resolve_tool python3 "${PYTHON:-}")" || {
+  echo "FAIL: python3 not found. Create the lab environment with:" >&2
+  echo "  python3 -m venv .venv && .venv/bin/pip install -r requirements/requirements.txt" >&2
+  exit 1
+}
+PYTEST="$(resolve_tool pytest "${PYTEST:-}")" || {
+  echo "FAIL: pytest not found. Create the lab environment with:" >&2
+  echo "  python3 -m venv .venv && .venv/bin/pip install -r requirements/requirements.txt" >&2
+  exit 1
+}
 
 CHECKS=0
 FAILURES=0
