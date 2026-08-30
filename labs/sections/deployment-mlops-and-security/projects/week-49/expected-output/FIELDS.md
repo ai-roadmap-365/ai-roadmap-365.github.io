@@ -1,0 +1,3 @@
+# Measured Values
+- `telemetry_queries`: 12
+- `spend_tracked_usd`: 0.142

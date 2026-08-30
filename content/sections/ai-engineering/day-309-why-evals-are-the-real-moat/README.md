@@ -1,0 +1,20 @@
+# Content Directory: Day 309 -- Why Evals Are the Real Moat
+
+## What this directory contains
+- `index.mdx`: Complete lesson text on Why Evals Are the Real Moat.
+- `lesson.yml`: Metadata and learning objectives.
+- `quiz.yml`: 5 comprehensive assessment questions.
+- `glossary.yml`: Core terminology definitions.
+- `sources.yml`: Verified academic and production references.
+- `visuals.yml`: Visual declarations.
+- `assets/`: Accessible SVG diagrams.
+
+## How this lesson is rendered
+Rendered into `/day-309-why-evals-are-the-real-moat/` and compiled for offline documentation.
+
+## Related directories
+- [Lab Directory](../../../../labs/sections/ai-engineering/day-309-why-evals-are-the-real-moat/README.md)
+
+## Editing rules
+- No unescaped curly braces in prose.
+- Preserve all 16 H2 and 4 H3 headings.

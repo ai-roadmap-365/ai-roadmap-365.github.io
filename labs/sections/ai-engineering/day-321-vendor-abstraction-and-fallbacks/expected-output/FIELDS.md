@@ -1,0 +1,3 @@
+# Measured Values
+- `providers_registered`: 3
+- `failovers_handled`: 3

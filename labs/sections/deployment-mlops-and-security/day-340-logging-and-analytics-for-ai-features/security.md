@@ -1,0 +1,1 @@
+# Security - Day 340\nLogging engines enforce synchronous in-memory PII sanitization before persistent writes.\n

@@ -2,7 +2,7 @@
 
 > GENERATED — do not edit by hand. Run `npm run generate:section-nav`.
 
-The complete map of all nine courses: **280 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
+The complete map of all nine courses: **322 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
 
 <details>
 <summary><h3>Course01 · Computing Foundations — 42/42 complete</h3></summary>
@@ -521,7 +521,7 @@ Neural networks from first principles to transformers: build them, train them, d
 </details>
 
 <details>
-<summary><h3>Course06 · LLMs and Generative AI — 42/49 complete</h3></summary>
+<summary><h3>Course06 · LLMs and Generative AI — 49/49 complete</h3></summary>
 
 Large language models as a working material: how they are made, how to prompt and call them, how to ground them with retrieval, customize them, and go multimodal.
 
@@ -610,39 +610,39 @@ Large language models as a working material: how they are made, how to prompt an
 
 </details>
 <details>
-<summary>Days 281-287 · Multimodal and Generative Media — 0/7</summary>
+<summary>Days 281-287 · Multimodal and Generative Media — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 281 | How Diffusion Models Generate Images | — | — | planned |
-| Day 282 | Image Generation in Practice | — | — | planned |
-| Day 283 | Speech: Recognition and Synthesis | — | — | planned |
-| Day 284 | Video and Music Generation | — | — | planned |
-| Day 285 | Multimodal Models | — | — | planned |
-| Day 286 | Generative AI Ethics and Copyright | — | — | planned |
-| Day 287 | Section Project: A Multimodal Application | — | — | planned |
+| Day 281 | [How Diffusion Models Generate Images](content/sections/llms-and-generative-ai/day-281-how-diffusion-models-generate-images/) | [lab](labs/sections/llms-and-generative-ai/day-281-how-diffusion-models-generate-images/) | [blog](https://ai-roadmap-365.github.io/day-281-how-diffusion-models-generate-images) | complete |
+| Day 282 | [Image Generation in Practice](content/sections/llms-and-generative-ai/day-282-image-generation-in-practice/) | [lab](labs/sections/llms-and-generative-ai/day-282-image-generation-in-practice/) | [blog](https://ai-roadmap-365.github.io/day-282-image-generation-in-practice) | complete |
+| Day 283 | [Speech: Recognition and Synthesis](content/sections/llms-and-generative-ai/day-283-speech-recognition-and-synthesis/) | [lab](labs/sections/llms-and-generative-ai/day-283-speech-recognition-and-synthesis/) | [blog](https://ai-roadmap-365.github.io/day-283-speech-recognition-and-synthesis) | complete |
+| Day 284 | [Video and Music Generation](content/sections/llms-and-generative-ai/day-284-video-and-music-generation/) | [lab](labs/sections/llms-and-generative-ai/day-284-video-and-music-generation/) | [blog](https://ai-roadmap-365.github.io/day-284-video-and-music-generation) | complete |
+| Day 285 | [Multimodal Models](content/sections/llms-and-generative-ai/day-285-multimodal-models/) | [lab](labs/sections/llms-and-generative-ai/day-285-multimodal-models/) | [blog](https://ai-roadmap-365.github.io/day-285-multimodal-models) | complete |
+| Day 286 | [Generative AI Ethics and Copyright](content/sections/llms-and-generative-ai/day-286-generative-ai-ethics-and-copyright/) | [lab](labs/sections/llms-and-generative-ai/day-286-generative-ai-ethics-and-copyright/) | [blog](https://ai-roadmap-365.github.io/day-286-generative-ai-ethics-and-copyright) | complete |
+| Day 287 | [Section Project: A Multimodal Application](content/sections/llms-and-generative-ai/day-287-section-project-a-multimodal-application/) | [lab](labs/sections/llms-and-generative-ai/day-287-section-project-a-multimodal-application/) | [blog](https://ai-roadmap-365.github.io/day-287-section-project-a-multimodal-application) | complete |
 
 </details>
 
 </details>
 
 <details>
-<summary><h3>Course07 · AI Engineering: Agents and Applications — 0/42 complete</h3></summary>
+<summary><h3>Course07 · AI Engineering: Agents and Applications — 14/42 complete</h3></summary>
 
 Agents, MCP, AI coding tools, evaluation, and full-stack AI applications — engineering AI systems that hold up in production.
 
 <details>
-<summary>Days 288-294 · AI Agents — 0/7</summary>
+<summary>Days 288-294 · AI Agents — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 288 | What an AI Agent Is | — | — | planned |
-| Day 289 | The Agent Loop: Reason, Act, Observe | — | — | planned |
-| Day 290 | Designing Tools for Agents | — | — | planned |
-| Day 291 | An Agent from Scratch | — | — | planned |
-| Day 292 | Agent Frameworks and When to Use Them | — | — | planned |
-| Day 293 | Multi-Agent Systems | — | — | planned |
-| Day 294 | Building a Research Agent | — | — | planned |
+| Day 288 | [What an AI Agent Is](content/sections/ai-engineering/day-288-what-an-ai-agent-is/) | [lab](labs/sections/ai-engineering/day-288-what-an-ai-agent-is/) | [blog](https://ai-roadmap-365.github.io/day-288-what-an-ai-agent-is) | complete |
+| Day 289 | [The Agent Loop: Reason, Act, Observe](content/sections/ai-engineering/day-289-the-agent-loop-reason-act-observe/) | [lab](labs/sections/ai-engineering/day-289-the-agent-loop-reason-act-observe/) | [blog](https://ai-roadmap-365.github.io/day-289-the-agent-loop-reason-act-observe) | complete |
+| Day 290 | [Designing Tools for Agents](content/sections/ai-engineering/day-290-designing-tools-for-agents/) | [lab](labs/sections/ai-engineering/day-290-designing-tools-for-agents/) | [blog](https://ai-roadmap-365.github.io/day-290-designing-tools-for-agents) | complete |
+| Day 291 | [An Agent from Scratch](content/sections/ai-engineering/day-291-an-agent-from-scratch/) | [lab](labs/sections/ai-engineering/day-291-an-agent-from-scratch/) | [blog](https://ai-roadmap-365.github.io/day-291-an-agent-from-scratch) | complete |
+| Day 292 | [Agent Frameworks and When to Use Them](content/sections/ai-engineering/day-292-agent-frameworks-and-when-to-use/) | [lab](labs/sections/ai-engineering/day-292-agent-frameworks-and-when-to-use/) | [blog](https://ai-roadmap-365.github.io/day-292-agent-frameworks-and-when-to-use) | complete |
+| Day 293 | [Multi-Agent Systems](content/sections/ai-engineering/day-293-multi-agent-systems/) | [lab](labs/sections/ai-engineering/day-293-multi-agent-systems/) | [blog](https://ai-roadmap-365.github.io/day-293-multi-agent-systems) | complete |
+| Day 294 | [Building a Research Agent](content/sections/ai-engineering/day-294-building-a-research-agent/) | [lab](labs/sections/ai-engineering/day-294-building-a-research-agent/) | [blog](https://ai-roadmap-365.github.io/day-294-building-a-research-agent) | complete |
 
 </details>
 <details>
@@ -650,13 +650,13 @@ Agents, MCP, AI coding tools, evaluation, and full-stack AI applications — eng
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 295 | What MCP Is and Why It Exists | — | — | planned |
-| Day 296 | Using MCP Servers | — | — | planned |
-| Day 297 | Building an MCP Server | — | — | planned |
-| Day 298 | MCP Resources and Prompts | — | — | planned |
-| Day 299 | Building an MCP Client | — | — | planned |
-| Day 300 | MCP Security | — | — | planned |
-| Day 301 | Your Personal MCP Server | — | — | planned |
+| Day 295 | [What MCP Is and Why It Exists](content/sections/ai-engineering/day-295-what-mcp-is-and-why-it/) | [lab](labs/sections/ai-engineering/day-295-what-mcp-is-and-why-it/) | [blog](https://ai-roadmap-365.github.io/day-295-what-mcp-is-and-why-it) | planned |
+| Day 296 | [Using MCP Servers](content/sections/ai-engineering/day-296-using-mcp-servers/) | [lab](labs/sections/ai-engineering/day-296-using-mcp-servers/) | [blog](https://ai-roadmap-365.github.io/day-296-using-mcp-servers) | planned |
+| Day 297 | [Building an MCP Server](content/sections/ai-engineering/day-297-building-an-mcp-server/) | [lab](labs/sections/ai-engineering/day-297-building-an-mcp-server/) | [blog](https://ai-roadmap-365.github.io/day-297-building-an-mcp-server) | planned |
+| Day 298 | [MCP Resources and Prompts](content/sections/ai-engineering/day-298-mcp-resources-and-prompts/) | [lab](labs/sections/ai-engineering/day-298-mcp-resources-and-prompts/) | [blog](https://ai-roadmap-365.github.io/day-298-mcp-resources-and-prompts) | planned |
+| Day 299 | [Building an MCP Client](content/sections/ai-engineering/day-299-building-an-mcp-client/) | [lab](labs/sections/ai-engineering/day-299-building-an-mcp-client/) | [blog](https://ai-roadmap-365.github.io/day-299-building-an-mcp-client) | planned |
+| Day 300 | [MCP Security](content/sections/ai-engineering/day-300-mcp-security/) | [lab](labs/sections/ai-engineering/day-300-mcp-security/) | [blog](https://ai-roadmap-365.github.io/day-300-mcp-security) | planned |
+| Day 301 | [Your Personal MCP Server](content/sections/ai-engineering/day-301-your-personal-mcp-server/) | [lab](labs/sections/ai-engineering/day-301-your-personal-mcp-server/) | [blog](https://ai-roadmap-365.github.io/day-301-your-personal-mcp-server) | planned |
 
 </details>
 <details>
@@ -664,27 +664,27 @@ Agents, MCP, AI coding tools, evaluation, and full-stack AI applications — eng
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 302 | The AI Coding Landscape | — | — | planned |
-| Day 303 | Working with a Coding Agent | — | — | planned |
-| Day 304 | Effective Agentic Coding Workflows | — | — | planned |
-| Day 305 | Configuring Agents: Memory, Skills, and Rules | — | — | planned |
-| Day 306 | Reviewing and Trusting AI-Written Code | — | — | planned |
-| Day 307 | Coding Agents in CI and Automation | — | — | planned |
-| Day 308 | Shipping a Feature with an Agent | — | — | planned |
+| Day 302 | [The AI Coding Landscape](content/sections/ai-engineering/day-302-the-ai-coding-landscape/) | [lab](labs/sections/ai-engineering/day-302-the-ai-coding-landscape/) | [blog](https://ai-roadmap-365.github.io/day-302-the-ai-coding-landscape) | planned |
+| Day 303 | [Working with a Coding Agent](content/sections/ai-engineering/day-303-working-with-a-coding-agent/) | [lab](labs/sections/ai-engineering/day-303-working-with-a-coding-agent/) | [blog](https://ai-roadmap-365.github.io/day-303-working-with-a-coding-agent) | planned |
+| Day 304 | [Effective Agentic Coding Workflows](content/sections/ai-engineering/day-304-effective-agentic-coding-workflows/) | [lab](labs/sections/ai-engineering/day-304-effective-agentic-coding-workflows/) | [blog](https://ai-roadmap-365.github.io/day-304-effective-agentic-coding-workflows) | planned |
+| Day 305 | [Configuring Agents: Memory, Skills, and Rules](content/sections/ai-engineering/day-305-configuring-agents-memory-skills-and-rules/) | [lab](labs/sections/ai-engineering/day-305-configuring-agents-memory-skills-and-rules/) | [blog](https://ai-roadmap-365.github.io/day-305-configuring-agents-memory-skills-and-rules) | planned |
+| Day 306 | [Reviewing and Trusting AI-Written Code](content/sections/ai-engineering/day-306-reviewing-and-trusting-ai-written-code/) | [lab](labs/sections/ai-engineering/day-306-reviewing-and-trusting-ai-written-code/) | [blog](https://ai-roadmap-365.github.io/day-306-reviewing-and-trusting-ai-written-code) | planned |
+| Day 307 | [Coding Agents in CI and Automation](content/sections/ai-engineering/day-307-coding-agents-in-ci-and-automation/) | [lab](labs/sections/ai-engineering/day-307-coding-agents-in-ci-and-automation/) | [blog](https://ai-roadmap-365.github.io/day-307-coding-agents-in-ci-and-automation) | planned |
+| Day 308 | [Shipping a Feature with an Agent](content/sections/ai-engineering/day-308-shipping-a-feature-with-an-agent/) | [lab](labs/sections/ai-engineering/day-308-shipping-a-feature-with-an-agent/) | [blog](https://ai-roadmap-365.github.io/day-308-shipping-a-feature-with-an-agent) | planned |
 
 </details>
 <details>
-<summary>Days 309-315 · Evaluation and Reliability — 0/7</summary>
+<summary>Days 309-315 · Evaluation and Reliability — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 309 | Why Evals Are the Real Moat | — | — | planned |
-| Day 310 | Building Evaluation Datasets | — | — | planned |
-| Day 311 | LLM-as-Judge | — | — | planned |
-| Day 312 | Regression Testing for Prompts and Models | — | — | planned |
-| Day 313 | Guardrails and Content Moderation | — | — | planned |
-| Day 314 | Observability and Tracing for AI | — | — | planned |
-| Day 315 | An Evaluation Harness | — | — | planned |
+| Day 309 | [Why Evals Are the Real Moat](content/sections/ai-engineering/day-309-why-evals-are-the-real-moat/) | [lab](labs/sections/ai-engineering/day-309-why-evals-are-the-real-moat/) | [blog](https://ai-roadmap-365.github.io/day-309-why-evals-are-the-real-moat) | complete |
+| Day 310 | [Building Evaluation Datasets](content/sections/ai-engineering/day-310-building-evaluation-datasets/) | [lab](labs/sections/ai-engineering/day-310-building-evaluation-datasets/) | [blog](https://ai-roadmap-365.github.io/day-310-building-evaluation-datasets) | complete |
+| Day 311 | [LLM-as-Judge](content/sections/ai-engineering/day-311-llm-as-judge/) | [lab](labs/sections/ai-engineering/day-311-llm-as-judge/) | [blog](https://ai-roadmap-365.github.io/day-311-llm-as-judge) | complete |
+| Day 312 | [Regression Testing for Prompts and Models](content/sections/ai-engineering/day-312-regression-testing-for-prompts-and-models/) | [lab](labs/sections/ai-engineering/day-312-regression-testing-for-prompts-and-models/) | [blog](https://ai-roadmap-365.github.io/day-312-regression-testing-for-prompts-and-models) | complete |
+| Day 313 | [Guardrails and Content Moderation](content/sections/ai-engineering/day-313-guardrails-and-content-moderation/) | [lab](labs/sections/ai-engineering/day-313-guardrails-and-content-moderation/) | [blog](https://ai-roadmap-365.github.io/day-313-guardrails-and-content-moderation) | complete |
+| Day 314 | [Observability and Tracing for AI](content/sections/ai-engineering/day-314-observability-and-tracing-for-ai/) | [lab](labs/sections/ai-engineering/day-314-observability-and-tracing-for-ai/) | [blog](https://ai-roadmap-365.github.io/day-314-observability-and-tracing-for-ai) | complete |
+| Day 315 | [An Evaluation Harness](content/sections/ai-engineering/day-315-an-evaluation-harness/) | [lab](labs/sections/ai-engineering/day-315-an-evaluation-harness/) | [blog](https://ai-roadmap-365.github.io/day-315-an-evaluation-harness) | complete |
 
 </details>
 <details>
@@ -692,13 +692,13 @@ Agents, MCP, AI coding tools, evaluation, and full-stack AI applications — eng
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 316 | Architecture of an AI Product | — | — | planned |
-| Day 317 | Backend Patterns for LLM Apps | — | — | planned |
-| Day 318 | Chat UX and Streaming Frontends | — | — | planned |
-| Day 319 | Auth, Quotas, and Billing | — | — | planned |
-| Day 320 | Latency and Caching | — | — | planned |
-| Day 321 | Vendor Abstraction and Fallbacks | — | — | planned |
-| Day 322 | A Full-Stack AI Application | — | — | planned |
+| Day 316 | [Architecture of an AI Product](content/sections/ai-engineering/day-316-architecture-of-an-ai-product/) | [lab](labs/sections/ai-engineering/day-316-architecture-of-an-ai-product/) | [blog](https://ai-roadmap-365.github.io/day-316-architecture-of-an-ai-product) | planned |
+| Day 317 | [Backend Patterns for LLM Apps](content/sections/ai-engineering/day-317-backend-patterns-for-llm-apps/) | [lab](labs/sections/ai-engineering/day-317-backend-patterns-for-llm-apps/) | [blog](https://ai-roadmap-365.github.io/day-317-backend-patterns-for-llm-apps) | planned |
+| Day 318 | [Chat UX and Streaming Frontends](content/sections/ai-engineering/day-318-chat-ux-and-streaming-frontends/) | [lab](labs/sections/ai-engineering/day-318-chat-ux-and-streaming-frontends/) | [blog](https://ai-roadmap-365.github.io/day-318-chat-ux-and-streaming-frontends) | planned |
+| Day 319 | [Auth, Quotas, and Billing](content/sections/ai-engineering/day-319-auth-quotas-and-billing/) | [lab](labs/sections/ai-engineering/day-319-auth-quotas-and-billing/) | [blog](https://ai-roadmap-365.github.io/day-319-auth-quotas-and-billing) | planned |
+| Day 320 | [Latency and Caching](content/sections/ai-engineering/day-320-latency-and-caching/) | [lab](labs/sections/ai-engineering/day-320-latency-and-caching/) | [blog](https://ai-roadmap-365.github.io/day-320-latency-and-caching) | planned |
+| Day 321 | [Vendor Abstraction and Fallbacks](content/sections/ai-engineering/day-321-vendor-abstraction-and-fallbacks/) | [lab](labs/sections/ai-engineering/day-321-vendor-abstraction-and-fallbacks/) | [blog](https://ai-roadmap-365.github.io/day-321-vendor-abstraction-and-fallbacks) | planned |
+| Day 322 | [A Full-Stack AI Application](content/sections/ai-engineering/day-322-a-full-stack-ai-application/) | [lab](labs/sections/ai-engineering/day-322-a-full-stack-ai-application/) | [blog](https://ai-roadmap-365.github.io/day-322-a-full-stack-ai-application) | planned |
 
 </details>
 <details>
@@ -719,50 +719,50 @@ Agents, MCP, AI coding tools, evaluation, and full-stack AI applications — eng
 </details>
 
 <details>
-<summary><h3>Course08 · Deployment, MLOps, and Security — 0/21 complete</h3></summary>
+<summary><h3>Course08 · Deployment, MLOps, and Security — 21/21 complete</h3></summary>
 
 Containers, cloud, CI/CD, monitoring, and the security discipline AI systems demand in the real world.
 
 <details>
-<summary>Days 330-336 · Containers and Cloud — 0/7</summary>
+<summary>Days 330-336 · Containers and Cloud — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 330 | Docker Fundamentals | — | — | planned |
-| Day 331 | Dockerizing an AI Application | — | — | planned |
-| Day 332 | Docker Compose for Multi-Service Apps | — | — | planned |
-| Day 333 | Kubernetes Concepts | — | — | planned |
-| Day 334 | Cloud Options and Free Tiers | — | — | planned |
-| Day 335 | CI/CD with GitHub Actions | — | — | planned |
-| Day 336 | A Containerized AI Deployment | — | — | planned |
+| Day 330 | [Docker Fundamentals](content/sections/deployment-mlops-and-security/day-330-docker-fundamentals/) | [lab](labs/sections/deployment-mlops-and-security/day-330-docker-fundamentals/) | [blog](https://ai-roadmap-365.github.io/day-330-docker-fundamentals) | complete |
+| Day 331 | [Dockerizing an AI Application](content/sections/deployment-mlops-and-security/day-331-dockerizing-an-ai-application/) | [lab](labs/sections/deployment-mlops-and-security/day-331-dockerizing-an-ai-application/) | [blog](https://ai-roadmap-365.github.io/day-331-dockerizing-an-ai-application) | complete |
+| Day 332 | [Docker Compose for Multi-Service Apps](content/sections/deployment-mlops-and-security/day-332-docker-compose-for-multi-service-apps/) | [lab](labs/sections/deployment-mlops-and-security/day-332-docker-compose-for-multi-service-apps/) | [blog](https://ai-roadmap-365.github.io/day-332-docker-compose-for-multi-service-apps) | complete |
+| Day 333 | [Kubernetes Concepts](content/sections/deployment-mlops-and-security/day-333-kubernetes-concepts/) | [lab](labs/sections/deployment-mlops-and-security/day-333-kubernetes-concepts/) | [blog](https://ai-roadmap-365.github.io/day-333-kubernetes-concepts) | complete |
+| Day 334 | [Cloud Options and Free Tiers](content/sections/deployment-mlops-and-security/day-334-cloud-options-and-free-tiers/) | [lab](labs/sections/deployment-mlops-and-security/day-334-cloud-options-and-free-tiers/) | [blog](https://ai-roadmap-365.github.io/day-334-cloud-options-and-free-tiers) | complete |
+| Day 335 | [CI/CD with GitHub Actions](content/sections/deployment-mlops-and-security/day-335-ci-cd-with-github-actions/) | [lab](labs/sections/deployment-mlops-and-security/day-335-ci-cd-with-github-actions/) | [blog](https://ai-roadmap-365.github.io/day-335-ci-cd-with-github-actions) | complete |
+| Day 336 | [A Containerized AI Deployment](content/sections/deployment-mlops-and-security/day-336-a-containerized-ai-deployment/) | [lab](labs/sections/deployment-mlops-and-security/day-336-a-containerized-ai-deployment/) | [blog](https://ai-roadmap-365.github.io/day-336-a-containerized-ai-deployment) | complete |
 
 </details>
 <details>
-<summary>Days 337-343 · Operating AI in Production — 0/7</summary>
+<summary>Days 337-343 · Operating AI in Production — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 337 | Deploying to a Cloud Service | — | — | planned |
-| Day 338 | GPU Serving and Inference Infrastructure | — | — | planned |
-| Day 339 | Monitoring and Alerting | — | — | planned |
-| Day 340 | Logging and Analytics for AI Features | — | — | planned |
-| Day 341 | Rollouts, A/B Tests, and Feature Flags | — | — | planned |
-| Day 342 | Incidents and Rollbacks | — | — | planned |
-| Day 343 | A Monitored Production Deployment | — | — | planned |
+| Day 337 | [Deploying to a Cloud Service](content/sections/deployment-mlops-and-security/day-337-deploying-to-a-cloud-service/) | [lab](labs/sections/deployment-mlops-and-security/day-337-deploying-to-a-cloud-service/) | [blog](https://ai-roadmap-365.github.io/day-337-deploying-to-a-cloud-service) | complete |
+| Day 338 | [GPU Serving and Inference Infrastructure](content/sections/deployment-mlops-and-security/day-338-gpu-serving-and-inference-infrastructure/) | [lab](labs/sections/deployment-mlops-and-security/day-338-gpu-serving-and-inference-infrastructure/) | [blog](https://ai-roadmap-365.github.io/day-338-gpu-serving-and-inference-infrastructure) | complete |
+| Day 339 | [Monitoring and Alerting](content/sections/deployment-mlops-and-security/day-339-monitoring-and-alerting/) | [lab](labs/sections/deployment-mlops-and-security/day-339-monitoring-and-alerting/) | [blog](https://ai-roadmap-365.github.io/day-339-monitoring-and-alerting) | complete |
+| Day 340 | [Logging and Analytics for AI Features](content/sections/deployment-mlops-and-security/day-340-logging-and-analytics-for-ai-features/) | [lab](labs/sections/deployment-mlops-and-security/day-340-logging-and-analytics-for-ai-features/) | [blog](https://ai-roadmap-365.github.io/day-340-logging-and-analytics-for-ai-features) | complete |
+| Day 341 | [Rollouts, A/B Tests, and Feature Flags](content/sections/deployment-mlops-and-security/day-341-rollouts-ab-tests-and-feature-flags/) | [lab](labs/sections/deployment-mlops-and-security/day-341-rollouts-ab-tests-and-feature-flags/) | [blog](https://ai-roadmap-365.github.io/day-341-rollouts-ab-tests-and-feature-flags) | complete |
+| Day 342 | [Incidents and Rollbacks](content/sections/deployment-mlops-and-security/day-342-incidents-and-rollbacks/) | [lab](labs/sections/deployment-mlops-and-security/day-342-incidents-and-rollbacks/) | [blog](https://ai-roadmap-365.github.io/day-342-incidents-and-rollbacks) | complete |
+| Day 343 | [A Monitored Production Deployment](content/sections/deployment-mlops-and-security/day-343-a-monitored-production-deployment/) | [lab](labs/sections/deployment-mlops-and-security/day-343-a-monitored-production-deployment/) | [blog](https://ai-roadmap-365.github.io/day-343-a-monitored-production-deployment) | complete |
 
 </details>
 <details>
-<summary>Days 344-350 · AI Security and Privacy — 0/7</summary>
+<summary>Days 344-350 · AI Security and Privacy — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 344 | Threat Modeling AI Systems | — | — | planned |
-| Day 345 | Defending Against Prompt Injection | — | — | planned |
-| Day 346 | Data Privacy and PII Handling | — | — | planned |
-| Day 347 | Model and Supply Chain Security | — | — | planned |
-| Day 348 | AI Governance and Regulation | — | — | planned |
-| Day 349 | Red Teaming Your Own Systems | — | — | planned |
-| Day 350 | Section Project: A Security Review | — | — | planned |
+| Day 344 | [Threat Modeling AI Systems](content/sections/deployment-mlops-and-security/day-344-threat-modeling-ai-systems/) | [lab](labs/sections/deployment-mlops-and-security/day-344-threat-modeling-ai-systems/) | [blog](https://ai-roadmap-365.github.io/day-344-threat-modeling-ai-systems) | complete |
+| Day 345 | [Defending Against Prompt Injection](content/sections/deployment-mlops-and-security/day-345-defending-against-prompt-injection/) | [lab](labs/sections/deployment-mlops-and-security/day-345-defending-against-prompt-injection/) | [blog](https://ai-roadmap-365.github.io/day-345-defending-against-prompt-injection) | complete |
+| Day 346 | [Data Privacy and PII Handling](content/sections/deployment-mlops-and-security/day-346-data-privacy-and-pii-handling/) | [lab](labs/sections/deployment-mlops-and-security/day-346-data-privacy-and-pii-handling/) | [blog](https://ai-roadmap-365.github.io/day-346-data-privacy-and-pii-handling) | complete |
+| Day 347 | [Model and Supply Chain Security](content/sections/deployment-mlops-and-security/day-347-model-and-supply-chain-security/) | [lab](labs/sections/deployment-mlops-and-security/day-347-model-and-supply-chain-security/) | [blog](https://ai-roadmap-365.github.io/day-347-model-and-supply-chain-security) | complete |
+| Day 348 | [AI Governance and Regulation](content/sections/deployment-mlops-and-security/day-348-ai-governance-and-regulation/) | [lab](labs/sections/deployment-mlops-and-security/day-348-ai-governance-and-regulation/) | [blog](https://ai-roadmap-365.github.io/day-348-ai-governance-and-regulation) | complete |
+| Day 349 | [Red Teaming Your Own Systems](content/sections/deployment-mlops-and-security/day-349-red-teaming-your-own-systems/) | [lab](labs/sections/deployment-mlops-and-security/day-349-red-teaming-your-own-systems/) | [blog](https://ai-roadmap-365.github.io/day-349-red-teaming-your-own-systems) | complete |
+| Day 350 | [Section Project: A Security Review](content/sections/deployment-mlops-and-security/day-350-section-project-a-security-review/) | [lab](labs/sections/deployment-mlops-and-security/day-350-section-project-a-security-review/) | [blog](https://ai-roadmap-365.github.io/day-350-section-project-a-security-review) | complete |
 
 </details>
 

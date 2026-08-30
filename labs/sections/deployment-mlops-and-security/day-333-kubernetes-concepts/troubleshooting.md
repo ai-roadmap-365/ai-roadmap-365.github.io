@@ -1,0 +1,1 @@
+# Troubleshooting - Day 333\nEnsure float tensors are cast to float32 before numpy array operations.\n

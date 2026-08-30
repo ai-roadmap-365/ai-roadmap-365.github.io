@@ -1,0 +1,1 @@
+# Security - Day 330\nNon-root container execution (UID 10001) enforced across all build stages.\n

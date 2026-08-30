@@ -1,0 +1,3 @@
+# Measured Values
+- `repo_files_indexed`: 1
+- `patches_applied`: 1

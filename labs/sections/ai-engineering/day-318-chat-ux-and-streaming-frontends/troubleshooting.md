@@ -1,0 +1,1 @@
+# Troubleshooting - Day 318\nCheck distance from bottom threshold to ensure smooth auto-scrolling.\n

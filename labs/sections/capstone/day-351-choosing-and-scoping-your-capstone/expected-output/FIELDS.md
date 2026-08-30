@@ -1,0 +1,3 @@
+# Measured Values
+- `feasibility_score`: 100.0
+- `pillars_validated`: 6

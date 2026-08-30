@@ -1,0 +1,3 @@
+# Measured Values
+- `workers_active`: 2
+- `requests_routed`: 25

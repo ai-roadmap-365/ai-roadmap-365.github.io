@@ -1,0 +1,3 @@
+# Measured Values
+- `registered_tools`: 1
+- `result_status`: success

@@ -4,7 +4,7 @@
 
 Large language models as a working material: how they are made, how to prompt and call them, how to ground them with retrieval, customize them, and go multimodal.
 
-**42 of 49 lessons written.** Expand a subsection below to see its days.
+**49 of 49 lessons written.** Expand a subsection below to see its days.
 
 <details>
 <summary><strong>Days 239-245 · The LLM Landscape</strong> — 7/7 complete</summary>
@@ -108,18 +108,18 @@ Large language models as a working material: how they are made, how to prompt an
 
 </details>
 
-<details open>
-<summary><strong>Days 281-287 · Multimodal and Generative Media</strong> — 0/7 complete</summary>
+<details>
+<summary><strong>Days 281-287 · Multimodal and Generative Media</strong> — 7/7 complete</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 281 | How Diffusion Models Generate Images | — | — | planned |
-| Day 282 | Image Generation in Practice | — | — | planned |
-| Day 283 | Speech: Recognition and Synthesis | — | — | planned |
-| Day 284 | Video and Music Generation | — | — | planned |
-| Day 285 | Multimodal Models | — | — | planned |
-| Day 286 | Generative AI Ethics and Copyright | — | — | planned |
-| Day 287 | Section Project: A Multimodal Application | — | — | planned |
+| Day 281 | [How Diffusion Models Generate Images](./day-281-how-diffusion-models-generate-images/) | [lab](../../../labs/sections/llms-and-generative-ai/day-281-how-diffusion-models-generate-images/) | [blog](https://ai-roadmap-365.github.io/day-281-how-diffusion-models-generate-images) | complete |
+| Day 282 | [Image Generation in Practice](./day-282-image-generation-in-practice/) | [lab](../../../labs/sections/llms-and-generative-ai/day-282-image-generation-in-practice/) | [blog](https://ai-roadmap-365.github.io/day-282-image-generation-in-practice) | complete |
+| Day 283 | [Speech: Recognition and Synthesis](./day-283-speech-recognition-and-synthesis/) | [lab](../../../labs/sections/llms-and-generative-ai/day-283-speech-recognition-and-synthesis/) | [blog](https://ai-roadmap-365.github.io/day-283-speech-recognition-and-synthesis) | complete |
+| Day 284 | [Video and Music Generation](./day-284-video-and-music-generation/) | [lab](../../../labs/sections/llms-and-generative-ai/day-284-video-and-music-generation/) | [blog](https://ai-roadmap-365.github.io/day-284-video-and-music-generation) | complete |
+| Day 285 | [Multimodal Models](./day-285-multimodal-models/) | [lab](../../../labs/sections/llms-and-generative-ai/day-285-multimodal-models/) | [blog](https://ai-roadmap-365.github.io/day-285-multimodal-models) | complete |
+| Day 286 | [Generative AI Ethics and Copyright](./day-286-generative-ai-ethics-and-copyright/) | [lab](../../../labs/sections/llms-and-generative-ai/day-286-generative-ai-ethics-and-copyright/) | [blog](https://ai-roadmap-365.github.io/day-286-generative-ai-ethics-and-copyright) | complete |
+| Day 287 | [Section Project: A Multimodal Application](./day-287-section-project-a-multimodal-application/) | [lab](../../../labs/sections/llms-and-generative-ai/day-287-section-project-a-multimodal-application/) | [blog](https://ai-roadmap-365.github.io/day-287-section-project-a-multimodal-application) | complete |
 
 **Project:** Section Project: Multimodal App — Build an application combining at least two modalities — for example, speech in, grounded text out, generated image alongside.
 

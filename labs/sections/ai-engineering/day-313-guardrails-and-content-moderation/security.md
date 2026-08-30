@@ -1,0 +1,1 @@
+# Security - Day 313\nGuardrails execute input redaction before network transmission to prevent PII exposure.\n

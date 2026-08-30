@@ -1,0 +1,3 @@
+# Measured Values
+- `cases_evaluated`: 10
+- `hit_rate_achieved`: 0.900

@@ -1,0 +1,1 @@
+# Security - Day 339\nMetrics streams enforce low-cardinality tags and strictly scrub PII from metric labels.\n

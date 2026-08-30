@@ -1,0 +1,1 @@
+# Troubleshooting - Day 347\nEnsure files are read in binary mode when calculating SHA256 hashes.\n

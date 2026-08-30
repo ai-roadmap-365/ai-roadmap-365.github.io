@@ -1,0 +1,3 @@
+# Measured Values
+- `spans_created`: 4
+- `traces_completed`: 1

@@ -1,0 +1,3 @@
+# Measured Values
+- `queries_routed`: 12
+- `hyde_generated`: 4

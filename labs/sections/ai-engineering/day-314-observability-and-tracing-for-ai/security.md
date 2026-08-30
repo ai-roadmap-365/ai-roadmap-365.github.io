@@ -1,0 +1,1 @@
+# Security - Day 314\nDo not persist unmasked customer PII or raw authentication tokens in trace spans.\n

@@ -1,0 +1,1 @@
+# Security - Day 333\nEdge quantized models execute 100% offline in local memory sandbox.\n

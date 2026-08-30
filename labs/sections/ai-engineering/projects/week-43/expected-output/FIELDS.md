@@ -1,0 +1,4 @@
+# Measured Values
+- `tools_count`: 3
+- `resources_count`: 1
+- `prompts_count`: 1

@@ -1,0 +1,3 @@
+# Measured Values
+- `security_pillars_audited`: 6
+- `attack_success_rate`: 0.0

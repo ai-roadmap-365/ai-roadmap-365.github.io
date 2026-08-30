@@ -1,0 +1,92 @@
+# Day 307 Lab: Coding Agents in CI and Automation
+
+## Lesson
+<!-- generated-links:start — do not edit by hand; regenerate with `npm run update:links` -->
+- **Lesson title:** Coding Agents in CI and Automation
+- **Day number:** 307 of 365
+- **Lesson article:** https://ai-roadmap-365.github.io/day-307-coding-agents-in-ci-and-automation
+- **Lab files:** everything you need is in [this directory](./) — follow “How to run” below.
+- **Browse the course locally:** from the repository root, this lab also appears in the course website at `/labs/day-307-coding-agents-in-ci-and-automation` when the site is running.
+<!-- generated-links:end -->
+
+## Purpose
+Build a Headless CI Agent Runner & PR Generator in Python that manages isolated git branches, executes automated test suites, and synthesizes structured pull request descriptions.
+
+## Learning objectives
+- Programmatically manage git branches and workspace state.
+- Execute automated test harnesses and capture pass/fail telemetry.
+- Synthesize enterprise pull request markdown descriptions.
+- Format verification evidence logs for maintainer review.
+
+## Prerequisites
+- Python 3.10+ installed
+- pytest installed
+- git installed
+
+## Supported operating systems
+- macOS, Linux, Windows WSL2
+
+## Hardware requirements
+- Standard CPU, 512MB RAM
+
+## Required software
+- Python 3.10+, pytest, git
+
+## Free and open-source options
+- Python Standard Library, Pytest, Git
+
+## Installation
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements/requirements.txt
+```
+
+## File structure
+- `starter/ci_agent_runner.py`: Starter implementation skeleton
+- `examples/ci_agent_runner.py`: Verified reference implementation
+- `tests/test_ci_agent.py`: Test suite
+- `expected-output/`: Captured execution logs
+
+## How to run
+```bash
+python3 examples/ci_agent_runner.py
+```
+
+## What the commands do
+- Executes test command, captures output, and compiles pull request summary.
+
+## Expected output
+```text
+All 5 checks passed 100% with zero errors.
+```
+
+## Validation steps
+Run test runner:
+```bash
+bash tests/run_tests.sh
+```
+
+## Tests
+The test suite validates:
+- Test execution and exit code handling
+- Pull request description formatting with issue IDs and changes
+- Verification evidence attachment
+- Handling of multiple change items
+
+## Cleanup
+```bash
+rm -rf .pytest_cache __pycache__ .venv
+```
+
+## Troubleshooting
+Ensure git is installed and in system PATH.
+
+## Security notes
+Runs completely offline on local CPU.
+
+## Extension exercises
+Implement automated git commit message formatting following Conventional Commits (`feat(auth): ...`).
+
+## Navigation
+Day number: 307 of 365

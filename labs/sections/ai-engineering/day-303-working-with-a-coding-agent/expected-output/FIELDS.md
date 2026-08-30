@@ -1,0 +1,3 @@
+# Measured Values
+- `bundled_files`: 1
+- `compiled_prompts`: 1

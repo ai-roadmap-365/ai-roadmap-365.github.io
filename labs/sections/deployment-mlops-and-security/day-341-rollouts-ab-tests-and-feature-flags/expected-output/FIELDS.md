@@ -1,0 +1,3 @@
+# Measured Values
+- `routes_executed`: 10
+- `shadow_logs_captured`: 4

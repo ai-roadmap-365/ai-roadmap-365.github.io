@@ -1,0 +1,3 @@
+# Measured Values
+- `window_size`: 4
+- `max_steps`: 8

@@ -1,0 +1,1 @@
+# Security - Day 319\nRaw API keys are never stored in plaintext; SHA-256 hashes are used for lookup.\n

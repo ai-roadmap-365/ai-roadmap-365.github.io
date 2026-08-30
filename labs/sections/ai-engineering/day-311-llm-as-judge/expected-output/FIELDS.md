@@ -1,0 +1,2 @@
+# Measured Values\n- `rubrics_tested`: 3
+- `judge_accuracy`: 1

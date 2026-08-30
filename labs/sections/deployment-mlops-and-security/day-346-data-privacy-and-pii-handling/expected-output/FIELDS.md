@@ -1,0 +1,3 @@
+# Measured Values
+- `pii_records_tokenized`: 25
+- `epsilon_budget`: 0.5

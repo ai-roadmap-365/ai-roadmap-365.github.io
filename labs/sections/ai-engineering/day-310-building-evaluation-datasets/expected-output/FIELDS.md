@@ -1,0 +1,3 @@
+# Measured Values
+- `records_curated`: 25
+- `stratified_categories`: 4

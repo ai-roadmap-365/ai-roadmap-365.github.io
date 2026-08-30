@@ -1,0 +1,3 @@
+# Measured Values
+- `tenants_managed`: 4
+- `transactions_executed`: 15

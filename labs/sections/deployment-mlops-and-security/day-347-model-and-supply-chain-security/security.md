@@ -1,0 +1,1 @@
+# Security - Day 347\nModel supply chain scanners enforce SafeTensors formats and SHA256 verification.\n

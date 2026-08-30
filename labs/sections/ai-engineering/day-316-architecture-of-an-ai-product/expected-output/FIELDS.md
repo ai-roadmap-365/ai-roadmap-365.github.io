@@ -1,0 +1,3 @@
+# Measured Values
+- `dispatched_requests`: 10
+- `cached_requests`: 1

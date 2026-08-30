@@ -1,0 +1,1 @@
+# Security - Day 332\nAutoscaling controllers enforce max replica clamps to prevent cloud billing exhaustion.\n

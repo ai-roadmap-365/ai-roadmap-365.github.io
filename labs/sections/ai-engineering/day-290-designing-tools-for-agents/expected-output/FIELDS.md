@@ -1,0 +1,3 @@
+# Measured Values
+- `tools_count`: 2
+- `idempotency_cached`: True

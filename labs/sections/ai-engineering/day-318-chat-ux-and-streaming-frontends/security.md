@@ -1,0 +1,1 @@
+# Security - Day 318\nRendered Markdown must be sanitized on frontend to prevent XSS injection attacks.\n

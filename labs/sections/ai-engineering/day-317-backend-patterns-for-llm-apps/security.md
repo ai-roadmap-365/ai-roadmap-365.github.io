@@ -1,0 +1,1 @@
+# Security - Day 317\nIdempotency keys must be tenant-scoped to prevent key collision attacks.\n

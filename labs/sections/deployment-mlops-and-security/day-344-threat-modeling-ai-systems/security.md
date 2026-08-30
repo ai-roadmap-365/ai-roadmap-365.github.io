@@ -1,0 +1,1 @@
+# Security - Day 344\nThreat modeling enforces STRIDE trust boundaries and quantitative DREAD severity bounds.\n

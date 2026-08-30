@@ -1,0 +1,3 @@
+# Measured Values
+- `scaling_events`: 8
+- `cooldown_holds`: 4

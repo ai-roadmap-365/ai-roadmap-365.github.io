@@ -1,0 +1,1 @@
+# Security - Day 335\nBatch workers run isolated from public networks and scrub PII before queuing.\n

@@ -1,0 +1,1 @@
+# Security - Day 336\nAI gateway enforces authentication and rate limits before routing to replicas.\n

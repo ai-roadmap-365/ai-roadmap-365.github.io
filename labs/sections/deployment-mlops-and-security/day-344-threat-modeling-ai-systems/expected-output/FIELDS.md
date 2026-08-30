@@ -1,0 +1,3 @@
+# Measured Values
+- `threats_modeled`: 8
+- `critical_threats`: 2

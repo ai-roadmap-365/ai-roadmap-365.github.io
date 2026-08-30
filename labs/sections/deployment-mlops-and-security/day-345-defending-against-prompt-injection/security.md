@@ -1,0 +1,1 @@
+# Security - Day 345\nPrompt firewalls enforce XML delimiter boundaries and canary leak detection.\n

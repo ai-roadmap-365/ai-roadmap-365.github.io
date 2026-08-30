@@ -1,0 +1,1 @@
+# Security - Day 320\nCache keys must include tenant IDs to prevent cross-tenant information exposure.\n

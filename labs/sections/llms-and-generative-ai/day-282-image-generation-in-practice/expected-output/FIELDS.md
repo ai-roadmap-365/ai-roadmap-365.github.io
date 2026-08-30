@@ -1,0 +1,1 @@
+Field definitions for latent pipeline.

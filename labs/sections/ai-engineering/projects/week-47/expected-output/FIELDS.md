@@ -1,0 +1,4 @@
+# Measured Values
+- `documents_indexed`: 6
+- `queries_answered`: 4
+- `refusals`: 1

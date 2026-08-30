@@ -1,0 +1,1 @@
+# Security - Day 311\nIsolate candidate output strings in prompt boundaries to prevent judge injection attacks.\n

@@ -1,0 +1,3 @@
+# Measured Values
+- `documents_ingested`: 8
+- `skipped_unchanged`: 4

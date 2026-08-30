@@ -1,0 +1,1 @@
+# Security - Day 316\nFrontend clients never hold raw provider credentials; all requests pass through the edge gateway.\n

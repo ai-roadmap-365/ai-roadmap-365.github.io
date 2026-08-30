@@ -1,0 +1,3 @@
+# Measured Values
+- `batches_processed`: 8
+- `dlq_records`: 1

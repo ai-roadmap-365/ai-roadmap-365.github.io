@@ -1,0 +1,3 @@
+# Measured Values
+- `pii_categories`: 3
+- `injections_blocked`: 2

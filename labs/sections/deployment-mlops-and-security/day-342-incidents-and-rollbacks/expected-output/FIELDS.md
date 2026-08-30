@@ -1,0 +1,3 @@
+# Measured Values
+- `incidents_managed`: 2
+- `circuit_trip_time_ms`: 12

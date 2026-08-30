@@ -1,0 +1,3 @@
+# Measured Values
+- `requests_handled`: 15
+- `circuit_trips`: 2

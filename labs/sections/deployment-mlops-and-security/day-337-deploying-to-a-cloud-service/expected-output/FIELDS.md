@@ -1,0 +1,3 @@
+# Measured Values
+- `deployments_executed`: 4
+- `cutover_time_ms`: 50

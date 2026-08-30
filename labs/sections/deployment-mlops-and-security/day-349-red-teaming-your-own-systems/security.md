@@ -1,0 +1,1 @@
+# Security - Day 349\nAutomated red teaming evaluates prompt injection resistance and calculates ASR metrics.\n

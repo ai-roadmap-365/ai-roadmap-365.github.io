@@ -1,0 +1,1 @@
+# Security - Day 331\nTenant block tables enforce strict isolation with zero cross-tenant memory leakage.\n

@@ -1,0 +1,1 @@
+# Security - Day 315\nEvaluation harnesses execute in isolated environments with zero production write permissions.\n

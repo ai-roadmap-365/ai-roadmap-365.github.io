@@ -1,0 +1,3 @@
+# Measured Values
+- `nodes_count`: 4
+- `checkpoints_saved`: 4

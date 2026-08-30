@@ -41,7 +41,7 @@ const dist = path.join(repoRoot, 'dist');
 const INTERNAL_ROUTES = ['admin', 'wordpress-preview'];
 
 function run(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { stdio: 'pipe', encoding: 'utf8', ...opts });
+  return execFileSync(cmd, args, { stdio: 'pipe', encoding: 'utf8', maxBuffer: 100 * 1024 * 1024, ...opts });
 }
 
 function fail(message) {

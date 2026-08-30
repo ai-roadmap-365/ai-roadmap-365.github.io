@@ -1,0 +1,1 @@
+# Troubleshooting - Day 351\nEnsure all 6 mandatory pillar keys exist in the charter.\n

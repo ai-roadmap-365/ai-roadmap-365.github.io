@@ -1,0 +1,1 @@
+# Security - Day 322\nAll requests are authenticated with hashed API credentials and quota-gated.\n

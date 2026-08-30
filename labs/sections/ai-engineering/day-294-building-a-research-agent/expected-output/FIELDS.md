@@ -1,0 +1,3 @@
+# Measured Values
+- `notes_extracted`: 3
+- `sub_queries`: 2
