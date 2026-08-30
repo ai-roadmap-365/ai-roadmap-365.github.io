@@ -73,6 +73,21 @@ MINE = re.compile(r"\bI\b|\bmy\b", re.I)
 OURS = re.compile(r"\bwe\b|\bour\b|\bteam\b", re.I)
 
 
+# Addresses that resolve only on the author's own machine. A loopback IP is
+# exactly as unopenable as the name it usually stands for, and people write
+# both, so both belong here.
+LOCAL_PREFIXES = (
+    "http://localhost",
+    "https://localhost",
+    "http://127.0.0.1",
+    "https://127.0.0.1",
+    "http://[::1]",
+    "https://[::1]",
+    "file://",
+    "/",
+)
+
+
 @dataclass(frozen=True)
 class Claim:
     text: str
@@ -149,7 +164,7 @@ def is_openable(url: str) -> bool:
     decidable from the string alone.
     """
     # TASK 4: True only for an http(s) URL a stranger could follow.
-    # Empty, localhost, file:// and a bare absolute path are all evidence to
+    # Empty, a local address, file:// and a bare absolute path are all evidence to
     # the author alone. No network: this is decidable from the string.
     raise NotImplementedError("implement is_openable")
 

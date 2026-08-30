@@ -73,6 +73,21 @@ MINE = re.compile(r"\bI\b|\bmy\b", re.I)
 OURS = re.compile(r"\bwe\b|\bour\b|\bteam\b", re.I)
 
 
+# Addresses that resolve only on the author's own machine. A loopback IP is
+# exactly as unopenable as the name it usually stands for, and people write
+# both, so both belong here.
+LOCAL_PREFIXES = (
+    "http://localhost",
+    "https://localhost",
+    "http://127.0.0.1",
+    "https://127.0.0.1",
+    "http://[::1]",
+    "https://[::1]",
+    "file://",
+    "/",
+)
+
+
 @dataclass(frozen=True)
 class Claim:
     text: str
@@ -148,7 +163,7 @@ def is_openable(url: str) -> bool:
     """
     if not url:
         return False
-    if url.startswith(("http://localhost", "https://localhost", "file://", "/")):
+    if url.startswith(LOCAL_PREFIXES):
         return False
     return url.startswith(("http://", "https://"))
 

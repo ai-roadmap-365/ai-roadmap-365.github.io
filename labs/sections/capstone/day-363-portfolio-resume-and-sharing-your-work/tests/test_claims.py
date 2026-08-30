@@ -97,7 +97,14 @@ def test_a_public_url_is_openable():
 
 def test_local_and_missing_links_are_not_evidence():
     # Not evidence to anyone but you, and that is decidable without a network.
-    for url in ("", "http://localhost:8080", "file:///Users/me/notes.md", "/home/me/x.md"):
+    for url in (
+        "",
+        "http://localhost",
+        "http://127.0.0.1:8080",
+        "https://[::1]",
+        "file:///home/me/notes.md",
+        "/home/me/x.md",
+    ):
         assert not is_openable(url), url
 
 

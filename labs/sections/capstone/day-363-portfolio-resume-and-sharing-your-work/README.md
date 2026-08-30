@@ -120,7 +120,7 @@ Nineteen tests in seven groups:
 - **measurement** — units, percentages and multipliers count; a stated change between two figures counts without a unit; adjectives do not; hyphenated vague words are caught.
 - **baseline** — "from", "previously" and "compared to" are recognised; an end value alone is not.
 - **attribution** — mine, shared and unattributed are classified; mixed is detected; the match is case-insensitive.
-- **evidence** — a public URL is openable; empty, localhost, `file://` and bare paths are not.
+- **evidence** — a public URL is openable; empty, `localhost`, a loopback IP, `file://` and bare paths are not.
 - **grading** — a complete claim is strong with no reasons; an adjective with no measurement is vague; a measurement without a baseline is weak; every missing property is named.
 - **hints** — a strong claim needs nothing; a weak one is told what to add.
 - **report** — each grade is counted.

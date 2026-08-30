@@ -16,7 +16,9 @@ You are grading `VAGUE` whenever a vague word appears. Vague requires **both** a
 
 ## A local path passes the evidence check
 
-Test the prefixes explicitly. `http://localhost`, `https://localhost`, `file://` and a bare leading `/` are all unopenable by a reader, and none of them is caught by simply checking for `http`.
+Test the prefixes explicitly. `http://localhost`, `file://` and a bare leading `/` are all unopenable by a reader, and none of them is caught by simply checking for `http`.
+
+Include the loopback IPs as well. `http://127.0.0.1:8080` and `https://[::1]` are exactly as unopenable as the name they stand for, and people write both — a checker that knows only the word `localhost` passes the numeric form straight through.
 
 ## `test_every_missing_property_is_named` fails
 

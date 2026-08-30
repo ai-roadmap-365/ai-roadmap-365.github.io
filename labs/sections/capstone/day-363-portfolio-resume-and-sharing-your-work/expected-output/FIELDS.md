@@ -28,7 +28,7 @@ The distinction between `WEAK` and `VAGUE` is about what it costs to fix. A miss
 | measurement | An adjective standing where a figure should be. |
 | baseline | A number that describes the present rather than a change. |
 | attribution | A reader unable to tell what you did from what the team did. |
-| evidence | A link only the author can open. |
+| evidence | A link only the author can open — a loopback address, a `file://` path, a bare filesystem path. |
 
 ## The hint lines
 

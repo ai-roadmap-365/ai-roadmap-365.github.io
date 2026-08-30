@@ -19,7 +19,7 @@ CLAIMS = [
         "while the team migrated the ingestion pipeline.",
         "https://example.com/capstone",
     ),
-    Claim("We shipped a support assistant used by 200 people.", "http://localhost:8080"),
+    Claim("We shipped a support assistant used by 200 people.", "http://127.0.0.1:8080"),
 ]
 
 WEAK_THEN_STRONG = (
