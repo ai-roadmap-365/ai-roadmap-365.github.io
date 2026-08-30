@@ -125,18 +125,18 @@ Hands-on companions to this section's lessons. Each day directory is self-contai
 
 </details>
 
-<details open>
-<summary><strong>Days 190-196 · Machine Learning in Practice</strong> — 0/7 complete</summary>
+<details>
+<summary><strong>Days 190-196 · Machine Learning in Practice</strong> — 7/7 complete</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 190 | [The ML Project Lifecycle](../../../content/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [lab](./day-190-the-ml-project-lifecycle/) | [blog](https://ai-roadmap-365.github.io/day-190-the-ml-project-lifecycle) | planned |
-| Day 191 | [Building Datasets and Labeling](../../../content/sections/machine-learning/day-191-building-datasets-and-labeling/) | [lab](./day-191-building-datasets-and-labeling/) | [blog](https://ai-roadmap-365.github.io/day-191-building-datasets-and-labeling) | planned |
-| Day 192 | [Time Series Forecasting Basics](../../../content/sections/machine-learning/day-192-time-series-forecasting-basics/) | [lab](./day-192-time-series-forecasting-basics/) | [blog](https://ai-roadmap-365.github.io/day-192-time-series-forecasting-basics) | planned |
-| Day 193 | [Saving and Versioning Models](../../../content/sections/machine-learning/day-193-saving-and-versioning-models/) | [lab](./day-193-saving-and-versioning-models/) | [blog](https://ai-roadmap-365.github.io/day-193-saving-and-versioning-models) | planned |
-| Day 194 | [Serving a Model over an API](../../../content/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [lab](./day-194-serving-a-model-over-an-api/) | [blog](https://ai-roadmap-365.github.io/day-194-serving-a-model-over-an-api) | planned |
-| Day 195 | [Monitoring Models in Production](../../../content/sections/machine-learning/day-195-monitoring-models-in-production/) | [lab](./day-195-monitoring-models-in-production/) | [blog](https://ai-roadmap-365.github.io/day-195-monitoring-models-in-production) | planned |
-| Day 196 | [Section Project: An ML Service](../../../content/sections/machine-learning/day-196-section-project-an-ml-service/) | [lab](./day-196-section-project-an-ml-service/) | [blog](https://ai-roadmap-365.github.io/day-196-section-project-an-ml-service) | planned |
+| Day 190 | [The ML Project Lifecycle](../../../content/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [lab](./day-190-the-ml-project-lifecycle/) | [blog](https://ai-roadmap-365.github.io/day-190-the-ml-project-lifecycle) | complete |
+| Day 191 | [Building Datasets and Labeling](../../../content/sections/machine-learning/day-191-building-datasets-and-labeling/) | [lab](./day-191-building-datasets-and-labeling/) | [blog](https://ai-roadmap-365.github.io/day-191-building-datasets-and-labeling) | complete |
+| Day 192 | [Time Series Forecasting Basics](../../../content/sections/machine-learning/day-192-time-series-forecasting-basics/) | [lab](./day-192-time-series-forecasting-basics/) | [blog](https://ai-roadmap-365.github.io/day-192-time-series-forecasting-basics) | complete |
+| Day 193 | [Saving and Versioning Models](../../../content/sections/machine-learning/day-193-saving-and-versioning-models/) | [lab](./day-193-saving-and-versioning-models/) | [blog](https://ai-roadmap-365.github.io/day-193-saving-and-versioning-models) | complete |
+| Day 194 | [Serving a Model over an API](../../../content/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [lab](./day-194-serving-a-model-over-an-api/) | [blog](https://ai-roadmap-365.github.io/day-194-serving-a-model-over-an-api) | complete |
+| Day 195 | [Monitoring Models in Production](../../../content/sections/machine-learning/day-195-monitoring-models-in-production/) | [lab](./day-195-monitoring-models-in-production/) | [blog](https://ai-roadmap-365.github.io/day-195-monitoring-models-in-production) | complete |
+| Day 196 | [Section Project: An ML Service](../../../content/sections/machine-learning/day-196-section-project-an-ml-service/) | [lab](./day-196-section-project-an-ml-service/) | [blog](https://ai-roadmap-365.github.io/day-196-section-project-an-ml-service) | complete |
 
 **Project:** Section Project: Deployed ML Service — Train, persist, and serve a model behind a FastAPI endpoint with input validation, tests, and a monitoring plan.
 

@@ -2,7 +2,7 @@
 
 > GENERATED — do not edit by hand. Run `npm run generate:section-nav`.
 
-The complete map of all nine courses: **189 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
+The complete map of all nine courses: **280 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
 
 <details>
 <summary><h3>Course01 · Computing Foundations — 42/42 complete</h3></summary>
@@ -309,7 +309,7 @@ The linear algebra, calculus, probability, and data-analysis skills that make ma
 </details>
 
 <details>
-<summary><h3>Course04 · Machine Learning — 49/56 complete</h3></summary>
+<summary><h3>Course04 · Machine Learning — 56/56 complete</h3></summary>
 
 Classical machine learning done properly: models, evaluation, feature work, and the discipline that separates working systems from leaderboard tricks.
 
@@ -412,201 +412,201 @@ Classical machine learning done properly: models, evaluation, feature work, and 
 
 </details>
 <details>
-<summary>Days 190-196 · Machine Learning in Practice — 0/7</summary>
+<summary>Days 190-196 · Machine Learning in Practice — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 190 | [The ML Project Lifecycle](content/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [lab](labs/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [blog](https://ai-roadmap-365.github.io/day-190-the-ml-project-lifecycle) | planned |
-| Day 191 | [Building Datasets and Labeling](content/sections/machine-learning/day-191-building-datasets-and-labeling/) | [lab](labs/sections/machine-learning/day-191-building-datasets-and-labeling/) | [blog](https://ai-roadmap-365.github.io/day-191-building-datasets-and-labeling) | planned |
-| Day 192 | [Time Series Forecasting Basics](content/sections/machine-learning/day-192-time-series-forecasting-basics/) | [lab](labs/sections/machine-learning/day-192-time-series-forecasting-basics/) | [blog](https://ai-roadmap-365.github.io/day-192-time-series-forecasting-basics) | planned |
-| Day 193 | [Saving and Versioning Models](content/sections/machine-learning/day-193-saving-and-versioning-models/) | [lab](labs/sections/machine-learning/day-193-saving-and-versioning-models/) | [blog](https://ai-roadmap-365.github.io/day-193-saving-and-versioning-models) | planned |
-| Day 194 | [Serving a Model over an API](content/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [lab](labs/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [blog](https://ai-roadmap-365.github.io/day-194-serving-a-model-over-an-api) | planned |
-| Day 195 | [Monitoring Models in Production](content/sections/machine-learning/day-195-monitoring-models-in-production/) | [lab](labs/sections/machine-learning/day-195-monitoring-models-in-production/) | [blog](https://ai-roadmap-365.github.io/day-195-monitoring-models-in-production) | planned |
-| Day 196 | [Section Project: An ML Service](content/sections/machine-learning/day-196-section-project-an-ml-service/) | [lab](labs/sections/machine-learning/day-196-section-project-an-ml-service/) | [blog](https://ai-roadmap-365.github.io/day-196-section-project-an-ml-service) | planned |
+| Day 190 | [The ML Project Lifecycle](content/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [lab](labs/sections/machine-learning/day-190-the-ml-project-lifecycle/) | [blog](https://ai-roadmap-365.github.io/day-190-the-ml-project-lifecycle) | complete |
+| Day 191 | [Building Datasets and Labeling](content/sections/machine-learning/day-191-building-datasets-and-labeling/) | [lab](labs/sections/machine-learning/day-191-building-datasets-and-labeling/) | [blog](https://ai-roadmap-365.github.io/day-191-building-datasets-and-labeling) | complete |
+| Day 192 | [Time Series Forecasting Basics](content/sections/machine-learning/day-192-time-series-forecasting-basics/) | [lab](labs/sections/machine-learning/day-192-time-series-forecasting-basics/) | [blog](https://ai-roadmap-365.github.io/day-192-time-series-forecasting-basics) | complete |
+| Day 193 | [Saving and Versioning Models](content/sections/machine-learning/day-193-saving-and-versioning-models/) | [lab](labs/sections/machine-learning/day-193-saving-and-versioning-models/) | [blog](https://ai-roadmap-365.github.io/day-193-saving-and-versioning-models) | complete |
+| Day 194 | [Serving a Model over an API](content/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [lab](labs/sections/machine-learning/day-194-serving-a-model-over-an-api/) | [blog](https://ai-roadmap-365.github.io/day-194-serving-a-model-over-an-api) | complete |
+| Day 195 | [Monitoring Models in Production](content/sections/machine-learning/day-195-monitoring-models-in-production/) | [lab](labs/sections/machine-learning/day-195-monitoring-models-in-production/) | [blog](https://ai-roadmap-365.github.io/day-195-monitoring-models-in-production) | complete |
+| Day 196 | [Section Project: An ML Service](content/sections/machine-learning/day-196-section-project-an-ml-service/) | [lab](labs/sections/machine-learning/day-196-section-project-an-ml-service/) | [blog](https://ai-roadmap-365.github.io/day-196-section-project-an-ml-service) | complete |
 
 </details>
 
 </details>
 
 <details>
-<summary><h3>Course05 · Deep Learning — 0/42 complete</h3></summary>
+<summary><h3>Course05 · Deep Learning — 42/42 complete</h3></summary>
 
 Neural networks from first principles to transformers: build them, train them, debug them, and understand the hardware they run on.
 
 <details>
-<summary>Days 197-203 · Neural Network Foundations — 0/7</summary>
+<summary>Days 197-203 · Neural Network Foundations — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 197 | [The Perceptron](content/sections/deep-learning/day-197-the-perceptron/) | [lab](labs/sections/deep-learning/day-197-the-perceptron/) | [blog](https://ai-roadmap-365.github.io/day-197-the-perceptron) | planned |
-| Day 198 | [Activation Functions](content/sections/deep-learning/day-198-activation-functions/) | [lab](labs/sections/deep-learning/day-198-activation-functions/) | [blog](https://ai-roadmap-365.github.io/day-198-activation-functions) | planned |
-| Day 199 | [Forward Propagation](content/sections/deep-learning/day-199-forward-propagation/) | [lab](labs/sections/deep-learning/day-199-forward-propagation/) | [blog](https://ai-roadmap-365.github.io/day-199-forward-propagation) | planned |
-| Day 200 | [Backpropagation](content/sections/deep-learning/day-200-backpropagation/) | [lab](labs/sections/deep-learning/day-200-backpropagation/) | [blog](https://ai-roadmap-365.github.io/day-200-backpropagation) | planned |
-| Day 201 | [A Neural Network in Pure NumPy](content/sections/deep-learning/day-201-a-neural-network-in-pure-numpy/) | [lab](labs/sections/deep-learning/day-201-a-neural-network-in-pure-numpy/) | [blog](https://ai-roadmap-365.github.io/day-201-a-neural-network-in-pure-numpy) | planned |
-| Day 202 | [PyTorch Tensors](content/sections/deep-learning/day-202-pytorch-tensors/) | [lab](labs/sections/deep-learning/day-202-pytorch-tensors/) | [blog](https://ai-roadmap-365.github.io/day-202-pytorch-tensors) | planned |
-| Day 203 | [Training MNIST from Scratch](content/sections/deep-learning/day-203-training-mnist-from-scratch/) | [lab](labs/sections/deep-learning/day-203-training-mnist-from-scratch/) | [blog](https://ai-roadmap-365.github.io/day-203-training-mnist-from-scratch) | planned |
+| Day 197 | [The Perceptron](content/sections/deep-learning/day-197-the-perceptron/) | [lab](labs/sections/deep-learning/day-197-the-perceptron/) | [blog](https://ai-roadmap-365.github.io/day-197-the-perceptron) | complete |
+| Day 198 | [Activation Functions](content/sections/deep-learning/day-198-activation-functions/) | [lab](labs/sections/deep-learning/day-198-activation-functions/) | [blog](https://ai-roadmap-365.github.io/day-198-activation-functions) | complete |
+| Day 199 | [Forward Propagation](content/sections/deep-learning/day-199-forward-propagation/) | [lab](labs/sections/deep-learning/day-199-forward-propagation/) | [blog](https://ai-roadmap-365.github.io/day-199-forward-propagation) | complete |
+| Day 200 | [Backpropagation](content/sections/deep-learning/day-200-backpropagation/) | [lab](labs/sections/deep-learning/day-200-backpropagation/) | [blog](https://ai-roadmap-365.github.io/day-200-backpropagation) | complete |
+| Day 201 | [A Neural Network in Pure NumPy](content/sections/deep-learning/day-201-a-neural-network-in-pure-numpy/) | [lab](labs/sections/deep-learning/day-201-a-neural-network-in-pure-numpy/) | [blog](https://ai-roadmap-365.github.io/day-201-a-neural-network-in-pure-numpy) | complete |
+| Day 202 | [PyTorch Tensors](content/sections/deep-learning/day-202-pytorch-tensors/) | [lab](labs/sections/deep-learning/day-202-pytorch-tensors/) | [blog](https://ai-roadmap-365.github.io/day-202-pytorch-tensors) | complete |
+| Day 203 | [Training MNIST from Scratch](content/sections/deep-learning/day-203-training-mnist-from-scratch/) | [lab](labs/sections/deep-learning/day-203-training-mnist-from-scratch/) | [blog](https://ai-roadmap-365.github.io/day-203-training-mnist-from-scratch) | complete |
 
 </details>
 <details>
-<summary>Days 204-210 · Training Deep Networks — 0/7</summary>
+<summary>Days 204-210 · Training Deep Networks — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 204 | [PyTorch: autograd and nn.Module](content/sections/deep-learning/day-204-pytorch-autograd-and-nn-module/) | [lab](labs/sections/deep-learning/day-204-pytorch-autograd-and-nn-module/) | [blog](https://ai-roadmap-365.github.io/day-204-pytorch-autograd-and-nn-module) | planned |
-| Day 205 | [Datasets and DataLoaders](content/sections/deep-learning/day-205-datasets-and-dataloaders/) | [lab](labs/sections/deep-learning/day-205-datasets-and-dataloaders/) | [blog](https://ai-roadmap-365.github.io/day-205-datasets-and-dataloaders) | planned |
-| Day 206 | [Optimizers: SGD to Adam](content/sections/deep-learning/day-206-optimizers-sgd-to-adam/) | [lab](labs/sections/deep-learning/day-206-optimizers-sgd-to-adam/) | [blog](https://ai-roadmap-365.github.io/day-206-optimizers-sgd-to-adam) | planned |
-| Day 207 | [Learning Rate Schedules](content/sections/deep-learning/day-207-learning-rate-schedules/) | [lab](labs/sections/deep-learning/day-207-learning-rate-schedules/) | [blog](https://ai-roadmap-365.github.io/day-207-learning-rate-schedules) | planned |
-| Day 208 | [Dropout, Batch Norm, and Regularization](content/sections/deep-learning/day-208-dropout-batch-norm-and-regularization/) | [lab](labs/sections/deep-learning/day-208-dropout-batch-norm-and-regularization/) | [blog](https://ai-roadmap-365.github.io/day-208-dropout-batch-norm-and-regularization) | planned |
-| Day 209 | [Debugging Training Runs](content/sections/deep-learning/day-209-debugging-training-runs/) | [lab](labs/sections/deep-learning/day-209-debugging-training-runs/) | [blog](https://ai-roadmap-365.github.io/day-209-debugging-training-runs) | planned |
-| Day 210 | [A Disciplined Training Project](content/sections/deep-learning/day-210-a-disciplined-training-project/) | [lab](labs/sections/deep-learning/day-210-a-disciplined-training-project/) | [blog](https://ai-roadmap-365.github.io/day-210-a-disciplined-training-project) | planned |
+| Day 204 | [PyTorch: autograd and nn.Module](content/sections/deep-learning/day-204-pytorch-autograd-and-nn-module/) | [lab](labs/sections/deep-learning/day-204-pytorch-autograd-and-nn-module/) | [blog](https://ai-roadmap-365.github.io/day-204-pytorch-autograd-and-nn-module) | complete |
+| Day 205 | [Datasets and DataLoaders](content/sections/deep-learning/day-205-datasets-and-dataloaders/) | [lab](labs/sections/deep-learning/day-205-datasets-and-dataloaders/) | [blog](https://ai-roadmap-365.github.io/day-205-datasets-and-dataloaders) | complete |
+| Day 206 | [Optimizers: SGD to Adam](content/sections/deep-learning/day-206-optimizers-sgd-to-adam/) | [lab](labs/sections/deep-learning/day-206-optimizers-sgd-to-adam/) | [blog](https://ai-roadmap-365.github.io/day-206-optimizers-sgd-to-adam) | complete |
+| Day 207 | [Learning Rate Schedules](content/sections/deep-learning/day-207-learning-rate-schedules/) | [lab](labs/sections/deep-learning/day-207-learning-rate-schedules/) | [blog](https://ai-roadmap-365.github.io/day-207-learning-rate-schedules) | complete |
+| Day 208 | [Dropout, Batch Norm, and Regularization](content/sections/deep-learning/day-208-dropout-batch-norm-and-regularization/) | [lab](labs/sections/deep-learning/day-208-dropout-batch-norm-and-regularization/) | [blog](https://ai-roadmap-365.github.io/day-208-dropout-batch-norm-and-regularization) | complete |
+| Day 209 | [Debugging Training Runs](content/sections/deep-learning/day-209-debugging-training-runs/) | [lab](labs/sections/deep-learning/day-209-debugging-training-runs/) | [blog](https://ai-roadmap-365.github.io/day-209-debugging-training-runs) | complete |
+| Day 210 | [A Disciplined Training Project](content/sections/deep-learning/day-210-a-disciplined-training-project/) | [lab](labs/sections/deep-learning/day-210-a-disciplined-training-project/) | [blog](https://ai-roadmap-365.github.io/day-210-a-disciplined-training-project) | complete |
 
 </details>
 <details>
-<summary>Days 211-217 · Convolutional Networks and Vision — 0/7</summary>
+<summary>Days 211-217 · Convolutional Networks and Vision — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 211 | Convolutions | — | — | planned |
-| Day 212 | CNN Architectures | — | — | planned |
-| Day 213 | Transfer Learning | — | — | planned |
-| Day 214 | Data Augmentation | — | — | planned |
-| Day 215 | Training a Vision Model End to End | — | — | planned |
-| Day 216 | Beyond Classification: Detection and Segmentation | — | — | planned |
-| Day 217 | Your Own Image Classifier | — | — | planned |
+| Day 211 | [Convolutions](content/sections/deep-learning/day-211-convolutions/) | [lab](labs/sections/deep-learning/day-211-convolutions/) | [blog](https://ai-roadmap-365.github.io/day-211-convolutions) | complete |
+| Day 212 | [CNN Architectures](content/sections/deep-learning/day-212-cnn-architectures/) | [lab](labs/sections/deep-learning/day-212-cnn-architectures/) | [blog](https://ai-roadmap-365.github.io/day-212-cnn-architectures) | complete |
+| Day 213 | [Transfer Learning](content/sections/deep-learning/day-213-transfer-learning/) | [lab](labs/sections/deep-learning/day-213-transfer-learning/) | [blog](https://ai-roadmap-365.github.io/day-213-transfer-learning) | complete |
+| Day 214 | [Data Augmentation](content/sections/deep-learning/day-214-data-augmentation/) | [lab](labs/sections/deep-learning/day-214-data-augmentation/) | [blog](https://ai-roadmap-365.github.io/day-214-data-augmentation) | complete |
+| Day 215 | [Training a Vision Model End to End](content/sections/deep-learning/day-215-training-a-vision-model-end-to/) | [lab](labs/sections/deep-learning/day-215-training-a-vision-model-end-to/) | [blog](https://ai-roadmap-365.github.io/day-215-training-a-vision-model-end-to) | complete |
+| Day 216 | [Beyond Classification: Detection and Segmentation](content/sections/deep-learning/day-216-beyond-classification-detection-and-segmentation/) | [lab](labs/sections/deep-learning/day-216-beyond-classification-detection-and-segmentation/) | [blog](https://ai-roadmap-365.github.io/day-216-beyond-classification-detection-and-segmentation) | complete |
+| Day 217 | [Your Own Image Classifier](content/sections/deep-learning/day-217-your-own-image-classifier/) | [lab](labs/sections/deep-learning/day-217-your-own-image-classifier/) | [blog](https://ai-roadmap-365.github.io/day-217-your-own-image-classifier) | complete |
 
 </details>
 <details>
-<summary>Days 218-224 · Sequences and Text — 0/7</summary>
+<summary>Days 218-224 · Sequences and Text — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 218 | Text Preprocessing and Tokenization | — | — | planned |
-| Day 219 | Word Embeddings | — | — | planned |
-| Day 220 | Recurrent Neural Networks | — | — | planned |
-| Day 221 | LSTMs and GRUs | — | — | planned |
-| Day 222 | Sequence-to-Sequence and Early Attention | — | — | planned |
-| Day 223 | Text Classification with Embeddings | — | — | planned |
-| Day 224 | A Sentiment Analysis Project | — | — | planned |
+| Day 218 | [Text Preprocessing and Tokenization](content/sections/deep-learning/day-218-text-preprocessing-and-tokenization/) | [lab](labs/sections/deep-learning/day-218-text-preprocessing-and-tokenization/) | [blog](https://ai-roadmap-365.github.io/day-218-text-preprocessing-and-tokenization) | complete |
+| Day 219 | [Word Embeddings](content/sections/deep-learning/day-219-word-embeddings/) | [lab](labs/sections/deep-learning/day-219-word-embeddings/) | [blog](https://ai-roadmap-365.github.io/day-219-word-embeddings) | complete |
+| Day 220 | [Recurrent Neural Networks](content/sections/deep-learning/day-220-recurrent-neural-networks/) | [lab](labs/sections/deep-learning/day-220-recurrent-neural-networks/) | [blog](https://ai-roadmap-365.github.io/day-220-recurrent-neural-networks) | complete |
+| Day 221 | [LSTMs and GRUs](content/sections/deep-learning/day-221-lstms-and-grus/) | [lab](labs/sections/deep-learning/day-221-lstms-and-grus/) | [blog](https://ai-roadmap-365.github.io/day-221-lstms-and-grus) | complete |
+| Day 222 | [Sequence-to-Sequence and Early Attention](content/sections/deep-learning/day-222-sequence-to-sequence-and-early-attention/) | [lab](labs/sections/deep-learning/day-222-sequence-to-sequence-and-early-attention/) | [blog](https://ai-roadmap-365.github.io/day-222-sequence-to-sequence-and-early-attention) | complete |
+| Day 223 | [Text Classification with Embeddings](content/sections/deep-learning/day-223-text-classification-with-embeddings/) | [lab](labs/sections/deep-learning/day-223-text-classification-with-embeddings/) | [blog](https://ai-roadmap-365.github.io/day-223-text-classification-with-embeddings) | complete |
+| Day 224 | [A Sentiment Analysis Project](content/sections/deep-learning/day-224-a-sentiment-analysis-project/) | [lab](labs/sections/deep-learning/day-224-a-sentiment-analysis-project/) | [blog](https://ai-roadmap-365.github.io/day-224-a-sentiment-analysis-project) | complete |
 
 </details>
 <details>
-<summary>Days 225-231 · Transformers — 0/7</summary>
+<summary>Days 225-231 · Transformers — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 225 | “Attention Is All You Need” | — | — | planned |
-| Day 226 | Self-Attention, Step by Step | — | — | planned |
-| Day 227 | The Transformer Architecture | — | — | planned |
-| Day 228 | Encoder Models: BERT and Friends | — | — | planned |
-| Day 229 | Decoder Models: The GPT Family | — | — | planned |
-| Day 230 | Hugging Face Transformers in Practice | — | — | planned |
-| Day 231 | Fine-Tuning a Small Transformer | — | — | planned |
+| Day 225 | [“Attention Is All You Need”](content/sections/deep-learning/day-225-attention-is-all-you-need/) | [lab](labs/sections/deep-learning/day-225-attention-is-all-you-need/) | [blog](https://ai-roadmap-365.github.io/day-225-attention-is-all-you-need) | complete |
+| Day 226 | [Self-Attention, Step by Step](content/sections/deep-learning/day-226-self-attention-step-by-step/) | [lab](labs/sections/deep-learning/day-226-self-attention-step-by-step/) | [blog](https://ai-roadmap-365.github.io/day-226-self-attention-step-by-step) | complete |
+| Day 227 | [The Transformer Architecture](content/sections/deep-learning/day-227-the-transformer-architecture/) | [lab](labs/sections/deep-learning/day-227-the-transformer-architecture/) | [blog](https://ai-roadmap-365.github.io/day-227-the-transformer-architecture) | complete |
+| Day 228 | [Encoder Models: BERT and Friends](content/sections/deep-learning/day-228-encoder-models-bert-and-friends/) | [lab](labs/sections/deep-learning/day-228-encoder-models-bert-and-friends/) | [blog](https://ai-roadmap-365.github.io/day-228-encoder-models-bert-and-friends) | complete |
+| Day 229 | [Decoder Models: The GPT Family](content/sections/deep-learning/day-229-decoder-models-the-gpt-family/) | [lab](labs/sections/deep-learning/day-229-decoder-models-the-gpt-family/) | [blog](https://ai-roadmap-365.github.io/day-229-decoder-models-the-gpt-family) | complete |
+| Day 230 | [Hugging Face Transformers in Practice](content/sections/deep-learning/day-230-hugging-face-transformers-in-practice/) | [lab](labs/sections/deep-learning/day-230-hugging-face-transformers-in-practice/) | [blog](https://ai-roadmap-365.github.io/day-230-hugging-face-transformers-in-practice) | complete |
+| Day 231 | [Fine-Tuning a Small Transformer](content/sections/deep-learning/day-231-fine-tuning-a-small-transformer/) | [lab](labs/sections/deep-learning/day-231-fine-tuning-a-small-transformer/) | [blog](https://ai-roadmap-365.github.io/day-231-fine-tuning-a-small-transformer) | complete |
 
 </details>
 <details>
-<summary>Days 232-238 · Training at Scale — 0/7</summary>
+<summary>Days 232-238 · Training at Scale — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 232 | GPUs and AI Hardware | — | — | planned |
-| Day 233 | Mixed Precision and Performance | — | — | planned |
-| Day 234 | Distributed Training Concepts | — | — | planned |
-| Day 235 | Experiment Tracking | — | — | planned |
-| Day 236 | Quantization and Distillation | — | — | planned |
-| Day 237 | Scaling Laws and What They Bought Us | — | — | planned |
-| Day 238 | Section Project: Reproducing a Paper | — | — | planned |
+| Day 232 | [GPUs and AI Hardware](content/sections/deep-learning/day-232-gpus-and-ai-hardware/) | [lab](labs/sections/deep-learning/day-232-gpus-and-ai-hardware/) | [blog](https://ai-roadmap-365.github.io/day-232-gpus-and-ai-hardware) | complete |
+| Day 233 | [Mixed Precision and Performance](content/sections/deep-learning/day-233-mixed-precision-and-performance/) | [lab](labs/sections/deep-learning/day-233-mixed-precision-and-performance/) | [blog](https://ai-roadmap-365.github.io/day-233-mixed-precision-and-performance) | complete |
+| Day 234 | [Distributed Training Concepts](content/sections/deep-learning/day-234-distributed-training-concepts/) | [lab](labs/sections/deep-learning/day-234-distributed-training-concepts/) | [blog](https://ai-roadmap-365.github.io/day-234-distributed-training-concepts) | complete |
+| Day 235 | [Experiment Tracking](content/sections/deep-learning/day-235-experiment-tracking/) | [lab](labs/sections/deep-learning/day-235-experiment-tracking/) | [blog](https://ai-roadmap-365.github.io/day-235-experiment-tracking) | complete |
+| Day 236 | [Quantization and Distillation](content/sections/deep-learning/day-236-quantization-and-distillation/) | [lab](labs/sections/deep-learning/day-236-quantization-and-distillation/) | [blog](https://ai-roadmap-365.github.io/day-236-quantization-and-distillation) | complete |
+| Day 237 | [Scaling Laws and What They Bought Us](content/sections/deep-learning/day-237-scaling-laws-and-what-they-bought/) | [lab](labs/sections/deep-learning/day-237-scaling-laws-and-what-they-bought/) | [blog](https://ai-roadmap-365.github.io/day-237-scaling-laws-and-what-they-bought) | complete |
+| Day 238 | [Section Project: Reproducing a Paper](content/sections/deep-learning/day-238-section-project-reproducing-a-paper/) | [lab](labs/sections/deep-learning/day-238-section-project-reproducing-a-paper/) | [blog](https://ai-roadmap-365.github.io/day-238-section-project-reproducing-a-paper) | complete |
 
 </details>
 
 </details>
 
 <details>
-<summary><h3>Course06 · LLMs and Generative AI — 0/49 complete</h3></summary>
+<summary><h3>Course06 · LLMs and Generative AI — 42/49 complete</h3></summary>
 
 Large language models as a working material: how they are made, how to prompt and call them, how to ground them with retrieval, customize them, and go multimodal.
 
 <details>
-<summary>Days 239-245 · The LLM Landscape — 0/7</summary>
+<summary>Days 239-245 · The LLM Landscape — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 239 | How Large Language Models Are Trained | — | — | planned |
-| Day 240 | Pretraining, Fine-Tuning, and RLHF | — | — | planned |
-| Day 241 | The Model Landscape: Claude, GPT, Gemini, Llama | — | — | planned |
-| Day 242 | Open Weights versus Closed APIs | — | — | planned |
-| Day 243 | Tokens, Context Windows, and Sampling | — | — | planned |
-| Day 244 | Capabilities, Limits, and Hallucination | — | — | planned |
-| Day 245 | Benchmarking Models Yourself | — | — | planned |
+| Day 239 | [How Large Language Models Are Trained](content/sections/llms-and-generative-ai/day-239-how-large-language-models-are-trained/) | [lab](labs/sections/llms-and-generative-ai/day-239-how-large-language-models-are-trained/) | [blog](https://ai-roadmap-365.github.io/day-239-how-large-language-models-are-trained) | complete |
+| Day 240 | [Pretraining, Fine-Tuning, and RLHF](content/sections/llms-and-generative-ai/day-240-pretraining-fine-tuning-and-rlhf/) | [lab](labs/sections/llms-and-generative-ai/day-240-pretraining-fine-tuning-and-rlhf/) | [blog](https://ai-roadmap-365.github.io/day-240-pretraining-fine-tuning-and-rlhf) | complete |
+| Day 241 | [The Model Landscape: Claude, GPT, Gemini, Llama](content/sections/llms-and-generative-ai/day-241-the-model-landscape-claude-gpt-gemini/) | [lab](labs/sections/llms-and-generative-ai/day-241-the-model-landscape-claude-gpt-gemini/) | [blog](https://ai-roadmap-365.github.io/day-241-the-model-landscape-claude-gpt-gemini) | complete |
+| Day 242 | [Open Weights versus Closed APIs](content/sections/llms-and-generative-ai/day-242-open-weights-versus-closed-apis/) | [lab](labs/sections/llms-and-generative-ai/day-242-open-weights-versus-closed-apis/) | [blog](https://ai-roadmap-365.github.io/day-242-open-weights-versus-closed-apis) | complete |
+| Day 243 | [Tokens, Context Windows, and Sampling](content/sections/llms-and-generative-ai/day-243-tokens-context-windows-and-sampling/) | [lab](labs/sections/llms-and-generative-ai/day-243-tokens-context-windows-and-sampling/) | [blog](https://ai-roadmap-365.github.io/day-243-tokens-context-windows-and-sampling) | complete |
+| Day 244 | [Capabilities, Limits, and Hallucination](content/sections/llms-and-generative-ai/day-244-capabilities-limits-and-hallucination/) | [lab](labs/sections/llms-and-generative-ai/day-244-capabilities-limits-and-hallucination/) | [blog](https://ai-roadmap-365.github.io/day-244-capabilities-limits-and-hallucination) | complete |
+| Day 245 | [Benchmarking Models Yourself](content/sections/llms-and-generative-ai/day-245-benchmarking-models-yourself/) | [lab](labs/sections/llms-and-generative-ai/day-245-benchmarking-models-yourself/) | [blog](https://ai-roadmap-365.github.io/day-245-benchmarking-models-yourself) | complete |
 
 </details>
 <details>
-<summary>Days 246-252 · Prompt Engineering — 0/7</summary>
+<summary>Days 246-252 · Prompt Engineering — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 246 | Prompting Fundamentals | — | — | planned |
-| Day 247 | System Prompts and Role Design | — | — | planned |
-| Day 248 | Few-Shot Examples and Chain of Thought | — | — | planned |
-| Day 249 | Structured Output: Getting Reliable JSON | — | — | planned |
-| Day 250 | Prompt Patterns and Templates | — | — | planned |
-| Day 251 | Prompt Injection and Safe Prompting | — | — | planned |
-| Day 252 | A Tested Prompt Library | — | — | planned |
+| Day 246 | [Prompting Fundamentals](content/sections/llms-and-generative-ai/day-246-prompting-fundamentals/) | [lab](labs/sections/llms-and-generative-ai/day-246-prompting-fundamentals/) | [blog](https://ai-roadmap-365.github.io/day-246-prompting-fundamentals) | complete |
+| Day 247 | [System Prompts and Role Design](content/sections/llms-and-generative-ai/day-247-system-prompts-and-role-design/) | [lab](labs/sections/llms-and-generative-ai/day-247-system-prompts-and-role-design/) | [blog](https://ai-roadmap-365.github.io/day-247-system-prompts-and-role-design) | complete |
+| Day 248 | [Few-Shot Examples and Chain of Thought](content/sections/llms-and-generative-ai/day-248-few-shot-examples-and-chain-of/) | [lab](labs/sections/llms-and-generative-ai/day-248-few-shot-examples-and-chain-of/) | [blog](https://ai-roadmap-365.github.io/day-248-few-shot-examples-and-chain-of) | complete |
+| Day 249 | [Structured Output: Getting Reliable JSON](content/sections/llms-and-generative-ai/day-249-structured-output-getting-reliable-json/) | [lab](labs/sections/llms-and-generative-ai/day-249-structured-output-getting-reliable-json/) | [blog](https://ai-roadmap-365.github.io/day-249-structured-output-getting-reliable-json) | complete |
+| Day 250 | [Prompt Patterns and Templates](content/sections/llms-and-generative-ai/day-250-prompt-patterns-and-templates/) | [lab](labs/sections/llms-and-generative-ai/day-250-prompt-patterns-and-templates/) | [blog](https://ai-roadmap-365.github.io/day-250-prompt-patterns-and-templates) | complete |
+| Day 251 | [Prompt Injection and Safe Prompting](content/sections/llms-and-generative-ai/day-251-prompt-injection-and-safe-prompting/) | [lab](labs/sections/llms-and-generative-ai/day-251-prompt-injection-and-safe-prompting/) | [blog](https://ai-roadmap-365.github.io/day-251-prompt-injection-and-safe-prompting) | complete |
+| Day 252 | [A Tested Prompt Library](content/sections/llms-and-generative-ai/day-252-a-tested-prompt-library/) | [lab](labs/sections/llms-and-generative-ai/day-252-a-tested-prompt-library/) | [blog](https://ai-roadmap-365.github.io/day-252-a-tested-prompt-library) | complete |
 
 </details>
 <details>
-<summary>Days 253-259 · LLM APIs — 0/7</summary>
+<summary>Days 253-259 · LLM APIs — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 253 | First Calls to the Claude API | — | — | planned |
-| Day 254 | The OpenAI-Compatible Ecosystem | — | — | planned |
-| Day 255 | Streaming Responses | — | — | planned |
-| Day 256 | Tool Use and Function Calling | — | — | planned |
-| Day 257 | Working with Images and Documents | — | — | planned |
-| Day 258 | Cost, Caching, and Rate Limits | — | — | planned |
-| Day 259 | Building a CLI Assistant | — | — | planned |
+| Day 253 | [First Calls to the Claude API](content/sections/llms-and-generative-ai/day-253-first-calls-to-the-claude-api/) | [lab](labs/sections/llms-and-generative-ai/day-253-first-calls-to-the-claude-api/) | [blog](https://ai-roadmap-365.github.io/day-253-first-calls-to-the-claude-api) | complete |
+| Day 254 | [The OpenAI-Compatible Ecosystem](content/sections/llms-and-generative-ai/day-254-the-openai-compatible-ecosystem/) | [lab](labs/sections/llms-and-generative-ai/day-254-the-openai-compatible-ecosystem/) | [blog](https://ai-roadmap-365.github.io/day-254-the-openai-compatible-ecosystem) | complete |
+| Day 255 | [Streaming Responses](content/sections/llms-and-generative-ai/day-255-streaming-responses/) | [lab](labs/sections/llms-and-generative-ai/day-255-streaming-responses/) | [blog](https://ai-roadmap-365.github.io/day-255-streaming-responses) | complete |
+| Day 256 | [Tool Use and Function Calling](content/sections/llms-and-generative-ai/day-256-tool-use-and-function-calling/) | [lab](labs/sections/llms-and-generative-ai/day-256-tool-use-and-function-calling/) | [blog](https://ai-roadmap-365.github.io/day-256-tool-use-and-function-calling) | complete |
+| Day 257 | [Working with Images and Documents](content/sections/llms-and-generative-ai/day-257-working-with-images-and-documents/) | [lab](labs/sections/llms-and-generative-ai/day-257-working-with-images-and-documents/) | [blog](https://ai-roadmap-365.github.io/day-257-working-with-images-and-documents) | complete |
+| Day 258 | [Cost, Caching, and Rate Limits](content/sections/llms-and-generative-ai/day-258-cost-caching-and-rate-limits/) | [lab](labs/sections/llms-and-generative-ai/day-258-cost-caching-and-rate-limits/) | [blog](https://ai-roadmap-365.github.io/day-258-cost-caching-and-rate-limits) | complete |
+| Day 259 | [Building a CLI Assistant](content/sections/llms-and-generative-ai/day-259-building-a-cli-assistant/) | [lab](labs/sections/llms-and-generative-ai/day-259-building-a-cli-assistant/) | [blog](https://ai-roadmap-365.github.io/day-259-building-a-cli-assistant) | complete |
 
 </details>
 <details>
-<summary>Days 260-266 · Embeddings and Vector Search — 0/7</summary>
+<summary>Days 260-266 · Embeddings and Vector Search — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 260 | What Embeddings Are | — | — | planned |
-| Day 261 | Semantic Similarity Search | — | — | planned |
-| Day 262 | Vector Databases | — | — | planned |
-| Day 263 | Chunking Strategies | — | — | planned |
-| Day 264 | Hybrid Search and Rerankers | — | — | planned |
-| Day 265 | Evaluating Retrieval Quality | — | — | planned |
-| Day 266 | Semantic Search over Your Own Notes | — | — | planned |
+| Day 260 | [What Embeddings Are](content/sections/llms-and-generative-ai/day-260-what-embeddings-are/) | [lab](labs/sections/llms-and-generative-ai/day-260-what-embeddings-are/) | [blog](https://ai-roadmap-365.github.io/day-260-what-embeddings-are) | complete |
+| Day 261 | [Semantic Similarity Search](content/sections/llms-and-generative-ai/day-261-semantic-similarity-search/) | [lab](labs/sections/llms-and-generative-ai/day-261-semantic-similarity-search/) | [blog](https://ai-roadmap-365.github.io/day-261-semantic-similarity-search) | complete |
+| Day 262 | [Vector Databases](content/sections/llms-and-generative-ai/day-262-vector-databases/) | [lab](labs/sections/llms-and-generative-ai/day-262-vector-databases/) | [blog](https://ai-roadmap-365.github.io/day-262-vector-databases) | complete |
+| Day 263 | [Chunking Strategies](content/sections/llms-and-generative-ai/day-263-chunking-strategies/) | [lab](labs/sections/llms-and-generative-ai/day-263-chunking-strategies/) | [blog](https://ai-roadmap-365.github.io/day-263-chunking-strategies) | complete |
+| Day 264 | [Hybrid Search and Rerankers](content/sections/llms-and-generative-ai/day-264-hybrid-search-and-rerankers/) | [lab](labs/sections/llms-and-generative-ai/day-264-hybrid-search-and-rerankers/) | [blog](https://ai-roadmap-365.github.io/day-264-hybrid-search-and-rerankers) | complete |
+| Day 265 | [Evaluating Retrieval Quality](content/sections/llms-and-generative-ai/day-265-evaluating-retrieval-quality/) | [lab](labs/sections/llms-and-generative-ai/day-265-evaluating-retrieval-quality/) | [blog](https://ai-roadmap-365.github.io/day-265-evaluating-retrieval-quality) | complete |
+| Day 266 | [Semantic Search over Your Own Notes](content/sections/llms-and-generative-ai/day-266-semantic-search-over-your-own-notes/) | [lab](labs/sections/llms-and-generative-ai/day-266-semantic-search-over-your-own-notes/) | [blog](https://ai-roadmap-365.github.io/day-266-semantic-search-over-your-own-notes) | complete |
 
 </details>
 <details>
-<summary>Days 267-273 · Retrieval-Augmented Generation — 0/7</summary>
+<summary>Days 267-273 · Retrieval-Augmented Generation — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 267 | The RAG Architecture | — | — | planned |
-| Day 268 | A Minimal RAG System from Scratch | — | — | planned |
-| Day 269 | RAG over PDFs and Messy Documents | — | — | planned |
-| Day 270 | Citations and Grounded Answers | — | — | planned |
-| Day 271 | Advanced RAG Patterns | — | — | planned |
-| Day 272 | Evaluating RAG Systems | — | — | planned |
-| Day 273 | A Documentation Assistant | — | — | planned |
+| Day 267 | [The RAG Architecture](content/sections/llms-and-generative-ai/day-267-the-rag-architecture/) | [lab](labs/sections/llms-and-generative-ai/day-267-the-rag-architecture/) | [blog](https://ai-roadmap-365.github.io/day-267-the-rag-architecture) | complete |
+| Day 268 | [A Minimal RAG System from Scratch](content/sections/llms-and-generative-ai/day-268-a-minimal-rag-system-from-scratch/) | [lab](labs/sections/llms-and-generative-ai/day-268-a-minimal-rag-system-from-scratch/) | [blog](https://ai-roadmap-365.github.io/day-268-a-minimal-rag-system-from-scratch) | complete |
+| Day 269 | [RAG over PDFs and Messy Documents](content/sections/llms-and-generative-ai/day-269-rag-over-pdfs-and-messy-documents/) | [lab](labs/sections/llms-and-generative-ai/day-269-rag-over-pdfs-and-messy-documents/) | [blog](https://ai-roadmap-365.github.io/day-269-rag-over-pdfs-and-messy-documents) | complete |
+| Day 270 | [Citations and Grounded Answers](content/sections/llms-and-generative-ai/day-270-citations-and-grounded-answers/) | [lab](labs/sections/llms-and-generative-ai/day-270-citations-and-grounded-answers/) | [blog](https://ai-roadmap-365.github.io/day-270-citations-and-grounded-answers) | complete |
+| Day 271 | [Advanced RAG Patterns](content/sections/llms-and-generative-ai/day-271-advanced-rag-patterns/) | [lab](labs/sections/llms-and-generative-ai/day-271-advanced-rag-patterns/) | [blog](https://ai-roadmap-365.github.io/day-271-advanced-rag-patterns) | complete |
+| Day 272 | [Evaluating RAG Systems](content/sections/llms-and-generative-ai/day-272-evaluating-rag-systems/) | [lab](labs/sections/llms-and-generative-ai/day-272-evaluating-rag-systems/) | [blog](https://ai-roadmap-365.github.io/day-272-evaluating-rag-systems) | complete |
+| Day 273 | [A Documentation Assistant](content/sections/llms-and-generative-ai/day-273-a-documentation-assistant/) | [lab](labs/sections/llms-and-generative-ai/day-273-a-documentation-assistant/) | [blog](https://ai-roadmap-365.github.io/day-273-a-documentation-assistant) | complete |
 
 </details>
 <details>
-<summary>Days 274-280 · Customizing and Running Models — 0/7</summary>
+<summary>Days 274-280 · Customizing and Running Models — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 274 | Prompting versus RAG versus Fine-Tuning | — | — | planned |
-| Day 275 | Fine-Tuning with LoRA | — | — | planned |
-| Day 276 | Building Fine-Tuning Datasets | — | — | planned |
-| Day 277 | Running Local Models with Ollama | — | — | planned |
-| Day 278 | Quantized Inference and llama.cpp | — | — | planned |
-| Day 279 | Serving Open Models | — | — | planned |
-| Day 280 | Fine-Tune and Serve Your Own Model | — | — | planned |
+| Day 274 | [Prompting versus RAG versus Fine-Tuning](content/sections/llms-and-generative-ai/day-274-prompting-versus-rag-versus-fine-tuning/) | [lab](labs/sections/llms-and-generative-ai/day-274-prompting-versus-rag-versus-fine-tuning/) | [blog](https://ai-roadmap-365.github.io/day-274-prompting-versus-rag-versus-fine-tuning) | complete |
+| Day 275 | [Fine-Tuning with LoRA](content/sections/llms-and-generative-ai/day-275-fine-tuning-with-lora/) | [lab](labs/sections/llms-and-generative-ai/day-275-fine-tuning-with-lora/) | [blog](https://ai-roadmap-365.github.io/day-275-fine-tuning-with-lora) | complete |
+| Day 276 | [Building Fine-Tuning Datasets](content/sections/llms-and-generative-ai/day-276-building-fine-tuning-datasets/) | [lab](labs/sections/llms-and-generative-ai/day-276-building-fine-tuning-datasets/) | [blog](https://ai-roadmap-365.github.io/day-276-building-fine-tuning-datasets) | complete |
+| Day 277 | [Running Local Models with Ollama](content/sections/llms-and-generative-ai/day-277-running-local-models-with-ollama/) | [lab](labs/sections/llms-and-generative-ai/day-277-running-local-models-with-ollama/) | [blog](https://ai-roadmap-365.github.io/day-277-running-local-models-with-ollama) | complete |
+| Day 278 | [Quantized Inference and llama.cpp](content/sections/llms-and-generative-ai/day-278-quantized-inference-and-llama-cpp/) | [lab](labs/sections/llms-and-generative-ai/day-278-quantized-inference-and-llama-cpp/) | [blog](https://ai-roadmap-365.github.io/day-278-quantized-inference-and-llama-cpp) | complete |
+| Day 279 | [Serving Open Models](content/sections/llms-and-generative-ai/day-279-serving-open-models/) | [lab](labs/sections/llms-and-generative-ai/day-279-serving-open-models/) | [blog](https://ai-roadmap-365.github.io/day-279-serving-open-models) | complete |
+| Day 280 | [Fine-Tune and Serve Your Own Model](content/sections/llms-and-generative-ai/day-280-fine-tune-and-serve-your-own/) | [lab](labs/sections/llms-and-generative-ai/day-280-fine-tune-and-serve-your-own/) | [blog](https://ai-roadmap-365.github.io/day-280-fine-tune-and-serve-your-own) | complete |
 
 </details>
 <details>

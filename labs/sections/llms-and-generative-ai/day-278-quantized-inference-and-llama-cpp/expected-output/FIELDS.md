@@ -1,0 +1,1 @@
+Field definitions for quantizer.

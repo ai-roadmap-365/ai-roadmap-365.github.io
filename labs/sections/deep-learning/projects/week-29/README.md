@@ -23,6 +23,27 @@ In this project, you will build a complete, end-to-end Handwritten Digit Classif
 5. Apply momentum coefficient `beta = 0.9` and learning rate `alpha = 0.1`.
 6. Track training loss and validation accuracy per epoch.
 
+## Expected output
+```
+[MNIST from Scratch Verification]
+1. Network Initialization:
+   - Layer 1: W1 (128, 784), b1 (128, 1) [He Normal Init]
+   - Layer 2: W2 (10, 128), b2 (10, 1) [He Normal Init]
+2. Training Convergence (20 Epochs):
+   - Epoch 1: Loss = 0.412, Val Accuracy = 88.4%
+   - Epoch 10: Loss = 0.086, Val Accuracy = 96.2%
+   - Epoch 20: Loss = 0.038, Val Accuracy = 97.4%
+3. Evaluation:
+   - Test Accuracy: 97.2% on 10,000 held-out test images
+   - All 10 digit classes achieve F1-Score >= 0.95
+```
+
+## Validation
+To validate your implementation:
+1. Verify that forward and backward propagation pass analytical gradient checks.
+2. Confirm that test accuracy reaches >= 95.0% on held-out MNIST test images.
+3. Ensure no external deep learning frameworks (PyTorch, TensorFlow) are imported.
+
 ## Deliverables
 - Complete Python module `mnist_from_scratch.py`.
 - Validation report showing >= 95% test accuracy on held-out MNIST digits.
