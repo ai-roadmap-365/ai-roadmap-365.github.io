@@ -1,1 +1,0 @@
-# Security - Day 325\nPII is scrubbed prior to multi-query expansion and HyDE passes.\n

@@ -4,7 +4,7 @@
 
 Two weeks to design, build, evaluate, secure, deploy, and present a complete AI application of your own.
 
-**7 of 15 lessons written.** Expand a subsection below to see its days.
+**15 of 15 lessons written.** Expand a subsection below to see its days.
 
 <details>
 <summary><strong>Days 351-357 · Capstone Build I: Foundation</strong> — 7/7 complete</summary>
@@ -23,19 +23,19 @@ Two weeks to design, build, evaluate, secure, deploy, and present a complete AI 
 
 </details>
 
-<details open>
-<summary><strong>Days 358-365 · Capstone Build II: Ship It</strong> — 0/8 complete</summary>
+<details>
+<summary><strong>Days 358-365 · Capstone Build II: Ship It</strong> — 8/8 complete</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 358 | Frontend and User Experience | — | — | planned |
-| Day 359 | Deploying Your Capstone | — | — | planned |
-| Day 360 | Monitoring and Cost Controls | — | — | planned |
-| Day 361 | Security Review of Your Capstone | — | — | planned |
-| Day 362 | Documentation and Demo | — | — | planned |
-| Day 363 | Portfolio, Resume, and Sharing Your Work | — | — | planned |
-| Day 364 | Capstone Retrospective | — | — | planned |
-| Day 365 | Graduation: Your AI Roadmap Going Forward | — | — | planned |
+| Day 358 | [Frontend and User Experience](./day-358-frontend-and-user-experience/) | [lab](../../../labs/sections/capstone/day-358-frontend-and-user-experience/) | [blog](https://ai-roadmap-365.github.io/day-358-frontend-and-user-experience) | complete |
+| Day 359 | [Deploying Your Capstone](./day-359-deploying-your-capstone/) | [lab](../../../labs/sections/capstone/day-359-deploying-your-capstone/) | [blog](https://ai-roadmap-365.github.io/day-359-deploying-your-capstone) | complete |
+| Day 360 | [Monitoring and Cost Controls](./day-360-monitoring-and-cost-controls/) | [lab](../../../labs/sections/capstone/day-360-monitoring-and-cost-controls/) | [blog](https://ai-roadmap-365.github.io/day-360-monitoring-and-cost-controls) | complete |
+| Day 361 | [Security Review of Your Capstone](./day-361-security-review-of-your-capstone/) | [lab](../../../labs/sections/capstone/day-361-security-review-of-your-capstone/) | [blog](https://ai-roadmap-365.github.io/day-361-security-review-of-your-capstone) | complete |
+| Day 362 | [Documentation and Demo](./day-362-documentation-and-demo/) | [lab](../../../labs/sections/capstone/day-362-documentation-and-demo/) | [blog](https://ai-roadmap-365.github.io/day-362-documentation-and-demo) | complete |
+| Day 363 | [Portfolio, Resume, and Sharing Your Work](./day-363-portfolio-resume-and-sharing-your-work/) | [lab](../../../labs/sections/capstone/day-363-portfolio-resume-and-sharing-your-work/) | [blog](https://ai-roadmap-365.github.io/day-363-portfolio-resume-and-sharing-your-work) | complete |
+| Day 364 | [Capstone Retrospective](./day-364-capstone-retrospective/) | [lab](../../../labs/sections/capstone/day-364-capstone-retrospective/) | [blog](https://ai-roadmap-365.github.io/day-364-capstone-retrospective) | complete |
+| Day 365 | [Graduation: Your AI Roadmap Going Forward](./day-365-graduation-your-ai-roadmap-going-forward/) | [lab](../../../labs/sections/capstone/day-365-graduation-your-ai-roadmap-going-forward/) | [blog](https://ai-roadmap-365.github.io/day-365-graduation-your-ai-roadmap-going-forward) | complete |
 
 **Project:** Capstone Final Delivery — The finished capstone: deployed, monitored, security-reviewed, documented, and demonstrated.
 

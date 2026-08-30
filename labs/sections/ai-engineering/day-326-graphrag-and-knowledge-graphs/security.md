@@ -1,1 +1,0 @@
-# Security - Day 326\nEdge traversal queries enforce tenant partition checks on every graph hop.\n

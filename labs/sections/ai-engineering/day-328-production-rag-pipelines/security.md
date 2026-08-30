@@ -1,1 +1,0 @@
-# Security - Day 328\nDeleted documents cascade immediately across all vector storage nodes.\n

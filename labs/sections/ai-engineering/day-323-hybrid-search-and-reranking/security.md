@@ -1,1 +1,0 @@
-# Security - Day 323\nEnsure tenant partition filters are applied to all sparse and dense indices.\n

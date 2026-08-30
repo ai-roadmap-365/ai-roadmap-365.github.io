@@ -1,1 +1,0 @@
-# Security - Day 324\nChild chunks inherit parent document role-based access control (RBAC) tags.\n
