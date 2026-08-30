@@ -7,7 +7,7 @@ from examples.the_openai_compatible_ecosystem_lib import (
 def test_router_priority_order():
     router = MultiProviderRouter()
     router.register_provider(ProviderConfig("Cloud_Tier2", "https://api.cloud.com/v1", "k2", "m2", priority=2))
-    router.register_provider(ProviderConfig("Local_Tier1", "http://localhost:8000/v1", "k1", "m1", priority=1))
+    router.register_provider(ProviderConfig("Local_Tier1", "http://127.0.0.1:8000/v1", "k1", "m1", priority=1))
 
     resp = router.dispatch_completion([{"role": "user", "content": "Test"}])
     assert resp["routed_provider"] == "Local_Tier1"

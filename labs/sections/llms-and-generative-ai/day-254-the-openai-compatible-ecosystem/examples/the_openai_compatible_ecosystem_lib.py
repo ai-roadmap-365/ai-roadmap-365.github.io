@@ -54,7 +54,7 @@ class MultiProviderRouter:
 
 def run_router_demo():
     router = MultiProviderRouter()
-    router.register_provider(ProviderConfig("vLLM_Primary", "http://localhost:8000/v1", "EMPTY", "llama-3.3-70b", priority=1))
+    router.register_provider(ProviderConfig("vLLM_Primary", "http://127.0.0.1:8000/v1", "EMPTY", "llama-3.3-70b", priority=1))
     router.register_provider(ProviderConfig("OpenAI_Backup", "https://api.openai.com/v1", "sk-mock", "gpt-4o", priority=2))
 
     resp = router.dispatch_completion([{"role": "user", "content": "Hello router."}])
