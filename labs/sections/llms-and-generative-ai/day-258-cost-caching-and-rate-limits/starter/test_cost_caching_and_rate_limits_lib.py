@@ -9,8 +9,12 @@ def test_cost_calculation():
     ledger = LLMCostLedger()
     # 500 input @ $3 = 0.0015, 10000 cached @ $0.3 = 0.003, 200 out @ $15 = 0.003 -> Total = 0.0075
     cost = ledger.record_usage("claude-3-5-sonnet", 500, 10000, 200)
-    assert cost == 0.0075
-    assert ledger.total_cost_usd == 0.0075
+
+    # Binary floating point cannot represent 0.0075 exactly, so a computed
+    # cost is never == the decimal literal. Compare with a tolerance; the
+    # ledger keeps full precision and rounding happens at display time.
+    assert cost == pytest.approx(0.0075)
+    assert ledger.total_cost_usd == pytest.approx(0.0075)
     assert ledger.total_cached_tokens == 10000
 
 def test_token_bucket():

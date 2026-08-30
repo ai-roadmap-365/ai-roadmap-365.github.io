@@ -63,7 +63,7 @@ python3 examples/chunking_strategies_lib.py
 
 ## Expected output
 ```
-Chunker Demo Executed. Generated 3 overlapping chunks.
+Chunker Demo Executed. Generated 2 overlapping chunks.
 ```
 
 ## Validation steps

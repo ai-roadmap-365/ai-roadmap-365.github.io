@@ -53,7 +53,7 @@ def test_random_search_scratch_iris():
     }
     
     best_params, best_score = tuning.random_search_scratch(
-        DecisionTreeClassifier, dists, n_iter=6, X, y, cv=3, random_state=42
+        DecisionTreeClassifier, dists, 6, X, y, cv=3, random_state=42
     )
     
     assert best_score >= 0.85

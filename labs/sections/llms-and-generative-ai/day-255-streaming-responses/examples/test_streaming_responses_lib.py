@@ -32,4 +32,11 @@ def test_single_token_stream():
 
     assert result["text"] == "Hello"
     assert result["token_count"] == 1
-    assert result["ttft_ms"] > 0
+
+    # A chunk handed over with no delay legitimately has a time-to-first-token
+    # of ~0. Asserting > 0 here asserts that the clock is slow, not that the
+    # aggregator works. What must hold is that it is non-negative and inside
+    # the total, and that one token means no inter-token gap.
+    assert result["ttft_ms"] >= 0
+    assert result["ttft_ms"] <= result["total_duration_ms"]
+    assert result["itl_ms"] == 0.0

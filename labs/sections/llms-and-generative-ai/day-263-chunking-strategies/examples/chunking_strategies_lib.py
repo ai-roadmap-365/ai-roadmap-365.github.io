@@ -28,8 +28,7 @@ class DocumentChunker:
         return chunks
 
     def markdown_header_chunk(self, markdown_text: str) -> List[Dict[str, Any]]:
-        lines = markdown_text.split("
-")
+        lines = markdown_text.split("\n")
         chunks = []
         current_header = "Introduction"
         current_lines = []
@@ -37,8 +36,7 @@ class DocumentChunker:
         for line in lines:
             if line.startswith("#"):
                 if current_lines:
-                    text_content = "
-".join(current_lines).strip()
+                    text_content = "\n".join(current_lines).strip()
                     if text_content:
                         chunks.append({
                             "chunk_id": len(chunks),
@@ -51,8 +49,7 @@ class DocumentChunker:
                 current_lines.append(line)
 
         if current_lines:
-            text_content = "
-".join(current_lines).strip()
+            text_content = "\n".join(current_lines).strip()
             if text_content:
                 chunks.append({
                     "chunk_id": len(chunks),

@@ -43,7 +43,12 @@ class LLMCostLedger:
         self.total_input_tokens += input_tokens
         self.total_cached_tokens += cached_tokens
         self.total_output_tokens += output_tokens
-        return round(cost, 6)
+
+        # Return the same value that was accumulated. Rounding here while
+        # adding the unrounded figure to the total meant the returned costs
+        # did not sum to total_cost_usd. Round at the point of DISPLAY, not
+        # inside the ledger.
+        return cost
 
 def calculate_full_jitter_backoff(attempt: int, base_delay: float = 1.0, max_delay: float = 32.0) -> float:
     ceiling = min(max_delay, base_delay * (2 ** attempt))
@@ -54,7 +59,8 @@ def run_cost_demo():
     cost = ledger.record_usage("claude-3-5-sonnet", 500, 10000, 200)
     bucket = TokenBucket(10, 2)
     consumed = bucket.consume(5)
-    print(f"Cost Demo Executed. Cost: ${cost}, Token Consumed: {consumed}")
+    # Round HERE, at the point of display -- the ledger keeps full precision.
+    print(f"Cost Demo Executed. Cost: ${cost:.4f}, Token Consumed: {consumed}")
     return cost, consumed
 
 if __name__ == "__main__":

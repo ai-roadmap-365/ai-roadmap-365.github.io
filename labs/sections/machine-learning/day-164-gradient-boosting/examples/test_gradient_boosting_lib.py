@@ -25,8 +25,20 @@ def test_gradient_boosting_regressor_convergence():
     preds = gbr_scratch.predict(X)
     
     mse = np.mean((y - preds) ** 2)
-    # Residuals should decrease rapidly
-    assert mse < 5.0
+
+    # y here has a variance of about 12,300, so an absolute MSE bound says
+    # nothing about convergence. Judge it on the scale-free measure.
+    r2 = 1.0 - mse / y.var()
+    assert r2 > 0.97
+
+    # The stronger check: this is the same algorithm sklearn implements, so it
+    # should land in the same place. It does -- both reach MSE 224.41 here.
+    mse_sklearn = np.mean(
+        (y - GradientBoostingRegressor(
+            n_estimators=40, learning_rate=0.1, max_depth=3, random_state=42
+        ).fit(X, y).predict(X)) ** 2
+    )
+    assert np.isclose(mse, mse_sklearn, rtol=0.05)
 
 
 def test_gradient_boosting_classifier_breast_cancer():

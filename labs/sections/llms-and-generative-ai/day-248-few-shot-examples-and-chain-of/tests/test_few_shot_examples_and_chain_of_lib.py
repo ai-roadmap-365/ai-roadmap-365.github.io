@@ -10,9 +10,7 @@ def test_few_shot_cot_compilation():
     assert "<examples>" in prompt
     assert '<example id="1">' in prompt
     assert "<reasoning>1 plus 1 is 2</reasoning>" in prompt
-    assert "<query>
-2+2
-</query>" in prompt
+    assert "<query>\n2+2\n</query>" in prompt
     assert "<scratchpad>" in prompt
 
 def test_self_consistency_majority_voting():

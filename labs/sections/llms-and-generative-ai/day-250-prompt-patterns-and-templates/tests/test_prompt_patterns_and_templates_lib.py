@@ -5,15 +5,9 @@ def test_pct_pattern_rendering():
     engine = PromptPatternEngine()
     prompt = engine.render_pct("Auditor", "Reviewing logs", "Find errors", "JSON list")
 
-    assert "<role>
-You are a Auditor.
-</role>" in prompt
-    assert "<context>
-Reviewing logs
-</context>" in prompt
-    assert "<task>
-Find errors
-</task>" in prompt
+    assert "<role>\nYou are a Auditor.\n</role>" in prompt
+    assert "<context>\nReviewing logs\n</context>" in prompt
+    assert "<task>\nFind errors\n</task>" in prompt
     assert "<output_format>" in prompt
 
 def test_flipped_interaction_protocol():

@@ -1,12 +1,18 @@
 import re
 from typing import List, Dict, Any
 
+# Split on sentence terminators, but never on a decimal point: a naive
+# re.split(r'[.!?]') turns "99.99% uptime." into two claims and quietly halves
+# the faithfulness score of any answer that quotes a figure.
+_SENTENCE_END = re.compile(r'(?:[!?]|(?<!\d)\.|\.(?!\d))\s*')
+
+
 class RAGTriadEvaluator:
     def __init__(self):
         pass
 
     def evaluate_faithfulness(self, context: str, answer: str) -> Dict[str, Any]:
-        sentences = [s.strip() for s in re.split(r'[.!?]', answer) if s.strip()]
+        sentences = [s.strip() for s in re.split(_SENTENCE_END, answer) if s.strip()]
         if not sentences:
             return {"faithfulness_score": 1.0, "total_claims": 0, "supported_claims": 0, "details": []}
 

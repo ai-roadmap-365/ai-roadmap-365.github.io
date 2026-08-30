@@ -21,7 +21,11 @@ class KMeansFromScratch:
         centers[0] = X[first_idx]
 
         for k in range(1, self.n_clusters):
-            dists = np.min(np.linalg.norm(X[:, np.newaxis, :] - centers[:k, np.newaxis, :], axis=2)**2, axis=0)
+            # (n, 1, d) - (1, k, d) -> (n, k, d): every point against every
+            # chosen centre. Putting the newaxis on the wrong side of centers
+            # collapses this to a single distance and probs comes out length 1.
+            diff = X[:, np.newaxis, :] - centers[np.newaxis, :k, :]
+            dists = np.min(np.linalg.norm(diff, axis=2) ** 2, axis=1)
             probs = dists / np.sum(dists)
             next_idx = rng.choice(n_samples, p=probs)
             centers[k] = X[next_idx]

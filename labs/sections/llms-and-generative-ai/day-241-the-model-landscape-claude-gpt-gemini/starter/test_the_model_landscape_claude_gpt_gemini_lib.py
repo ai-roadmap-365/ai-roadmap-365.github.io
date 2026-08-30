@@ -5,8 +5,7 @@ def test_router_dispatch_decisions():
     router = ModelRouter()
     
     # Code prompt should go to Claude Sonnet
-    code_prompt = "def merge_sort(arr):
-    if len(arr) <= 1: return arr"
+    code_prompt = "def merge_sort(arr):\n    if len(arr) <= 1: return arr"
     assert router.route_query(code_prompt) == "claude-3.5-sonnet"
 
     # Fast classification prompt should go to GPT-4o-mini

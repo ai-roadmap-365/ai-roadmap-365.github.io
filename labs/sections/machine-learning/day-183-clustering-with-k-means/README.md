@@ -63,7 +63,7 @@ python3 examples/clustering_with_k_means_lib.py
 
 ## Expected output
 ```
-K-Means converged with Inertia: 384.22
+K-Means converged with Inertia: 354.93
 ```
 
 ## Validation steps
