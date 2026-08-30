@@ -22,7 +22,17 @@ const PATTERNS = [
   [/xox[bpors]-[0-9a-zA-Z-]{10,}/, 'Slack token'],
 ];
 
-const tracked = execSync('git ls-files', { cwd: repoRoot, encoding: 'utf8' }).trim().split('\n');
+// `git ls-files` passed Node's 1 MiB default maxBuffer once the course reached
+// ~357 days, and execSync then dies with ENOBUFS — which reads like a scan
+// failure rather than a size limit. Same fix already applied in
+// scripts/release/site.mjs and public-sync.mjs.
+const tracked = execSync('git ls-files', {
+  cwd: repoRoot,
+  encoding: 'utf8',
+  maxBuffer: 100 * 1024 * 1024,
+})
+  .trim()
+  .split('\n');
 
 for (const rel of tracked) {
   if (/\.(png|jpg|jpeg|gif|ico|woff2?|lock)$/.test(rel)) continue;

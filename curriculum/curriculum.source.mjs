@@ -10,6 +10,26 @@
  * inside the week hierarchy required by the content layout.
  */
 
+/**
+ * A day is normally written as its title alone and the slug is derived. Where a
+ * day is ALREADY PUBLISHED under a slug that `slugify` would not reproduce, it
+ * is written as `{ title, slug }` instead so the live URL is pinned. Changing a
+ * published slug breaks the lesson URL, its lab URL and every link to them, and
+ * GitHub Pages does not redirect (A38) — so the slug follows what shipped, not
+ * the other way round.
+ *
+ * Day 341 is the only such case: `A/B` has no single correct slug rule. Removing
+ * the slash gives `ab-tests` (what shipped) but would turn day 335's `CI/CD`
+ * into `cicd`, and its published slug is `ci-cd`.
+ */
+export function dayTitle(entry) {
+  return typeof entry === 'string' ? entry : entry.title;
+}
+
+export function daySlug(entry) {
+  return typeof entry === 'string' ? slugify(entry) : entry.slug;
+}
+
 export function slugify(title) {
   return title
     .toLowerCase()
@@ -1047,7 +1067,13 @@ export const sections = [
               'GPU Serving and Inference Infrastructure',
               'Monitoring and Alerting',
               'Logging and Analytics for AI Features',
-              'Rollouts, A/B Tests, and Feature Flags',
+              // Published slug pinned: slugify() would give
+              // `rollouts-a-b-tests-and-feature`, but the lesson has shipped at
+              // `rollouts-ab-tests-and-feature-flags`. See dayTitle/daySlug.
+              {
+                title: 'Rollouts, A/B Tests, and Feature Flags',
+                slug: 'rollouts-ab-tests-and-feature-flags',
+              },
               'Incidents and Rollbacks',
               'A Monitored Production Deployment',
             ],

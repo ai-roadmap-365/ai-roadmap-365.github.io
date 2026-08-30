@@ -13,7 +13,7 @@
 Rendered into `/day-330-containerizing-ai-applications/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-330-containerizing-ai-applications/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-330-docker-fundamentals/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

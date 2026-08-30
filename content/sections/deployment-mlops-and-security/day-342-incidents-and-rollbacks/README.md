@@ -13,7 +13,7 @@
 Rendered into `/day-342-incidents-and-rollbacks/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-342-incidents-and-rollbacks/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-342-incidents-and-rollbacks/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

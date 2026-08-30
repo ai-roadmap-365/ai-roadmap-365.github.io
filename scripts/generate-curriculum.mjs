@@ -9,7 +9,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import { sections, slugify } from '../curriculum/curriculum.source.mjs';
+import { sections, dayTitle, daySlug } from '../curriculum/curriculum.source.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -38,13 +38,13 @@ const compiled = sections.map((section, si) => {
             number: wn,
             theme: week.theme,
             project: week.project,
-            days: week.days.map((title) => {
+            days: week.days.map((entry) => {
               dayNumber += 1;
               return {
                 id: `D${String(dayNumber).padStart(3, '0')}`,
                 number: dayNumber,
-                slug: slugify(title),
-                title,
+                slug: daySlug(entry),
+                title: dayTitle(entry),
               };
             }),
           };

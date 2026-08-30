@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { loadCurriculum, loadConfig, allDays, repoRoot, makeReporter } from '../lib/course.mjs';
-import { sections as source, slugify } from '../../curriculum/curriculum.source.mjs';
+import { sections as source, dayTitle, daySlug } from '../../curriculum/curriculum.source.mjs';
 
 const r = makeReporter('validate:curriculum');
 const curriculum = loadCurriculum();
@@ -41,7 +41,7 @@ for (const s of source)
     for (const w of b.weeks)
       for (const t of w.days) {
         sourceDayCount += 1;
-        sourceTitles.push({ title: t, slug: slugify(t) });
+        sourceTitles.push({ title: dayTitle(t), slug: daySlug(t) });
       }
 if (sourceDayCount !== days.length) {
   r.fail(

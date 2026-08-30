@@ -13,7 +13,7 @@
 Rendered into `/day-332-autoscaling-and-gpu-orchestration/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-332-autoscaling-and-gpu-orchestration/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-332-docker-compose-for-multi-service-apps/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

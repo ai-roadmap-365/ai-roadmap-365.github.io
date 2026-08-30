@@ -13,7 +13,7 @@
 Rendered into `/day-333-edge-deployment-and-quantization/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-333-edge-deployment-and-quantization/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-333-kubernetes-concepts/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

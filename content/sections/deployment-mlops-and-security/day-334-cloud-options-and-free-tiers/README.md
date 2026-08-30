@@ -13,7 +13,7 @@
 Rendered into `/day-334-caching-and-speculative-decoding/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-334-caching-and-speculative-decoding/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-334-cloud-options-and-free-tiers/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

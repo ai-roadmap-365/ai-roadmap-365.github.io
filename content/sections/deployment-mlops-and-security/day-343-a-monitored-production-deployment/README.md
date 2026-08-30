@@ -13,7 +13,7 @@
 Rendered into `/day-343-a-monitored-production-deployment/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-343-a-monitored-production-deployment/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-343-a-monitored-production-deployment/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

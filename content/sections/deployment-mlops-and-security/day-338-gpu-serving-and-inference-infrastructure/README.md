@@ -13,7 +13,7 @@
 Rendered into `/day-338-gpu-serving-and-inference-infrastructure/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-338-gpu-serving-and-inference-infrastructure/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-338-gpu-serving-and-inference-infrastructure/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

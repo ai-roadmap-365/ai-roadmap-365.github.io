@@ -13,7 +13,7 @@
 Rendered into `/day-335-batch-processing-and-job-queues/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-335-batch-processing-and-job-queues/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-335-ci-cd-with-github-actions/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

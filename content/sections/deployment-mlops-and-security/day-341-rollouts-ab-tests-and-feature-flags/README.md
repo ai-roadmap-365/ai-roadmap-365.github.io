@@ -13,7 +13,7 @@
 Rendered into `/day-341-rollouts-ab-tests-and-feature-flags/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-341-rollouts-ab-tests-and-feature-flags/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-341-rollouts-ab-tests-and-feature-flags/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

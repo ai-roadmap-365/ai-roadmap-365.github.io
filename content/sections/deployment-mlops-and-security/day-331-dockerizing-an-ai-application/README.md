@@ -13,7 +13,7 @@
 Rendered into `/day-331-vllm-tgi-and-inference-servers/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-331-vllm-tgi-and-inference-servers/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-331-dockerizing-an-ai-application/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.

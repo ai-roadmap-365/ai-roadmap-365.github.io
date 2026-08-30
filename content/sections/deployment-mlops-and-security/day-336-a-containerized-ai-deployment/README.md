@@ -13,7 +13,7 @@
 Rendered into `/day-336-a-deployed-ai-system/` and compiled for offline documentation.
 
 ## Related directories
-- [Lab Directory](../../../../labs/sections/ai-engineering/day-336-a-deployed-ai-system/README.md)
+- [Lab Directory](../../../../labs/sections/deployment-mlops-and-security/day-336-a-containerized-ai-deployment/README.md)
 
 ## Editing rules
 - No unescaped curly braces in prose.
