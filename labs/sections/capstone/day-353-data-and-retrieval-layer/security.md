@@ -1,0 +1,1 @@
+# Security - Day 353\nRetrieval engine uses SHA256 chunk hashing and in-memory parameter isolation.\n

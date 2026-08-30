@@ -1,0 +1,1 @@
+# Security - Day 352\nArchitecture linter enforces failure domain isolation and security perimeter boundaries.\n

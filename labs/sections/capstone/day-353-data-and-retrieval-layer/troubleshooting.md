@@ -1,0 +1,1 @@
+# Troubleshooting - Day 353\nVerify all dense embedding vectors have identical dimensions.\n

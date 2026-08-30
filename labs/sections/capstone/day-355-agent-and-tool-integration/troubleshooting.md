@@ -1,0 +1,1 @@
+# Troubleshooting - Day 355\nVerify tool names and parameter schemas match exactly between model output and registry.\n

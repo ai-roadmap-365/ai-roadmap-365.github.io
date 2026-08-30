@@ -1,0 +1,3 @@
+# Measured Values
+- `faithfulness_score`: 0.95
+- `context_recall_score`: 0.92

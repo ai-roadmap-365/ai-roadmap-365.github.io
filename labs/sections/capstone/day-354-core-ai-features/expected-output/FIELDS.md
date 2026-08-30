@@ -1,0 +1,3 @@
+# Measured Values
+- `ttft_latency_ms`: 320
+- `schema_compliance_rate`: 100.0

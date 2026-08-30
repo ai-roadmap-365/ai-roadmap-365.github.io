@@ -1,0 +1,1 @@
+# Security - Week 51 Capstone Project\nVertical slice executes in isolated memory with schema validation and tool parameter boundaries.\n

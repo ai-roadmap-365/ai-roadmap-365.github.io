@@ -1,0 +1,1 @@
+# Security - Day 354\nCore AI engine isolates context in XML tags and validates structured JSON schemas.\n

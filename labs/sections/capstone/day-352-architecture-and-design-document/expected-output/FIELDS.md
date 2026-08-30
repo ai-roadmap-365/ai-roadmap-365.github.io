@@ -1,0 +1,3 @@
+# Measured Values
+- `compliance_score`: 100.0
+- `sections_linted`: 6

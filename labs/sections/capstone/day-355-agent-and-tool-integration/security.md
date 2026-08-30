@@ -1,0 +1,1 @@
+# Security - Day 355\nAgent dispatcher enforces sandboxed tool permissions and bounds maximum execution cycles.\n

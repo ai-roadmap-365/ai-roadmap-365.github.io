@@ -2,7 +2,7 @@
 
 > GENERATED — do not edit by hand. Run `npm run generate:section-nav`.
 
-The complete map of all nine courses: **322 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
+The complete map of all nine courses: **329 of 365 days complete.** Click a course to expand it, then a subsection, to drill down to individual days — nothing is shown all at once.
 
 <details>
 <summary><h3>Course01 · Computing Foundations — 42/42 complete</h3></summary>
@@ -769,22 +769,22 @@ Containers, cloud, CI/CD, monitoring, and the security discipline AI systems dem
 </details>
 
 <details>
-<summary><h3>Course09 · Capstone — 0/15 complete</h3></summary>
+<summary><h3>Course09 · Capstone — 7/15 complete</h3></summary>
 
 Two weeks to design, build, evaluate, secure, deploy, and present a complete AI application of your own.
 
 <details>
-<summary>Days 351-357 · Capstone Build I: Foundation — 0/7</summary>
+<summary>Days 351-357 · Capstone Build I: Foundation — 7/7</summary>
 
 | Day | Lesson | Lab | Blog | Status |
 | --- | --- | --- | --- | --- |
-| Day 351 | Choosing and Scoping Your Capstone | — | — | planned |
-| Day 352 | Architecture and Design Document | — | — | planned |
-| Day 353 | Data and Retrieval Layer | — | — | planned |
-| Day 354 | Core AI Features | — | — | planned |
-| Day 355 | Agent and Tool Integration | — | — | planned |
-| Day 356 | Tests and Evals for Your Capstone | — | — | planned |
-| Day 357 | Milestone Review and Course Correction | — | — | planned |
+| Day 351 | [Choosing and Scoping Your Capstone](content/sections/capstone/day-351-choosing-and-scoping-your-capstone/) | [lab](labs/sections/capstone/day-351-choosing-and-scoping-your-capstone/) | [blog](https://ai-roadmap-365.github.io/day-351-choosing-and-scoping-your-capstone) | complete |
+| Day 352 | [Architecture and Design Document](content/sections/capstone/day-352-architecture-and-design-document/) | [lab](labs/sections/capstone/day-352-architecture-and-design-document/) | [blog](https://ai-roadmap-365.github.io/day-352-architecture-and-design-document) | complete |
+| Day 353 | [Data and Retrieval Layer](content/sections/capstone/day-353-data-and-retrieval-layer/) | [lab](labs/sections/capstone/day-353-data-and-retrieval-layer/) | [blog](https://ai-roadmap-365.github.io/day-353-data-and-retrieval-layer) | complete |
+| Day 354 | [Core AI Features](content/sections/capstone/day-354-core-ai-features/) | [lab](labs/sections/capstone/day-354-core-ai-features/) | [blog](https://ai-roadmap-365.github.io/day-354-core-ai-features) | complete |
+| Day 355 | [Agent and Tool Integration](content/sections/capstone/day-355-agent-and-tool-integration/) | [lab](labs/sections/capstone/day-355-agent-and-tool-integration/) | [blog](https://ai-roadmap-365.github.io/day-355-agent-and-tool-integration) | complete |
+| Day 356 | [Tests and Evals for Your Capstone](content/sections/capstone/day-356-tests-and-evals-for-your-capstone/) | [lab](labs/sections/capstone/day-356-tests-and-evals-for-your-capstone/) | [blog](https://ai-roadmap-365.github.io/day-356-tests-and-evals-for-your-capstone) | complete |
+| Day 357 | [Milestone Review and Course Correction](content/sections/capstone/day-357-milestone-review-and-course-correction/) | [lab](labs/sections/capstone/day-357-milestone-review-and-course-correction/) | [blog](https://ai-roadmap-365.github.io/day-357-milestone-review-and-course-correction) | complete |
 
 </details>
 <details>
