@@ -1,392 +1,297 @@
 ---
 day: 335
-title: "CI/CD with GitHub Actions"
+title: 'CI/CD with GitHub Actions'
 ---
 
 ## Why this matters
 
-When companies need to process millions of documents (e.g. summarizing 5 million customer support tickets, generating embeddings for 10 million catalog items, or classifying 50 million legal filings), sending individual HTTP requests to online real-time APIs is an operational disaster:
-- **Catastrophic Cloud Costs:** Paying standard on-demand API rates for 10 million requests costs **`20,000 to `100,000+**, when offline batch APIs offer guaranteed 50% discounts.
-- **Connection Drop Failures:** A network hiccup on hour 6 of a script terminates the run, leaving data in an unknown half-processed state.
-- **Poison Pill Stalls:** A single malformed input with 50,000 tokens crashes the GPU worker, causing naive scripts to get trapped in infinite retry loops.
+Every pipeline is slow, and every team knows which job to blame. It is usually the one that has never caught anything — the licence scan, the docs build, the stage somebody added two years ago for a reason nobody remembers.
 
-Architecting **Fault-Tolerant Distributed Batch Inference Pipelines** (Celery/Ray Data, Redis brokers, idempotent checkpoint databases, Spot GPU pools, and Dead-Letter Queues) enables processing millions of items with 70% lower compute costs and zero data loss.
+Delete it and the pipeline gets no faster. Here is the measurement from today's lab:
 
-![Distributed Batch Inference Pipeline Architecture showing Input Data Sliced into Batches, Message Broker Queue, Distributed GPU Worker Pool, Checkpoint Database, and Dead-Letter Queue](./assets/distributed-batch-inference-pipeline-architecture.svg)
+```text
+licence-scan   NOT on the critical path   wall 12.7 -> 12.7 (saves 0.0)
+docs-build     NOT on the critical path   wall 12.7 -> 12.7 (saves 0.0)
+```
+
+Zero seconds, for both. Nothing was waiting for either of them, so removing them cannot make anything finish sooner. Meanwhile:
+
+```text
+install 4.5 -> 0.8 min (a dependency cache)
+wall 12.7 -> 9.0 min   saves 3.7 min per run
+```
+
+One cache, on the one job everything else waits for, saves nearly four minutes on every run for everyone.
+
+The reason the instinct fails is that a pipeline has **two** durations, and they are improved by different actions. Wall clock is the critical path — what the person watching the pull request waits for. Runner minutes are the sum of everything — what you are billed for. Deleting a useless off-path job improves the second and not the first, which is why the pipeline still feels slow after a satisfying afternoon of cleanup.
+
+![Two Durations, Two Different Fixes contrasting critical path wall clock against total runner minutes](./assets/two-durations-two-fixes.svg)
 
 ## The idea in plain language
 
-Think of batch inference like **an industrial commercial laundry facility compared to a residential home washing machine**:
+A workflow is a directed graph. Jobs are nodes, `needs:` gives the edges, and everything useful follows from reading it as a graph.
 
-- **Online Real-Time Serving (Home Washing Machine):** You wash one shirt as fast as possible so you can wear it immediately (**Sub-second Latency, Expensive & Inefficient per Item**).
-- **Offline Batch Processing (Industrial Laundry):** The facility collects 5,000 hotel towels in massive bins (**Batch Chunks**), loads them into gigantic industrial washers running at midnight when electricity is 70% cheaper (**Spot GPUs & 50% Discount Batch API**), and automatically sets aside stained towels into a separate repair bin (**Dead-Letter Queue**).
-- **The Clipboard (Idempotent Checkpointing):** The shift supervisor checks off each finished pallet of laundry on a master log sheet (**Checkpoint DB**). If the power blinks off, they resume with Pallet 42 without re-washing Pallets 1 through 41.
+**A job starts when everything it needs has finished.** So its finish time is the latest of its dependencies, plus its own duration. Jobs with no dependency on each other run at the same time.
+
+**Wall clock is the critical path** — the longest chain of dependent jobs. In the lab's pipeline that is `checkout → install → integration → deploy`, at 12.7 minutes. Six other jobs run inside that window and cost nothing in waiting.
+
+**Runner minutes are the sum**, 22.2 in the same pipeline. The 9.5-minute gap is parallel work: real money, no waiting.
+
+To make a pipeline **faster**, shorten the critical path — cache the slow job on it, split it, or move it off. To make it **cheaper**, remove work anywhere. Those are different jobs and they are frequently confused.
+
+The third question is not about time at all. `pull_request_target` runs a workflow with your repository's secrets against code that a fork controls. It is one word different from the safe trigger, and it is how CI secrets leak.
 
 ## Historical background
 
-Batch machine learning pipelines evolved through three distinct eras:
+### CruiseControl and continuous integration, 2001
 
-### 1. Sequential Python Scripts (2018–2020)
-Engineers wrote `for item in dataset: call_model(item)` scripts running on single EC2 instances. Any network failure or OOM crash aborted the entire job.
+CI began as a practice before it was a product: integrate frequently, build automatically, keep the build green. CruiseControl was the first widely used server. The insight was social — a broken build is everyone's problem — and the tooling followed.
 
-### 2. Microservice Task Queues (Celery & RabbitMQ) (2020–2023)
-Engineering teams decoupled ingestion from execution using Celery workers. However, running PyTorch models inside standard Python workers caused massive memory fragmentation and slow GPU batch packing.
+### Jenkins (Hudson), 2005
 
-### 3. Distributed Streaming AI Engines (Ray Data & Batch APIs) (2023–Present)
-Modern systems leverage Ray Data to stream dataset chunks across persistent GPU actors with continuous batch packing, paired with managed asynchronous Batch APIs (OpenAI Batch API, AWS Bedrock Batch).
+Dominated for a decade and taught the industry the failure mode of a pipeline defined by clicking through a web interface: the build is not in version control, it drifts, and nobody can reproduce it.
+
+### Pipeline as code, 2015 onward
+
+Travis CI's `.travis.yml`, then Jenkinsfile, then GitLab CI. Putting the pipeline in the repository made it reviewable, diffable and branchable, which is why every modern system does it. It also made pipelines grow — a stage is now a small diff rather than a conversation with whoever administers the server.
+
+### GitHub Actions, 2019
+
+The distinguishing idea was the marketplace: `uses: some-org/some-action@v3` composes somebody else's step into your build. Enormously convenient, and it made CI the place where most organisations run the most untrusted code with the highest privilege.
+
+### `pull_request_target`, 2020
+
+Added because workflows on fork pull requests could not label, comment or triage — they had no token with write access. The new trigger runs in the base repository's context with its secrets. Within months it was being exploited in the obvious way, and it remains the sharpest edge in the product.
 
 ## What it is — and what it is not
 
-Let us define the core principles of high-throughput batch inference:
+CI/CD is an automated pipeline that builds, checks and deploys a change, defined in the repository it acts on.
 
-### What Batch Inference Is:
-- Asynchronously processing large datasets where completion latency (minutes/hours) is relaxed to maximize hardware throughput.
-- Packing large static batches (e.g. 128–256 sequences) to saturate 100% of GPU compute cores.
-- Using discounted compute capacity (AWS/GCP Spot instances and 50% off Batch APIs).
-- Enforcing idempotent checkpointing and Dead-Letter Queue (DLQ) quarantine for poison pills.
+### What it is
 
-### What Batch Inference Is Not:
-- Real-time interactive streaming chat endpoints for human users.
-- Fragile single-threaded scripts without retry semantics or progress persistence.
+It is **a graph with two costs**. Time waited and time billed, and they respond to different changes.
 
-```text
-+-------------------------------------------------------------------------------+
-|                    ONLINE SERVING VS BATCH PROCESSING MATRIX                  |
-+-------------------+-----------------------+-----------------------------------+
-| Dimension         | Online Real-Time Serving| Offline Distributed Batch       |
-+-------------------+-----------------------+-----------------------------------+
-| Primary SLA       | P95 TTFT Latency (<200ms)| Aggregate Throughput (Records/hr)|
-| Batch Size        | Dynamic (1 - 32 streams)| Maximized Static (128 - 512)     |
-| Compute Pricing   | On-Demand GPUs (100% `)| Spot GPUs / Batch API (30-50% `)  |
-| Failure Handling  | Client HTTP 500 error | Idempotent Checkpoint Resumption  |
-| Malformed Inputs  | Immediate rejection   | Dead-Letter Queue (DLQ) Isolation |
-+-------------------+-----------------------+-----------------------------------+
-```
+It is **a set of gates**. Each one is a claim that something is worth blocking a merge over.
+
+It is **a privileged execution environment**. It holds deployment credentials and runs on every push.
+
+### What it is not
+
+It is not a guarantee of quality. A pipeline of gates that never fail is theatre with a bill attached.
+
+It is not free even when the tier is. Runner minutes are money, and a slow pipeline costs engineer attention, which is dearer.
+
+It is not a safe place to run untrusted code by default. That is a property you have to arrange.
 
 ## Why it was created and what problems it solves
 
-Batch architectures resolve the three primary economic and engineering bottlenecks of large-scale AI processing:
+**"It works on my machine", at the team level.** *Solution: one environment that builds every change the same way.*
 
-### 1. Slashing AI Operating Expenses by 50% to 70%
-By utilizing Spot GPU clusters and OpenAI/Anthropic Batch APIs, enterprise batch workloads achieve massive cost reductions compared to real-time serving endpoints.
+**Integration pain deferred until release.** *Solution: integrate on every push, so the pain arrives in small pieces.*
 
-### 2. Seamless Fault Recovery on Spot Preemptions
-Because state is persisted in an idempotent checkpoint store after every chunk, worker node terminations or cloud spot preemptions trigger zero data loss and zero redundant compute.
+**Deployment as tribal knowledge.** *Solution: the deploy is a job in a file anyone can read.*
 
-### 3. Preventing Pipeline Poisoning via Dead-Letter Queues
-Corrupted input documents that trigger token limit errors or runtime exceptions are quarantined to a DLQ after 3 failed retries, allowing the remaining 99.99% of valid records to finish without interruption.
+**Build configuration that drifts and cannot be reproduced.** *Solution: the pipeline lives in the repository and is reviewed like code.*
+
+**Nobody knowing why the pipeline takes eleven minutes.** *Solution: compute the critical path, which names the jobs actually responsible.*
+
+![Deleting the Useless Job Saves Nothing showing two off-path jobs saving zero wall clock against one cache saving 3.7 minutes](./assets/deleting-the-useless-job.svg)
 
 ## How it works
 
-Let us inspect the complete **Fault-Tolerant Checkpoint and DLQ Recovery Workflow**:
+**A trigger fires** — a push, a pull request, a schedule, a manual dispatch. The trigger decides the permissions and whether secrets are present, which is the part people skip.
 
-```text
-[Input Dataset: 100,000 Support Tickets]
-                  │
-                  ▼
-[Batch Orchestrator / Slicer]
-  - Partitions into 100 Batches (1,000 items each)
-  - Pushes Task IDs: [Batch_001, Batch_002, ... Batch_100] to Redis
-                  │
-                  ▼
-[Distributed GPU Workers (Ray / Celery Actor Pool)]
-  - Worker A claims Batch_001 ➔ Generates LLM summaries
-  - Worker B claims Batch_002 ➔ Runs vLLM batch inference
-                  │
-                  ▼
-    Did a worker encounter a poison-pill item?
-                  ├── NO ➔ Writes results to S3 & records checkpoint: `Batch_001: DONE`
-                  │
-                  └── YES (Item #42 crashes with TokenOverflow)
-                            │
-                            ▼
-              [RETRY LOOP & DLQ QUARANTINE]
-              1. Retry #1 (Immediate) ➔ Fails
-              2. Retry #2 (Exponential Backoff) ➔ Fails
-              3. Retry #3 (Final Attempt) ➔ Fails
-              4. Routes Item #42 to Dead-Letter Queue (DLQ)
-              5. Continues processing remaining 999 items in Batch_002
-```
+**The runner builds the job graph** from `needs:` and starts every job whose dependencies are satisfied.
 
-![Fault-Tolerant Checkpoint and DLQ Recovery Flow showing Worker Preemption resuming from Last Checkpoint and Malformed Record Routed to Dead-Letter Queue](./assets/fault-tolerant-checkpoint-and-dlq-recovery-flow.svg)
+**Independent jobs run concurrently**, subject to how many runners you have. This is why wall clock and runner minutes diverge — and why a concurrency limit can quietly turn theoretical parallelism back into a queue.
+
+**Each job restores its caches**, runs its steps, and saves caches back. A cache on the critical path is usually the largest available saving, because dependency installation is usually the slowest thing nobody thinks about.
+
+**A job fails and its dependants never start.** That is the gate.
+
+**On success, a deploy job runs with secrets.** Which secrets, and under which trigger, is the security question — and `pull_request_target` is where it goes wrong.
 
 ## An everyday analogy
 
-Think of batch inference and dead-letter queues like **an automated postal sorting center for letters**:
+Think of getting a house ready before guests arrive.
 
-- **Normal Flow (Batch Workers):** A high-speed conveyor belt scans and sorts 10,000 letters per minute by postal code (**High-Throughput Batch Processing**).
-- **Damaged Letter (Poison Pill):** A letter with a torn, illegible address cannot be scanned. The machine does not shut down the entire factory; it automatically pushes the torn letter into a side bin for human inspection (**Dead-Letter Queue**).
-- **Shift Log (Checkpoints):** When the shift ends, the sorting database logs exactly how many thousands of letters were sorted, ensuring the morning shift picks up with the next unsorted bin (**Idempotent State**).
+The cooking takes two hours and everything is timed around it: shopping, then prep, then the oven, then serving. That is the critical path.
+
+Hoovering takes twenty minutes and happens while the oven is on. It costs twenty minutes of somebody's effort and **zero minutes of when dinner is ready** — because nothing was waiting for it.
+
+Now somebody complains that the whole thing takes too long, and the obvious target is the job nobody enjoys. Cancel the hoovering and dinner arrives at exactly the same time. Buy pre-chopped vegetables — twenty minutes off the prep, which the oven was waiting for — and dinner is twenty minutes earlier.
+
+The hoovering was never the problem. It was just the most annoying thing on the list, and annoyance is not the same measurement as delay.
 
 ## Examples in practice
 
-Let us build a complete Python **Distributed Batch Inference Pipeline Simulator** with task queueing, batch worker execution, idempotent checkpoint tracking, retry loops, and dead-letter queue isolation:
-
-```python
-import time
-from typing import Dict, Any, List, Optional
-
-class DistributedBatchPipeline:
-    def __init__(self, max_retries: int = 3):
-        self.max_retries = int(max_retries)
-        self.task_queue: List[Dict[str, Any]] = []
-        self.completed_checkpoints: Dict[str, Any] = {}
-        self.dead_letter_queue: List[Dict[str, Any]] = []
-        
-    def enqueue_batch(self, batch_id: str, items: List[Dict[str, Any]]):
-        self.task_queue.append({
-            "batch_id": batch_id,
-            "items": items,
-            "retry_count": 0
-        })
-
-    def process_batch(self, task: Dict[str, Any]) -> bool:
-        batch_id = task["batch_id"]
-        # Skip if already completed (Idempotency)
-        if batch_id in self.completed_checkpoints:
-            return True
-            
-        successful_items = []
-        for item in task["items"]:
-            # Simulate failure on poison pill
-            if item.get("is_corrupted", False):
-                raise ValueError(f"Poison pill detected in item: {item['id']}")
-            successful_items.append({"id": item["id"], "summary": f"Summary of {item['id']}"})
-            
-        # Commit checkpoint
-        self.completed_checkpoints[batch_id] = {
-            "status": "COMPLETED",
-            "item_count": len(successful_items),
-            "timestamp": time.time()
-        }
-        return True
-
-    def run_worker_cycle(self) -> Dict[str, int]:
-        processed_count = 0
-        failed_count = 0
-        
-        while self.task_queue:
-            task = self.task_queue.pop(0)
-            try:
-                self.process_batch(task)
-                processed_count += 1
-            except Exception as e:
-                task["retry_count"] += 1
-                if task["retry_count"] >= self.max_retries:
-                    # Move to Dead-Letter Queue
-                    self.dead_letter_queue.append({
-                        "batch_id": task["batch_id"],
-                        "error": str(e),
-                        "items": task["items"]
-                    })
-                    failed_count += 1
-                else:
-                    # Re-enqueue for retry
-                    self.task_queue.append(task)
-                    
-        return {
-            "batches_completed": processed_count,
-            "batches_quarantined_dlq": failed_count,
-            "active_checkpoints": len(self.completed_checkpoints)
-        }
-
-if __name__ == "__main__":
-    pipeline = DistributedBatchPipeline(max_retries=2)
-    pipeline.enqueue_batch("batch_1", [{"id": "doc_1"}, {"id": "doc_2"}])
-    pipeline.enqueue_batch("batch_bad", [{"id": "doc_3"}, {"id": "doc_4", "is_corrupted": True}])
-    
-    results = pipeline.run_worker_cycle()
-    print("Pipeline Results:", results)
-    print("DLQ Items:", len(pipeline.dead_letter_queue))
-```
-
-## Production Architecture Case Study: Ray Data Multi-GPU Batch Pipeline
-
-Consider a global research institution processing 2 million scientific arXiv papers into embeddings and structured summaries on a cluster of 8x NVIDIA H100 (80GB) GPUs.
+The measured output from today's lab, on an eight-job pipeline:
 
 ```text
-+-------------------------------------------------------------------------------+
-|                    RAY DATA BATCH INFERENCE BENCHMARKS                        |
-+-------------------+-----------------------+-----------------------------------+
-| Metric            | Standard Python Loop  | Ray Data GPU Actor Pipeline       |
-+-------------------+-----------------------+-----------------------------------+
-| Processing Speed  | 14.2 docs / sec       | 1,840.0 docs / sec (130x Faster)  |
-| GPU Utilization   | 18.4% (I/O Bottleneck)| 98.2% (Pipelined Data Streaming)  |
-| 2M Docs Wall Time | 39.1 Hours            | 18.1 Minutes                      |
-| Total Cloud Cost  | `1,420 (On-Demand)    | `86.40 (Spot Instances + Ray)     |
-+-------------------+-----------------------+-----------------------------------+
+  wall clock   12.7 min   along checkout -> install -> integration -> deploy
+  runner time  22.2 min billed
+  the gap       9.5 min of work happening in parallel
 ```
 
-### 1. Ray Data GPU Actor Batch Script
-```python
-import ray
-import ray.data
-
-# Initialize Ray cluster
-ray.init()
-
-class LLMPredictor:
-    def __init__(self):
-        from vllm import LLM
-        # Warm model weights loaded once per GPU actor
-        self.llm = LLM(model="meta-llama/Meta-Llama-3.1-8B-Instruct", tensor_parallel_size=1)
-        
-    def __call__(self, batch: dict) -> dict:
-        prompts = batch["text"]
-        outputs = self.llm.generate(prompts)
-        return {"summary": [out.outputs[0].text for out in outputs]}
-
-# Stream dataset across 8 GPU workers
-dataset = ray.data.read_parquet("s3://ai-research/arxiv_corpus_2m.parquet")
-summaries = dataset.map_batches(
-    LLMPredictor,
-    compute=ray.data.ActorPoolStrategy(min_size=8, max_size=8),
-    batch_size=128
-)
-summaries.write_parquet("s3://ai-research/arxiv_summaries_output/")
-```
-
-## Detailed Failure Mode Taxonomy: Batch Pipeline Hazards
+And the finish table, which shows where the parallelism is:
 
 ```text
-+-------------------------------------------------------------------------------+
-|                        BATCH PIPELINE FAILURE TAXONOMY                        |
-+-------------------+-----------------------+-----------------------------------+
-| Failure Mode      | Root Cause Analysis   | Architectural Mitigation          |
-+-------------------+-----------------------+-----------------------------------+
-| Poison Pill       | Corrupted record      | Quarantine record to DLQ after    |
-| Queue Freeze      | triggers fatal panic  | 3 retries; continue batch         |
-| Checkpoint Write  | Checkpoint DB latency | Use atomic writes with local WAL; |
-| Bottleneck        | slows down GPU workers| flush checkpoints asynchronously  |
-| Duplicate Output  | Worker re-executes    | Enforce idempotent output keys    |
-| Pollution         | batch after timeout   | (e.g. `s3://bucket/{batch_id}.json`|
-| Spot Mass         | Cloud provider claims | Drain gracefully on 2-minute spot |
-| Preemption        | all Spot GPUs at once | interruption notice via SIGTERM   |
-+-------------------+-----------------------+-----------------------------------+
+    0.3 min  checkout
+    4.8 min  install
+    5.6 min  lint
+    7.2 min  licence-scan
+    7.9 min  docs-build
+    8.0 min  unit
+   11.3 min  integration
+   12.7 min  deploy
 ```
 
+Everything from `lint` to `integration` starts at 4.8 minutes — they all depend on `install` and nothing else, so they run together. `deploy` waits for the last of its three dependencies, which is `integration` at 11.3.
 
+The review finds the two jobs that have never failed and the two that are slow with no cache. Then it prices the fixes:
 
-## Deep Architectural Breakdown: Ray Data Actor Pipelines and Preemption-Resistant Checkpointing
+```text
+  licence-scan   NOT on the critical path   saves 0.0 min wall   2.4 runner minutes
+  docs-build     NOT on the critical path   saves 0.0 min wall   3.1 runner minutes
 
-Executing multi-million record batch inference requires specialized distributed pipelining:
+  install 4.5 -> 0.8 min (a dependency cache)
+  wall 12.7 -> 9.0 min   saves 3.7 min per run
+```
 
-### 1. Ray Data GPU Actor Strategy vs Thread Pools
-Standard Python multiprocessing incurs heavy inter-process serialization overhead and cannot keep GPU model weights in VRAM across tasks. Ray Data solves this with persistent GPU Actors:
-- **Persistent VRAM:** Each worker actor initializes PyTorch/vLLM once, loading weights into GPU memory permanently.
-- **Zero-Copy Arrow Buffers:** Input data streams via shared-memory Apache Arrow buffers, eliminating Python `pickle` serialization bottlenecks.
-- **Dynamic Chunk Pipelining:** While GPU Actor 1 is executing batch `N`, I/O threads are pre-fetching batch `N+1` and writing batch `N-1` results to S3 in parallel.
+**Deleting both useless jobs: zero.** It saves 5.5 runner minutes, which is real money and is not what anyone was complaining about. One cache on `install` saves 3.7 minutes of waiting, on every run, for every engineer.
 
-### 2. Atomic Parquet Output and S3 Manifest Checkpoints
-To prevent data corruption during spot instance preemption:
-- Workers write output records into unique temporary Parquet files: `s3://bucket/output/batch_0042_tmp.parquet`.
-- Upon successful batch completion, an atomic rename moves the file to `s3://bucket/output/batch_0042.parquet` and commits the batch ID to the PostgreSQL checkpoint ledger.
-- If a spot instance is terminated mid-batch, the temporary file is ignored and the new replacement worker re-executes only the incomplete batch.
+Both changes are worth making. Knowing which one answers which complaint is the point.
+
+Finally, the same jobs under a different trigger:
+
+```text
+--- the same jobs, triggered unsafely ---
+  [secrets-exposed-to-forks] deploy
+```
+
+Nothing about the jobs changed. `pull_request_target` instead of `pull_request` is the entire difference, and it moves the deploy job's secrets into reach of code a fork controls.
 
 ## Implications: security, privacy, performance, scalability, and cost
 
-### 1. PII Redaction Before Batch Ingestion
-Before enqueueing 1 million customer records into distributed worker queues, run high-speed regex and NER masking to remove Social Security numbers and credit card details.
+**Security — the one to remember.** `pull_request` checks out the fork's code with a read-only token and **no secrets**; a hostile PR can run anything and gain nothing. `pull_request_target` runs in the base repository's context **with secrets**, so that a workflow can label or comment on a fork's PR. Combine it with a checkout of the fork's code — which is what people add next, because otherwise the workflow cannot see the change — and untrusted code executes with your secrets in the environment. The rule that survives: *`pull_request_target` may inspect a pull request; it must never run its code.*
 
-### 2. Massive Cost Arbitrage with 24-Hour SLAs
-When business requirements permit next-day delivery, routing tasks through OpenAI Batch API or AWS Bedrock Batch cuts API pricing by 50% compared to standard real-time endpoints.
+**Supply chain.** `uses: org/action@v3` runs somebody else's code with your token, and a tag is mutable. Pin to a full commit SHA for anything near a secret.
+
+**Least privilege.** Set `permissions:` explicitly. A lint job needs nothing; only the release job needs `contents: write`.
+
+**Caches are trusted inputs.** A run triggered from a fork that can write a shared cache can poison what a later privileged run restores. Scope cache keys so untrusted runs cannot write where trusted runs read.
+
+**Cost.** You are billed runner minutes, not wall clock. A matrix that expands one job into twelve multiplies the bill and may not move the critical path at all.
+
+**Scalability.** Parallelism is bounded by available runners. With a concurrency limit of two, most of the 9.5-minute gap becomes queueing, and the wall clock rises toward the runner-minute total.
 
 ## Alternatives: free, open source, and commercial
 
-| Tool / Framework | Type | Best Suited For | Key Capabilities |
-| :--- | :--- | :--- | :--- |
-| **Ray Data** | Open Source | Distributed Multi-GPU AI | Streaming actor pools, zero-copy I/O |
-| **Celery + Redis** | Open Source | Python Task Queues | Mature background task orchestration |
-| **OpenAI Batch API**| Commercial API | Asynchronous OpenAI Jobs | 50% discount with 24-hour turnaround |
-| **AWS Bedrock Batch**| Commercial Cloud | Enterprise Serverless Batch | S3 in/out, managed foundation models |
+**GitHub Actions** — free for public repositories, generous for private ones, and the marketplace is both the feature and the risk. The default for anything already on GitHub.
+
+**GitLab CI** — mature, with a first-class self-hosted story. Its `needs:` keyword expresses exactly the graph this lab models.
+
+**`act`** — MIT-licensed, runs Actions workflows locally in containers. The fastest way to shorten the push-and-wait loop, and it will not reproduce runner-specific behaviour exactly.
+
+**Woodpecker, Drone, Forgejo Actions** — lightweight open-source CI you can self-host on one machine, which pairs well with the previous two days.
+
+**Buildkite, CircleCI, Jenkins** — commercial or self-hosted, chosen when you need particular runner hardware or an existing investment. Jenkins remains the answer for organisations with a decade of plugins.
+
+The honest default: GitHub Actions with explicit `permissions:`, third-party actions pinned to a SHA, and a dependency cache on whatever the critical path runs through.
 
 ## Comparison with related concepts
 
-```text
-+-----------------------+-----------------------+-----------------------+
-| Dimension             | Real-Time Online API  | Distributed Batch Job |
-+-----------------------+-----------------------+-----------------------+
-| Turnaround Time       | 200 ms - 2 seconds    | 10 minutes - 24 hours |
-| Cost per 1M Tokens    | 100% Full Price       | 30% - 50% Discounted  |
-| Failure Impact        | User sees error dialog| Retried in background |
-| Queue Isolation       | Rate-limited HTTP drop| Dead-Letter Queue     |
-+-----------------------+-----------------------+-----------------------+
-```
+**Wall clock versus runner minutes.** Waiting against billing. The single most useful distinction in this lesson, and the one that makes cleanup efforts miss.
+
+**`pull_request` versus `pull_request_target`.** Fork code with no secrets, against base context with secrets. One word apart and categorically different.
+
+**Gate versus report.** A gate blocks a merge; a report informs. A gate that never fails should become a report or be deleted — leaving it as a gate costs time and provides a control that exists only on the diagram.
+
+**Cache versus artefact.** A cache is an optimisation and may be missing; an artefact is output and must not be. Treating a cache as guaranteed produces builds that fail only on a cold runner.
+
+**CI versus CD.** Integration checks every change; delivery ships it. The security question lives almost entirely in the second, because that is where the credentials are.
 
 ## When to use it — and when not to
 
-### Deploy Distributed Batch Inference for:
-- Mass document summarization, offline vector database embedding generation, catalog tagging, and synthetic dataset creation.
+**Use CI from the first commit of anything with tests.** The cost is a file; the benefit compounds.
 
-### Do NOT use batch pipelines for:
-- Live human-facing chatbots, voice assistants, or real-time autocomplete interfaces.
+**Cache the slow thing on the critical path**, and measure rather than guess which that is.
 
+**Use `pull_request_target` only to inspect metadata**, never to run fork code. If you need both, split into two workflows.
 
-### Production Checklist: Massive-Scale Batch AI Pipelines
-- [ ] Input datasets partitioned into deterministic chunks (e.g. 1,000 to 5,000 items per batch task).
-- [ ] Persistent GPU actors (Ray Data) used to keep model weights warm in VRAM across batch items.
-- [ ] Idempotent checkpoint ledger updated atomically in PostgreSQL/DynamoDB after every successful batch.
-- [ ] Dead-Letter Queue (DLQ) configured with automated alerting for poison-pill input isolation.
-- [ ] Exponential backoff retry policies configured with max retry limit of 3 attempts.
-- [ ] Cloud Spot GPU instances utilized with automated 2-minute interruption draining hooks.
+**Do not add a gate you cannot imagine failing.** Write down what it would catch. If you cannot, it is a report.
 
+**Do not optimise a pipeline without computing the critical path.** You will delete the annoying job and be disappointed.
 
-### Batch Job Sizing and Memory Optimization Rules
-- **Batch Size Tuning:** For 8B models on 80GB GPUs, set batch size to 256 or 512 to maximize tensor core saturation; for 70B models, set batch size to 64.
-- **Prefetch Buffer Sizing:** Maintain 2 pre-fetched batches in host RAM to ensure GPU workers never sit idle waiting for S3/GCS I/O transfers.
-- **Memory Pressure Safeguards:** Monitor worker memory high-water marks and flush completed Parquet buffers to disk before RAM exceeds 85%.
-- **Spot Interruption Recovery:** Listen to `/latest/meta-data/spot/instance-action` endpoint on AWS to initiate immediate graceful batch state flushes upon 2-minute preemption notice.
+**Do not deploy from CI without pinned actions and scoped permissions.** It is the most privileged environment most teams operate and the least reviewed.
 
 ## Knowledge check
 
-1. **Why is batch inference significantly cheaper than online real-time serving?** Because batch workloads tolerate relaxed turnaround times, enabling the use of 50% discounted Batch APIs and 70% discounted Spot GPU instances.
-2. **What is the purpose of a Dead-Letter Queue (DLQ)?** To isolate permanently failing or corrupted records after maximum retry attempts, preventing pipeline stalls.
-3. **Why is idempotent checkpointing mandatory?** To allow interrupted batch jobs to resume from the last successful checkpoint without paying for duplicate compute.
+1. Why does deleting a job that has never caught a bug often save zero seconds of pipeline time?
+2. What is the difference between wall clock and runner minutes, and which does a cache on the critical path improve?
+3. Why is `pull_request_target` dangerous when `pull_request` is not?
+4. When a job is removed, why must its dependants inherit its dependencies?
+5. Why should a gate that has never failed be deleted or downgraded rather than left alone?
 
 ## Hands-on exercise
 
-In this lab, you will build a **Distributed Batch Inference Pipeline Simulator in Python**. Your implementation will:
-1. Enqueue and partition input task batches into an execution queue.
-2. Process task batches and commit idempotent checkpoints upon successful completion.
-3. Handle runtime exceptions with retry count increments.
-4. Quarantine permanently failing tasks to a Dead-Letter Queue (DLQ) upon reaching maximum retries.
+You will compute a pipeline's two durations, review its shape, and price two competing changes.
+
+Open `starter/pipeline.py` in the lab directory and implement the stubbed functions, then run the tests. No GitHub account or runner is used.
 
 ### Expected output
 
+Running `python3 examples/pipeline_demo.py` analyses an eight-job pipeline:
+
 ```text
-============================= test session starts ==============================
-collected 5 items
-
-tests/test_batch_pipeline.py .....                                       [100%]
-
-============================== 5 passed in 0.02s ===============================
-[BATCH QUEUE] Enqueued 3 task batches (1,000 items each).
-[EXECUTION] Completed batch_1 and committed checkpoint.
-[RETRY LOOP] Detected corrupted item in batch_bad; retried 2 times.
-[DLQ QUARANTINE] Moved batch_bad to Dead-Letter Queue after 3 failed retries.
+  licence-scan   NOT on the critical path   wall 12.7 -> 12.7 (saves 0.0)
+  docs-build     NOT on the critical path   wall 12.7 -> 12.7 (saves 0.0)
+  install 4.5 -> 0.8 min (a dependency cache)
+  wall 12.7 -> 9.0 min   saves 3.7 min per run
 ```
+
+Two deletions: nothing. One cache: 3.7 minutes.
 
 ### Validate your work
 
-Run the pytest test suite:
+Run `bash tests/run_tests.sh`. All twenty-seven tests must pass.
 
-```bash
-pytest tests/run_tests.sh
-```
+Then check three things by inspection. Runner minutes must exceed wall clock whenever any work is parallel — if they are equal everywhere, `finish_times` is accumulating across every job rather than along dependency edges, and the entire lesson disappears. Removing an off-path job must save exactly `0.0` of wall clock. And `secrets-exposed-to-forks` must fire on `pull_request_target` and stay silent on `pull_request`.
 
 ### Troubleshooting
 
-1. **Idempotency check:** Ensure `process_batch` checks `self.completed_checkpoints` before running.
-2. **DLQ routing:** Enforce `task['retry_count'] >= self.max_retries` before quarantine.
+**Wall clock equals runner minutes.** Jobs with no dependencies must start at zero, not after the previous job.
+
+**An off-path removal saves time.** Your critical path is wrong.
+
+**`finish_times` loops forever.** Check for a cycle and raise before scheduling.
+
+**The finding fires on `pull_request`.** Only `pull_request_target` exposes secrets to fork-controlled code.
 
 ### Common mistakes
 
-- Discarding failing tasks on the first exception without attempting configured retries.
+Summing durations for wall clock, which is the error that makes every conclusion wrong.
+
+Dropping a removed job's edges without re-pointing its dependants, which overstates every saving.
+
+Reporting `no-cache` on every job, which produces a rule nobody reads.
+
+Treating parallelism as free without checking how many runners exist.
 
 ## Practice assignment
 
-Add an **Exponential Backoff Delay** that multiplies sleep time between subsequent batch retries.
+Add a **concurrency limit**. Real accounts have a finite number of runners, and the lab currently assumes unlimited.
+
+Recompute wall clock with two runners available, then with four, and write a test pinning both. What you should find is that most of the 9.5-minute gap was theoretical: with two runners the six parallel jobs queue, and the wall clock rises substantially toward the runner-minute total.
+
+This changes the advice in an interesting way. Under a real concurrency limit, deleting the never-firing gates **does** save wall clock, because they were occupying a runner that something on the critical path was waiting for. The conclusion in the lesson holds for an unconstrained account and inverts for a constrained one, which is worth knowing before repeating either as a rule.
 
 ## Extension challenge
 
-Implement a **Batch Progress Bar & ETA Estimator** calculating rolling items/second throughput and projected completion timestamp.
+Analyse **your own workflow**, with two numbers you can get and one you probably have never looked at.
+
+The durations are easy — any recent run lists them. The graph is in the file. The third number is the one that matters: for each job, **how many times has it actually gone red this quarter?**
+
+Most teams have never asked. When you do, you typically find two or three jobs that have not failed in a year still blocking every merge, and one job that fails constantly for reasons unrelated to the change — which is worse, because a gate that cries wolf teaches people to re-run rather than read.
+
+Then compute your critical path and compare it against which job everybody complains about. If they are the same job, your team's intuition is well calibrated. If they are not, you have found something more useful than a faster pipeline.
