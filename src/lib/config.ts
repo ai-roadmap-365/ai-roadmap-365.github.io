@@ -8,6 +8,8 @@ export interface RepositoryConfig {
   /** The single repository that carries the whole course. */
   name: string;
   url: string;
+  /** Where the "Star on GitHub" CTA points. Optional; falls back to `url`. */
+  star_url?: string;
   branch: string;
   /** Retained aliases of name/url/branch so existing helpers keep working. */
   public_name: string;
