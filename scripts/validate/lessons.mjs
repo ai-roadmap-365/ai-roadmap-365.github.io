@@ -114,12 +114,31 @@ for (const d of authored) {
   const declared = sc.visuals?.visuals ?? [];
   if (declared.length < 1) r.fail(`${tag}: visuals.yml declares no visuals`);
   const embeddedAlts = [...mdx.matchAll(/!\[([^\]]*)\]\(\.\/([^)]+)\)/g)];
+  // Two visuals sharing one alt string would let an unembedded one pass the
+  // check below, because the match is by text. Reject the collision itself:
+  // two diagrams described identically are also a content problem.
+  const altOwners = new Map();
+  for (const v of declared) {
+    if (!v.alt) continue;
+    if (altOwners.has(v.alt))
+      r.fail(`${tag}: visuals ${altOwners.get(v.alt)} and ${v.id} share alt text "${v.alt}"`);
+    else altOwners.set(v.alt, v.id);
+  }
   for (const v of declared) {
     if (!existsSync(path.join(d.contentDir, v.file)))
       r.fail(`${tag}: visual file missing: ${v.file}`);
     if (!v.alt) r.fail(`${tag}: visual ${v.id} has no alt text`);
-    else if (!embeddedAlts.some((m) => m[1] === v.alt))
-      r.fail(`${tag}: visual ${v.id} alt not embedded in index.mdx`);
+    else {
+      // Match on the file, then check the alt: matching on alt alone cannot
+      // tell an embedded visual from a different one that reads the same.
+      const embeds = embeddedAlts.filter((m) => m[2] === v.file);
+      if (embeds.length === 0)
+        r.fail(`${tag}: visual ${v.id} (${v.file}) not embedded in index.mdx`);
+      else if (embeds.length > 1)
+        r.fail(`${tag}: visual ${v.id} embedded ${embeds.length} times in index.mdx`);
+      else if (embeds[0][1] !== v.alt)
+        r.fail(`${tag}: visual ${v.id} embedded with alt "${embeds[0][1]}", declared "${v.alt}"`);
+    }
   }
   for (const m of embeddedAlts) {
     if (!existsSync(path.join(d.contentDir, m[2])))

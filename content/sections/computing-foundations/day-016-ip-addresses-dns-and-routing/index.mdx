@@ -5,331 +5,408 @@ title: 'IP Addresses, DNS, and Routing'
 
 ## Why this matters
 
-Yesterday you traced what happens when a web page loads. Today you zoom in on the first thing that has to work before any of that can happen: the network has to find the machine you are talking to and carry your data to it. Every API call you will ever make — to a hosted model service, a database, a payment gateway — begins by turning a name like `api.example.com` into a numeric address, then shoving bytes across a chain of machines until they arrive. When that pipeline is healthy you never think about it. When it breaks, nothing above it works, and the error messages are famously unhelpful.
+- **Every service you deploy needs a name pointed at it**, and DNS is how you do it.
+- **DNS propagation delays are TTLs**, not magic, and knowing that turns a mysterious
+  wait into a number you set yourself.
+- **"It works on my machine but not from the server"** is very often a private
+  address, and you can recognise one by sight after today.
+- **A misconfigured DNS record takes a service down globally**, in a way no code bug
+  can.
+- **Container and cloud networking is this lesson repeated at a smaller scale**, with
+  the same vocabulary.
 
-This is not abstract plumbing. The single most common production incident in a networked service is "I can't reach the server," and the overwhelming majority of those turn out to be one of two things: a name resolved to the wrong address (or no address), or packets could not find a route to the destination. Engineers who can tell those two failures apart in thirty seconds save hours; engineers who cannot end up restarting servers that were never broken. The difference is a working mental model of addressing, naming, and routing — exactly what you build today.
-
-There is money in it too. When you deploy a service and point a domain at it, you are editing DNS records, and a wrong record or a long cache lifetime can make a fix invisible for hours. When your requests are mysteriously slow, the cause is often extra network hops or a distant server, which you can see directly. By the end of this lesson you will be able to interrogate the naming and routing system by hand — the same commands professionals reach for first — and read what it tells you.
+---
 
 ## The idea in plain language
 
-Every device on a network has a numeric label called an **IP address** — its location on the network, the way a street address locates a building. To send data to a machine, you need its IP address; a name like `example.com` is a convenience for humans, not something the network itself understands.
+- **An IP address is where.** A name is what people type. DNS turns one into the
+  other.
+- **DNS is a distributed hierarchy**, not a single directory. No one machine holds it
+  all.
+- **Every answer carries a TTL** saying how long it may be cached, which is why the
+  second lookup is instant and why changes take time to spread.
+- **Routing is a chain of local decisions.** No router knows the whole path; each one
+  picks the next hop and forgets you.
+- **The internet is tens of thousands of independent networks** agreeing, mostly on
+  trust, about who can reach what.
 
-The system that turns human-friendly names into IP addresses is the **Domain Name System (DNS)**. It is a giant, distributed directory: you ask "what is the address for `example.com`?" and, after a short lookup that may hop through several servers, you get a number back. DNS is organized as a hierarchy — a small number of *root* servers know where to find the servers for `.com`, `.org`, and every other top-level domain; those in turn know where to find the servers responsible for individual domains like `example.com`; and those *authoritative* servers hold the actual answer. To keep this fast, answers are cached — remembered for a while — at every level.
-
-Once you have an address, your data still has to physically get there, and the destination is almost never directly connected to you. **Routing** is the process by which specialized machines called **routers** pass your data, packet by packet, from one network to the next — each router looking at the destination address and forwarding the packet one hop closer, like a letter moving from post office to post office until it reaches the right town. No single machine knows the whole path; each just knows the next step. Addressing tells you *where*, DNS tells you the address for a *name*, and routing gets you *there*. Those three ideas, together, are how any machine on the internet finds and reaches any other.
+---
 
 ## Historical background
 
-In the early days of the ARPANET — the 1970s precursor to the internet — there were few enough machines that every computer kept a single file, `HOSTS.TXT`, listing every host's name and address. The file was maintained centrally at the Stanford Research Institute's Network Information Center and downloaded by everyone. This worked until it didn't: as the network grew, a single hand-edited file that everyone had to fetch became a bottleneck and a single point of failure. Names collided, updates lagged, and the download traffic itself grew unsustainable.
+![Diagram: a single hosts file compared with delegated DNS](./assets/one-file-to-hierarchy.svg)
 
-In 1983, Paul Mockapetris designed the Domain Name System to replace it, described in RFCs 882 and 883 (later revised into the still-current RFCs 1034 and 1035). His key move was to make naming *hierarchical and delegated*: instead of one authority for all names, responsibility is divided at each dot, so the operator of `example.com` can manage their own names without asking anyone's permission, and the system scales to billions of names. It is one of the most successful distributed systems ever built, and it has run continuously for over forty years.
+- **Before DNS there was one file.** `HOSTS.TXT` listed every machine on the network,
+  maintained by hand at Stanford and copied around.
+- **That stopped scaling in the early 1980s**, when the network grew faster than
+  anyone could edit a file.
+- **DNS arrived in 1983** with the idea that made it work: delegate. The root knows
+  who runs `.com`, and nothing more.
+- **IPv4 gave 4.3 billion addresses**, which seemed limitless and was not. The last
+  large blocks were allocated in 2011.
+- **IPv6 followed with 128-bit addresses** — enough that exhaustion is not a
+  meaningful concept — though adoption has taken decades.
+- **NAT was the stopgap that worked too well**, letting whole networks share one
+  public address and relieving the pressure that would have forced IPv6 sooner.
 
-Addressing has its own history. The internet's addresses, **IPv4**, were standardized in 1981 (RFC 791) with 32-bit addresses — about 4.3 billion of them. In 1981 that seemed limitless. It was not. By the early 1990s the explosive growth of the internet made exhaustion a visible threat, and two responses emerged. The short-term fix, **CIDR** (Classless Inter-Domain Routing, 1993), and private addressing with **NAT** stretched the existing space by using it more efficiently and letting many devices share one public address. The long-term fix, **IPv6** (first specified in 1998, RFC 2460, now RFC 8200), widened addresses to 128 bits — an almost unimaginably large space. The prediction came true: the central pool of unallocated IPv4 addresses ran out when IANA handed its last five large blocks to the regional registries in February 2011, and the regional registries emptied over the following years. We now live in a long transition, with IPv4 and IPv6 running side by side.
+---
 
 ## What it is — and what it is not
 
-An **IP address** is a numeric identifier for a network interface, used by routers to deliver packets. It is *not* a permanent name for a device or a person: addresses are frequently reassigned, shared behind NAT, and changed when you move networks. An IPv4 address is written as four numbers 0–255 separated by dots (a "dotted quad"), such as `93.184.216.34`; each number is one **octet** (8 bits), and the four together make 32 bits. An IPv6 address is written as eight groups of four hexadecimal digits separated by colons, such as `2606:2800:220:1:248:1893:25c8:1946`, with rules for abbreviating runs of zeros.
+![Diagram: a recursive resolver compared with an authoritative server](./assets/resolver-versus-authoritative.svg)
 
-**DNS** is a naming and lookup system, *not* a routing system and *not* a security system by itself. It maps names to records — most commonly addresses — but it does nothing to move your data or to prove that the server you reach is authentic (that is the job of TLS, which you will meet next). A DNS answer can be stale, cached, or (without extra protections) spoofed.
+**DNS is:**
 
-**Routing** is the forwarding of packets between networks by routers, *not* the same thing as the wire or radio link that carries a single hop. Routing decides the *path*; the physical layer moves bits across each individual segment of that path. And a **router** is not a magic box that knows the whole internet — it holds a routing table of destinations and next hops, and for anything it does not specifically know, it forwards toward a default route "upstream." The whole system works precisely because no participant needs global knowledge.
+- A distributed, cached, hierarchical lookup system.
+- Delegated at every level: root, top-level domain, then the domain's own servers.
+- Typed — the same name can return an address, a mail route, or arbitrary text.
+
+**DNS is not:**
+
+- **Not a single server.** There is no "the DNS" to be down, though your resolver can
+  be.
+- **Not instant to change.** A record's old value lives in caches until its TTL
+  expires.
+- **Not authenticated by default.** Plain DNS has no proof the answer is genuine,
+  which is what DNSSEC and encrypted DNS address.
+- **Not a directory of what exists.** You cannot list a domain's names; you can only
+  ask about ones you already know.
+
+---
 
 ## Why it was created and what problems it solves
 
-These three mechanisms exist to solve three different scaling problems, and it is worth keeping them separate.
+- **Humans do not remember numbers.** Names are the interface; addresses are the
+  implementation.
+- **Addresses change and names should not.** Move a service to new hardware and only
+  the record changes.
+- **One name can mean several machines**, which is how load balancing and failover
+  begin.
+- **Delegation lets ownership be distributed.** You control your domain's records
+  without asking anyone.
+- **Routing had to work without central coordination**, because no single
+  organisation runs the internet — so each router makes one local decision and
+  networks advertise what they can reach.
 
-Addressing solves *identity at scale*: for one machine to send data to another across independently operated networks, there must be a globally agreed way to name a destination that any router can interpret. A flat list would not scale, so IP addresses are structured so that the leading bits identify a network and the trailing bits identify a host within it — which is what lets routers make decisions about huge groups of addresses at once instead of memorizing every machine.
-
-DNS solves *human memorability and indirection*. People cannot remember `93.184.216.34`, but more importantly, tying services to raw addresses would make the internet rigid: you could never move a service to a new machine, spread it across many machines, or fail over to a backup without every user editing the address they use. DNS adds a layer of indirection — a stable name that you can repoint at will — which is the quiet foundation of nearly all modern deployment, load balancing, and content delivery.
-
-Routing solves *reachability without central control*. There is no master map of the internet and no central switchboard. Networks are operated by tens of thousands of independent organizations, and routing protocols let them advertise "you can reach these addresses through me" to their neighbors, so that a workable path emerges from local decisions. This decentralization is why the internet has no off switch and why it survives the failure of any single link or router.
+---
 
 ## How it works
 
+### Resolving a name
+
 ![Diagram: the steps a DNS lookup passes through from cache to authoritative server](./assets/dns-resolution-path.svg)
 
-Follow one request through the whole machine. You type `example.com` into a program and hit enter. Three things must happen in order: resolve the name to an address, then route packets to that address, and the routers along the way must know how to reach it.
+Your computer asks a **recursive resolver** — your ISP's, or a public one like
+`1.1.1.1` — to do the legwork:
 
-### Resolving a name with DNS
-
-Your computer does not usually talk to the DNS hierarchy directly. It asks a **resolver** — a **recursive resolver**, typically run by your ISP or a public provider like `1.1.1.1` or `8.8.8.8` — to do the legwork and return a final answer. The resolver walks the hierarchy on your behalf:
-
-1. **Root.** If it has nothing cached, the resolver asks one of the **root servers**: "who handles `.com`?" The root does not know `example.com`, but it knows the servers for the `.com` **top-level domain (TLD)** and refers the resolver to them. (There are 13 named root server identities, `a` through `m`, each actually a globally distributed fleet.)
-2. **TLD.** The resolver asks a `.com` TLD server: "who handles `example.com`?" The TLD server refers it to the **authoritative name servers** for that domain — the ones the domain's owner designated.
-3. **Authoritative.** The resolver asks an authoritative server for `example.com` directly, and *that* server returns the actual record — for instance, an **A record** giving the IPv4 address.
-4. **Answer and cache.** The resolver hands the address back to your computer and remembers it. Every step's answer carries a **TTL** (time to live) in seconds; until it expires, the resolver serves the cached answer instead of repeating the walk, which is why the second lookup of a name is nearly instant.
+1. **Root.** "Who handles `.com`?" The root does not know `example.com`, but it knows
+   the `.com` servers. There are 13 named root identities, `a` through `m`, each a
+   globally distributed fleet.
+2. **TLD.** "Who handles `example.com`?" The `.com` servers refer it to the
+   **authoritative** name servers the domain's owner designated.
+3. **Authoritative.** That server returns the actual record — an **A record** giving
+   an IPv4 address, for instance.
+4. **Answer and cache.** The resolver returns the address and remembers it until the
+   **TTL** expires.
 
 ![Flowchart: a resolver walking the DNS hierarchy from root to TLD to authoritative server, with caching](./assets/dns-resolution.svg)
 
-DNS answers come in typed **records**, and knowing the common ones is everyday knowledge for anyone who deploys a service:
-
-| Record | Purpose | Example value |
+| Record | Purpose | Example |
 | --- | --- | --- |
-| A | Maps a name to an IPv4 address | `93.184.216.34` |
-| AAAA | Maps a name to an IPv6 address | `2606:2800:220:1:248:1893:25c8:1946` |
-| CNAME | Alias: "this name is really that name" | `www.example.com → example.com` |
-| MX | Mail exchange: where email for the domain goes | `10 mail.example.com` |
-| TXT | Arbitrary text, used for verification and policy | `"v=spf1 include:_spf.example.com ~all"` |
+| A | Name to IPv4 address | `93.184.216.34` |
+| AAAA | Name to IPv6 address | `2606:2800:220:1:248:1893:25c8:1946` |
+| CNAME | Alias: this name is really that name | `www.example.com → example.com` |
+| MX | Where email for the domain goes | `10 mail.example.com` |
+| TXT | Arbitrary text, for verification and policy | `"v=spf1 ..."` |
 | NS | Delegates the domain to its authoritative servers | `a.iana-servers.net` |
-| TTL | Not a record type but a field on every record: how long it may be cached | `3600` (one hour) |
 
-A **CNAME** is worth dwelling on because it confuses beginners: it does not point to an address, it points to *another name*, and the resolver must then look that name up too. This is how you point `www.example.com` at `example.com`, or a custom domain at a hosting provider's name, without hard-coding an address that might change.
+- **A CNAME points to another *name*, not an address**, so the resolver must look
+  that up too. This is how you point a custom domain at a hosting provider without
+  hard-coding an address that may change.
 
-### Routing packets to the address
-
-Now the resolver has returned `93.184.216.34`, and your machine must deliver packets there. Your computer compares the destination to its own network: if the address is on your **local network** it can be delivered directly, but almost always it is not, so your computer sends the packet to its **default gateway** — the router that connects your network to the rest of the internet (in a home, that is your Wi-Fi router).
-
-From there the packet **hops** from router to router. Each router reads the destination address, consults its **routing table** to decide the best next hop toward that destination, and forwards the packet on — then forgets about it. The packet may cross a dozen or more routers, operated by several different companies, before arriving. No router plans the whole route; each makes one local decision.
+### Routing packets
 
 ![Diagram: a packet hopping across routers and autonomous systems from a source computer to a destination server](./assets/ip-routing.svg)
 
-How do routers in different companies agree on which way is "toward" a destination? The internet is divided into **autonomous systems (AS)** — large networks under single administrative control, each with a number (an ASN), such as an ISP, a university, or a cloud provider. Between autonomous systems, routers run the **Border Gateway Protocol (BGP)**, in which each AS advertises to its neighbors which blocks of addresses it can reach. These advertisements propagate, and every router builds a picture of which neighbor to hand a packet to for any given destination block. BGP is the glue that stitches tens of thousands of independent networks into one internet — and, because it runs largely on trust between operators, a bad advertisement (accidental or malicious) can misroute traffic for a whole region, an event you will occasionally see in the news as a "BGP leak."
+- **Your machine compares the destination with its own network.** Local addresses go
+  direct; everything else goes to the **default gateway** — in a home, your Wi-Fi
+  router.
+- **From there the packet hops.** Each router reads the destination, consults its
+  **routing table**, forwards to the best next hop, and forgets about it.
+- **No router plans the whole route.** A packet may cross a dozen routers run by
+  several companies.
+- **Autonomous systems** are large networks under single control, each with a number
+  — an ISP, a university, a cloud provider.
+- **BGP is how they agree.** Each system advertises which address blocks it can
+  reach, and those advertisements propagate.
+- **BGP runs largely on trust**, which is why a bad advertisement can misroute a
+  region's traffic — the "BGP leak" you occasionally see in the news.
 
-You can watch the hops yourself with **traceroute**. It exploits a field in every IP packet called the **TTL** (here meaning "hop limit," a different TTL from the DNS one): each router decrements it, and when it hits zero the router discards the packet and sends back an error. Traceroute sends packets with a hop limit of 1, then 2, then 3, and so on; each elicits an error from the router that far along the path, revealing the routers one by one.
+### Watching the hops
+
+![Diagram: how traceroute uses the hop limit to reveal each router](./assets/traceroute-mechanism.svg)
+
+- **`traceroute` exploits the hop limit** carried in every IP packet — confusingly
+  also called TTL, but a different one from the DNS field.
+- **Each router decrements it**; at zero, the packet is discarded and an error
+  returned.
+- **Send with a limit of 1, then 2, then 3**, and each elicits a reply from one more
+  router along the path.
+
+---
 
 ## An everyday analogy
 
-Think of the postal system, and keep it in mind for the rest of the lesson.
+The postal system.
 
-An **IP address** is a precise street address: "12 Oak Street, Springfield." It is what actually gets a letter delivered — unglamorous, purely functional, and reassigned when tenants move. A **domain name** is the name on the mailbox, "The Ramirez Family": easy to remember, but the postal service does not route by it.
+| The post | The network |
+| --- | --- |
+| A person's name in a directory | A domain name |
+| Their street address | An IP address |
+| Directory enquiries | A recursive resolver |
+| "Ask the county office" | Delegation to a TLD |
+| The local sorting office | Your default gateway |
+| Each office deciding the next van | Routing, hop by hop |
+| An internal room number | A private address |
 
-**DNS** is the directory that turns a name into a street address. You do not personally phone every records office; you ask a helpful clerk — the **resolver** — "where do the Ramirezes live?" If the clerk does not know, they work down a hierarchy: a national office knows which regional office covers each state, the regional office knows the town, and the town clerk has the actual street address. The clerk then writes it on a sticky note and keeps it for a while — the **cache** with its **TTL** — so the next person asking gets an instant answer. If the family moves and the sticky note has not expired yet, the clerk keeps giving the old address: exactly why a DNS change can take time to take effect everywhere.
+- **No sorting office knows the whole route.** Each one decides which van the parcel
+  goes on next, and that is enough.
+- **A room number is meaningless outside the building**, which is exactly what a
+  private address is.
+- **The directory is cached in your memory** for a while, which is a TTL.
 
-**Routing** is the mail network moving your letter. Your local post office does not know the route to Springfield; it just knows to send anything not local to the regional sorting center. That center forwards toward the destination region, which forwards to the destination town's office, which delivers to Oak Street. Each office makes one decision — "what is the next hop toward this address?" — and no office holds the entire national map. The independent regional carriers negotiating which routes they will carry are the **autonomous systems** running **BGP**. And **traceroute** is like sending a series of letters stamped "return to sender after passing through N offices," so each office along the route mails one back to you, letting you reconstruct the whole path.
-
-The analogy holds all the way down, with one honest caveat: unlike a physical letter, your data is split into many **packets** that may each take a different route and arrive out of order, to be reassembled at the destination — a resilience trick a single physical letter cannot manage.
+---
 
 ## Examples in practice
 
-Let's make it concrete with the exact tools professionals use. Each is free and preinstalled or one package away on macOS and Linux.
+![Diagram: how a CNAME record leads to a second lookup](./assets/cname-chain.svg)
 
-**`dig` — the DNS workbench.** Choose `dig` (domain information groper) when you want to see precisely what DNS returns, including record types and TTLs. It is the tool DNS professionals live in. To ask for the IPv4 address of a name:
+- **A new site not resolving yet**: the old record's TTL has not expired in some
+  caches. Lower the TTL *before* a planned change, not after.
+- **`dig` showing a CNAME chain** three names deep, each costing another lookup.
+- **A server that reaches your laptop's IP and gets nothing**: the address is
+  private, and not routable from outside your network.
+- **`127.0.0.1` working while the machine's real address does not**: the service is
+  bound to loopback only, so nothing outside can reach it.
+- **A traceroute that stops answering halfway**: routers are not obliged to reply,
+  and the path is usually fine.
 
-```bash
-dig +short A example.com
-```
-
-The `+short` flag strips everything but the answer. Drop it and you get the full response — the question, the answer with its TTL, and which server replied — which is what you want when debugging. To see the whole delegation chain from the root down, `dig +trace example.com` performs the recursive walk itself and prints every referral, turning the hierarchy from an abstraction into something you can read line by line.
-
-**`nslookup` — the everywhere alternative.** Choose `nslookup` when you are on a machine without `dig`, especially Windows, where it is the built-in DNS tool. It answers the same basic question:
-
-```bash
-nslookup example.com
-```
-
-It prints the resolver it used ("Server") and the addresses it got. It is less precise than `dig` for reading TTLs and record details, but it is universally available, which is exactly when you will reach for it.
-
-**`ping` — is it reachable, and how far?** Choose `ping` to check whether a host responds at all and to get a rough round-trip time. It sends small ICMP "echo request" probes and times the replies:
-
-```bash
-ping -c 4 example.com
-```
-
-The `-c 4` sends four probes then stops (omit it on Windows, where the default is four; use `-n 4` there instead). Note that some hosts deliberately ignore pings, so "no reply" means "not reachable *or* not answering pings" — a distinction that trips up beginners.
-
-**`traceroute` — where do the packets go?** Choose `traceroute` when a host is slow or unreachable and you want to see the path and where it breaks:
-
-```bash
-traceroute example.com
-```
-
-Each line is one hop — one router — with its address and the round-trip time to it. On Windows the command is `tracert`. It may print `* * *` for hops that decline to respond; that is normal and does not by itself mean failure.
-
-**`whois` — who owns this name or address?** Choose `whois` to look up registration details for a domain or an IP block — registrar, name servers, and the responsible organization:
-
-```bash
-whois example.com
-```
-
-None of these tools cost anything, and none require an account. Paid and hosted equivalents exist — DNS-monitoring dashboards, managed traceroute-from-many-locations services, commercial IP-intelligence APIs — and they add scheduling, history, and worldwide vantage points, but every one of them is built on exactly the queries above, which you can run yourself for free.
+---
 
 ## Implications: security, privacy, performance, scalability, and cost
 
-### Security
+![Diagram: a short DNS time-to-live compared with a long one](./assets/ttl-tradeoff.svg)
 
-DNS was designed in a trusting era, and its openness is a liability. Because a plain DNS answer is not authenticated, an attacker who can inject a forged reply can send you to the wrong address — the basis of **cache poisoning** and many phishing attacks. Mitigations exist: **DNSSEC** cryptographically signs records so tampering is detectable, and **DNS over HTTPS/TLS** encrypts the query so it cannot be read or altered in transit. Routing has an analogous weakness: BGP largely trusts what neighbors advertise, so a false route can hijack traffic, which is why route-origin validation is slowly being deployed. The lesson for anyone deploying a service: correct DNS and routing are necessary but not sufficient for trust — you still need TLS on top to prove the server is who it claims to be.
+- **Security: DNS hijacking sends you to the wrong server** with everything else
+  looking correct. DNSSEC signs answers; encrypted DNS hides the questions.
+- **Domain registrar access is production access.** Anyone who can change your NS
+  records controls where your traffic goes, and can obtain certificates in your name.
+- **Privacy: your resolver sees every name you look up.** That is a complete browsing
+  history, held by whoever runs it.
+- **Performance: DNS is on the critical path of the first request.** A slow
+  authoritative server delays everything after it.
+- **A low TTL costs lookups; a high TTL costs agility.** Choose deliberately: low
+  before a migration, higher afterwards.
+- **Cost: a lapsed domain registration is the cheapest catastrophic failure
+  available.** Set it to auto-renew and check the card on file.
 
-### Privacy
-
-Your DNS queries are a log of everywhere you go, and by default they travel in the clear to your resolver, who can see and record them. Choosing a resolver is therefore a privacy decision, and encrypted DNS keeps queries from anyone between you and that resolver. Addresses leak information too: your public IP address reveals your rough geographic location and your ISP, which is why services can geolocate you and why privacy tools route your traffic through intermediaries to present a different address.
-
-### Performance
-
-Naming and routing both cost time before any real work happens. A cold DNS lookup that has to walk the hierarchy can add tens to hundreds of milliseconds; a cached one is nearly free — which is the whole point of TTLs and caching. Routing distance matters too: every hop and every mile adds latency, so a server physically far from your users is slower no matter how fast the server is. This is why content delivery networks place copies of content in many locations and use DNS to send each user to a nearby one — performance engineering that is, at bottom, clever use of the two systems in this lesson.
-
-### Scalability and cost
-
-DNS scales through hierarchy and caching: no server holds the whole namespace, and caching absorbs the vast majority of queries near the user. Routing scales through address aggregation — routers reason about blocks of addresses (CIDR), not individual machines — and through the AS structure that lets the internet grow without any component needing global knowledge. The costs are mostly indirect: DNS hosting is cheap or free for small domains, IPv4 addresses have become a genuinely scarce and traded commodity (a real line item for anyone needing many public addresses), and the operational cost of a *misconfiguration* — a wrong record, a too-long TTL that freezes a mistake in place — is often far higher than any bill.
+---
 
 ## Subnets and CIDR, briefly
 
-You will keep meeting one more idea: how addresses are grouped. A **subnet** is a contiguous block of addresses that share a leading prefix and are treated as one local network. **CIDR notation** writes such a block as an address followed by a slash and a number — `192.168.1.0/24` — where the number says how many leading bits are fixed as the network part. A `/24` fixes 24 of the 32 bits, leaving 8 for hosts, so it contains 2⁸ = 256 addresses (`192.168.1.0` through `192.168.1.255`). A `/16` fixes 16 bits and holds 2¹⁶ = 65,536 addresses; each smaller number after the slash doubles the block. This is exactly how routers summarize: "everything in `93.184.216.0/24` goes this way" is one routing-table entry standing in for 256 addresses.
+![Diagram: private address ranges compared with public ones](./assets/private-versus-public.svg)
 
-Not all addresses are public. Some ranges are reserved as **private**, usable inside a home or company network but never routed on the public internet; a router performs **NAT** to let many private devices share one public address. And one address is special: `127.0.0.1` (the **loopback**) always means "this very machine."
+- **A subnet is a contiguous block of addresses** sharing a leading prefix, treated
+  as one local network.
+- **CIDR notation writes the block as an address, a slash, and a number** —
+  `192.168.1.0/24` — where the number says how many leading bits are fixed.
+- **A `/24` fixes 24 of 32 bits**, leaving 8 for hosts: 256 addresses.
+- **A `/16` fixes 16**, holding 65,536. Each smaller number after the slash doubles
+  the block.
+- **This is how routers summarise**: one entry saying "everything in
+  `93.184.216.0/24` goes this way" stands in for 256 addresses.
 
-| Range (CIDR) | Kind | Where it is used |
+| Range | Kind | Where it is used |
 | --- | --- | --- |
-| `10.0.0.0/8` | Private (RFC 1918) | Large internal networks; ~16.7 million addresses |
-| `172.16.0.0/12` | Private (RFC 1918) | Medium internal networks |
-| `192.168.0.0/16` | Private (RFC 1918) | Home and small-office networks (e.g. `192.168.1.1`) |
-| `127.0.0.0/8` | Loopback | The local machine itself; `127.0.0.1` is "here" |
+| `10.0.0.0/8` | Private | Large internal networks; ~16.7 million addresses |
+| `172.16.0.0/12` | Private | Medium internal networks |
+| `192.168.0.0/16` | Private | Home and small office |
+| `127.0.0.0/8` | Loopback | This machine itself |
 | Everything else routable | Public | Globally reachable, assigned by registries |
 
-If you inspect an address and it falls in one of the private ranges, you know immediately that it is not reachable from outside its own network — a distinction that explains a great many "it works on my machine but not from the server" mysteries.
+- **Private addresses are never routed on the public internet.** A router performs
+  **NAT** so many private devices share one public address.
+- **Recognising a private address by sight** explains a great many "works on my
+  machine, not from the server" mysteries.
+
+---
 
 ## Alternatives: free, open source, and commercial
 
-"Alternatives" here means the different resolvers and tools you can choose, and the trade-offs between them.
+| Tool | Type | What it gives you |
+| --- | --- | --- |
+| `dig` | Free, built in | Exactly what was returned, and by which server |
+| `nslookup` | Free, built in | Simpler output; fine for a quick check |
+| `host` | Free, built in | The shortest answer of the three |
+| `traceroute` / `mtr` | Free | The path, and where latency appears |
+| `1.1.1.1`, `8.8.8.8`, `9.9.9.9` | Free | Public resolvers, often faster than an ISP's |
+| Cloudflare / Route 53 / NS1 | Commercial, free tiers | Authoritative hosting with low-latency global fleets |
 
-| Option | Type | What it offers | Cost |
-| --- | --- | --- | --- |
-| Your ISP's default resolver | Bundled | Works out of the box; your ISP sees your queries | Free |
-| Cloudflare `1.1.1.1`, Google `8.8.8.8`, Quad9 `9.9.9.9` | Public resolvers | Fast, global, often with privacy or filtering options | Free |
-| `dig` / `nslookup` / `host` | Command-line tools | Direct, precise DNS queries from your own machine | Free / open source |
-| BIND, Unbound, Knot | Open-source DNS servers | Run your own resolver or authoritative server | Free / open source |
-| Managed DNS (Cloudflare, Route 53, NS1, and others) | Commercial hosting | Authoritative hosting with health checks, geo-routing, dashboards | Free tier to paid |
-| IP-intelligence and DNS-monitoring APIs | Commercial | Bulk geolocation, ownership, uptime history, alerting | Paid |
+- **Learn `dig +trace`.** It performs the walk yourself, showing each delegation step
+  rather than the resolver's cached summary.
+- **Public resolvers are usually faster than an ISP's**, and change who sees your
+  lookups — a trade rather than a free win.
 
-For learning and for most debugging, the free command-line tools and a public resolver are all you need. Managed DNS earns its price when you run real services and want failover, global routing, and change history without operating servers yourself.
+---
 
 ## Comparison with related concepts
 
-| Concept A | Concept B | Key difference |
-| --- | --- | --- |
-| IP address | Domain name | The address is the machine's numeric location; the name is a human label that DNS maps to an address |
-| DNS | Routing | DNS finds the *address* for a name; routing carries packets *to* that address |
-| A record | CNAME record | An A record gives an actual IP address; a CNAME points to another name that must itself be resolved |
-| IPv4 | IPv6 | IPv4 is 32-bit (~4.3 billion addresses, nearly exhausted); IPv6 is 128-bit (effectively unlimited) |
-| Public IP | Private IP | A public address is globally routable; a private address (`10.x`, `192.168.x`) works only inside its own network |
-| Router | Resolver | A router forwards packets between networks; a resolver answers DNS name lookups |
+![Diagram: IPv4 compared with IPv6](./assets/ipv4-versus-ipv6.svg)
+
+| Term | What it actually is |
+| --- | --- |
+| **IP address** | Where a machine is, on a network |
+| **Domain name** | A human-readable name that resolves to one |
+| **Resolver** | The server that does the lookup work for you |
+| **Authoritative server** | The one holding the real records for a domain |
+| **TTL** | How long an answer may be cached |
+| **Autonomous system** | A large network under one administrative control |
+| **BGP** | How autonomous systems advertise what they can reach |
+
+---
 
 ## When to use it — and when not to
 
-Reach for this mental model the instant a networked thing "can't connect." The disciplined first question is always: *does the name resolve?* Run `dig +short A the-host`. If you get no address or a surprising one, the problem is DNS — a missing record, a typo, a stale cache, a wrong TTL — and no amount of restarting the server will help. If the name resolves correctly but you still cannot connect, the problem is reachability: use `ping` and `traceroute` to see whether packets get to the destination and where they stop. Separating "wrong address" from "can't reach the address" is the highest-leverage debugging habit in all of networking, and these two commands settle it in under a minute.
+![Diagram: how the CIDR prefix length determines block size](./assets/cidr-arithmetic.svg)
 
-Reach for it when you deploy: pointing a domain at a new service is a DNS edit, and knowing records and TTLs lets you plan a change (lower the TTL beforehand so the switch propagates fast) instead of being surprised by one. Reach for it when you evaluate performance, because latency you cannot explain often lives in the network path, not your code.
+- **Lower a record's TTL a day before a planned migration**, so the change propagates
+  quickly when you make it.
+- **Use a CNAME when pointing at a service whose address you do not control**, and an
+  A record when you do.
+- **Use `dig` before assuming an application is broken.** Half of "the service is
+  down" is a resolution problem.
+- **Do not hard-code IP addresses** in configuration. That is what names are for, and
+  the address will change.
+- **Do not set a TTL of five seconds and leave it there.** You pay for it on every
+  request, forever.
+- **Do not debug routing from one machine.** A path that fails for you may work
+  everywhere else, and that is itself the finding.
 
-Know when to leave it alone, too. Most of the time DNS and routing simply work, and second-guessing them wastes effort — do not blame the network before you have evidence. Application bugs, expired credentials, firewalls, and full disks masquerade as "connection" problems constantly. The professional habit is to *check* the name-and-route layer quickly and definitively with the tools above, and then, once it is ruled in or out, move on to the layer that actually holds the fault.
-
-Finally, the connection to your larger goal. Every service you call over the network — a hosted model's API endpoint, a vector database, an object store full of training data — is reached by exactly this pipeline: its hostname resolves through DNS to an address, and your packets route there hop by hop. When you deploy a model service of your own and give it a public name, you are creating DNS records for it; when a client reports it "can't reach the server," you now know the first two things to check and the exact commands to check them with. The naming and routing you learned today are the ground floor that everything else in networked software stands on.
+---
 
 ## The AI connection
 
-Every model you call over an API and every dataset you download begins with the
-lookup you traced today. When a training job fails at hour three with a name
-resolution error, the cause is usually DNS inside a container: the image resolves
-names differently from the host, and a resolver configured for one network is
-useless on another.
+![Diagram: four DNS failures and what each looks like](./assets/dns-failure-modes.svg)
 
-The routing half matters for cost as much as for correctness. Data has to travel
-from where it is stored to where it is processed, and every hop is latency you
-pay on every batch. Training against a dataset in one cloud region from
-accelerators in another is a common and expensive mistake — the egress charges
-and the added round-trip time both scale with the number of epochs. The
-diagnostic habit from today transfers exactly: when something cannot be reached,
-establish first whether the name resolved. A successful lookup that then fails to
-connect is a routing or firewall problem, and it needs entirely different tools
-from a lookup that returned nothing.
+- **Model API endpoints are names behind global fleets.** The address you resolve
+  depends on where you are, which is how the provider puts inference near you.
+- **A container that cannot reach the internet** is usually a DNS problem inside the
+  container, not a network outage.
+- **Cluster service discovery is DNS.** In Kubernetes, a service name resolves to its
+  current addresses, and this lesson is the whole mechanism.
+- **Private addressing is why your training machine cannot be reached directly**, and
+  why you tunnel through a bastion or use a VPN.
+- **A slow first API call and fast subsequent ones** is DNS caching, visible in your
+  own latency numbers.
 
 ---
 
 ## Knowledge check
 
-Try these from memory before looking back:
+```yaml
+quiz:
+  question: "You update a domain's A record to point at a new server. Some users reach the new server immediately; others keep landing on the old one for hours. What explains the split?"
+  options:
+    - "Resolvers are still serving the previous answer until its TTL expires"
+    - "The new server's DNS record was written with the wrong record type"
+    - "BGP has not yet propagated the route to the new server's network"
+    - "The authoritative name servers have not finished synchronising with each other"
+  answer_index: 0
+  explanation: "Every DNS answer carries a time to live, and a resolver that cached the old address serves it until that expires. Users behind a resolver with a fresh cache get the new answer; users behind one holding the old record do not, until the clock runs out."
+```
 
-1. In one sentence each, state what IP addressing, DNS, and routing are individually responsible for.
-2. Walk the four steps a recursive resolver takes to resolve a name it has never seen, naming root, TLD, and authoritative servers.
-3. Explain the difference between an A record and a CNAME record, and why a CNAME requires a second lookup.
-4. You run `dig +short A myapp.example.com` and get an address in `10.0.0.0/8`. Why can a user on the public internet not reach that service, and what does the private range tell you?
-5. A service "can't be reached." Describe, in order, the two commands you would run first and how each answer redirects your search.
+---
 
 ## Hands-on exercise
 
-Time to query the real naming and routing system. In this exercise — completed in full in the Day 16 lab directory — you will resolve a name to its addresses, read its mail record, and trace the path to it, then record what you found. Everything uses a public domain (`example.com`) reserved for exactly this kind of documentation and testing, so you are not probing anyone's private systems.
+Resolve a name by hand, then follow a packet. Worked through fully in the Day 16
+lab directory.
 
-Open your terminal and run each command:
-
-```bash
-dig +short A example.com
-```
-
-Prints the IPv4 address(es) the name resolves to — the "street address" DNS returned.
-
-```bash
-dig +short AAAA example.com
-```
-
-Prints the IPv6 address(es), if the name has any — the same destination in the newer, larger address format.
-
-```bash
-dig MX example.com
-```
-
-Prints the mail-exchange record: where email for the domain would be delivered. (`example.com` may return an empty or placeholder answer — that itself is a valid, informative result.)
-
-```bash
-traceroute example.com
-```
-
-Prints the routers your packets pass through on the way to the destination, one hop per line. It can take a while and may show `* * *` for hops that stay silent; that is normal.
-
-On Windows, use `nslookup example.com` for the address lookups and `tracert example.com` for the path; the outputs read the same way.
+| What you are doing | Command |
+| --- | --- |
+| The short answer | `dig example.com +short` |
+| The full answer with TTL | `dig example.com` |
+| Walk the hierarchy yourself | `dig example.com +trace` |
+| Ask a specific resolver | `dig @1.1.1.1 example.com` |
+| Look up other record types | `dig example.com MX` and `dig example.com NS` |
+| Follow the path | `traceroute example.com` |
+| See your own addresses | `ipconfig getifaddr en0` or `ip addr` |
 
 ### Expected output
 
-A representative run (your addresses and hops will differ — that is expected):
-
 ```text
-$ dig +short A example.com
-93.184.216.34
-
-$ dig +short AAAA example.com
-2606:2800:220:1:248:1893:25c8:1946
-
-$ dig MX example.com
-;; ANSWER SECTION:
-example.com.   3600   IN   MX   0 .
-
-$ traceroute example.com
-traceroute to example.com (93.184.216.34), 30 hops max
- 1  192.168.1.1   3.1 ms
- 2  10.0.0.1      9.4 ms
- 3  * * *
- ...
- 9  93.184.216.34  74.2 ms
+example.com.    3600    IN    A    93.184.216.34
+.               518400  IN    NS   a.root-servers.net.
+com.            172800  IN    NS   a.gtld-servers.net.
+example.com.    172800  IN    NS   a.iana-servers.net.
 ```
 
-Reading it: the A record is the IPv4 address; the AAAA record is the same destination in IPv6. The MX answer here uses the special "null MX" (`0 .`), a valid record meaning the domain accepts no mail. In the traceroute, hop 1 is your own router (a private `192.168.x` address), the middle hops are your ISP and transit networks, some decline to answer (`* * *`), and the final line is the destination — the total hop count is how many routers your packets crossed.
+- **`3600` is the TTL** — one hour before that answer must be looked up again.
+- **`+trace` shows the three delegations**: root to `.com` to the domain's own
+  servers.
 
 ### Validate your work
 
-You are done when you can check every box:
-
-- [ ] You captured at least one IPv4 (A) address for the site.
-- [ ] You checked whether the site has an IPv6 (AAAA) address and recorded the result.
-- [ ] You recorded the MX answer (an address, a null MX, or "none").
-- [ ] You ran traceroute and counted the hops to the destination.
-- [ ] You can say whether each address you saw is public or private (does it fall in `10.x`, `172.16–31.x`, or `192.168.x`?).
+- [ ] You can read a TTL off a `dig` answer and say what it means
+- [ ] You performed the full hierarchy walk with `+trace` and named each step
+- [ ] You queried two different resolvers and compared their answers
+- [ ] You identified whether your own machine has a public or a private address
+- [ ] You ran `traceroute` and can say which hop is your own router
+- [ ] `bash tests/run_tests.sh` reports 0 failures
 
 ### Troubleshooting
 
-- **`dig: command not found`.** Install it (`brew install bind` on macOS if missing; `sudo apt install dnsutils` on Debian/Ubuntu), or use `nslookup`, which is preinstalled almost everywhere.
-- **`traceroute: command not found` (Linux).** Install it with `sudo apt install traceroute` (Debian/Ubuntu) or `sudo dnf install traceroute` (Fedora). On Windows the command is `tracert`, already present.
-- **traceroute hangs or shows only `* * *`.** Many networks rate-limit or block the probes; this is normal and not a failure. Let it run to the hop limit, or press Ctrl+C to stop early — you still learn where it got.
-- **An empty answer from `dig MX`.** That is a real answer: the domain may have no MX record, or a null MX. Record "none" rather than treating it as an error.
+- **`dig` not installed.** On some systems it is in a `dnsutils` or `bind-tools`
+  package. `host` and `nslookup` are usually present.
+- **`+trace` gives a short answer.** Something is intercepting DNS — a corporate
+  resolver, or a router that redirects port 53.
+- **Two resolvers disagree.** Usually a stale cache on one of them; check the TTLs.
+- **`traceroute` shows asterisks.** Routers may decline to reply. It is not evidence
+  of a fault.
 
 ### Common mistakes
 
-- **Confusing an A record with a CNAME.** If `dig A somename` returns another *name* rather than an address in the answer, you are looking at a CNAME chain; follow it with another lookup. A records end in addresses; CNAMEs end in names.
-- **Reading `* * *` as "broken."** Silent hops are routers choosing not to reply; the path still works if the final line reaches the destination.
-- **Assuming no ping reply means down.** Hosts often ignore pings on purpose. Confirm with a different signal (an actual connection, or a successful DNS + traceroute) before concluding a host is offline.
-- **Forgetting caching.** If you change a record and the old value keeps coming back, you are seeing a cached answer that has not hit its TTL yet — wait it out or query an authoritative server directly.
+- **Believing a change is live because it works for you.** Your cache is not
+  everyone's.
+- **Changing a TTL at the same time as the record.** The old TTL governs how long the
+  old value survives, so lower it in advance.
+- **Confusing the DNS TTL with the IP hop limit.** Same name, unrelated jobs.
+- **Assuming a private address is reachable** from anywhere but its own network.
+
+---
 
 ## Practice assignment
 
-Open the DNS worksheet in the starter directory of the Day 16 lab and fill it in completely, using the commands above against `example.com` (and, if you like, one more site of your choice): record the A record IPv4 address, whether an AAAA record exists, the MX answer, and the number of hops traceroute took to reach the destination. Then write one short paragraph (4–6 sentences) narrating what happened when you looked the name up — from your request, to the resolver walking root → TLD → authoritative, to the address coming back and your packets hopping to it — using your own captured numbers. State explicitly whether the final address is public or private and how you can tell.
+- **Resolve five well-known domains** and tabulate their TTLs. Form a hypothesis about
+  why they differ, then check whether the short ones belong to services that move.
+- **Find a CNAME chain** in the wild and count the lookups it costs.
+- **Compare `traceroute` to a domestic host and an overseas one**, and identify where
+  the latency appears.
+- **Identify every address on your own machine**, and classify each as loopback,
+  private or public.
+
+---
 
 ## Extension challenge
 
-Go one layer deeper into the hierarchy. Run `dig +trace example.com` and watch the resolver walk from the root servers down to the authoritative servers, printing every referral — find the line where a root server hands off to the `.com` servers, and the line where a `.com` server hands off to the authoritative servers for the domain. Then run `dig NS example.com` to see just the authoritative name servers, and `whois example.com` to see who is registered as responsible for the name. Finally, pick any public address you saw today and classify it: is it IPv4 or IPv6, is it public or private, and — using `whois <address>` — which organization's block does it belong to? Write three or four sentences connecting what you found to the three responsibilities from this lesson: the name you started with, the address DNS returned, and the path routing would take to reach it. You have just performed, by hand, the exact lookups that every networked program does invisibly before its real work begins.
+- **Run your own resolver** locally, point your machine at it, and watch the queries
+  it makes. Seeing your own lookups is a genuinely uncomfortable exercise.
+- **Measure the TTL trade-off.** Query a name repeatedly and time each request,
+  identifying the moment the cache expires.
+- **Read a real BGP leak post-mortem** and map what happened onto the routing diagram
+  in this lesson.
+- **Set up a subdomain with a low TTL**, change it, and measure how long the old value
+  actually survives across three different public resolvers.
+
+---
+

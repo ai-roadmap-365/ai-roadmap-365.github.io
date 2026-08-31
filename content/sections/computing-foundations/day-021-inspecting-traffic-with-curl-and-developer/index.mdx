@@ -5,314 +5,381 @@ title: 'Inspecting Traffic with curl and Developer Tools'
 
 ## Why this matters
 
-For a week you have followed a request across the internet: what happens when you load a page, then IP addresses and DNS and routing, then TCP and UDP and ports, then HTTP, then the TLS handshake that makes it HTTPS, and finally the browser turning bytes into pixels. All of that machinery is invisible while it works. The moment it stops working — a page that will not load, an API that answers with a cryptic number, a login that silently fails — you need to make it visible again. Today you learn to do exactly that: to see the request and the response on the wire, byte for byte, and to reason from what you see to what is broken.
+- **This is the week's payoff.** Days 15 to 20 explained the machinery; today you
+  learn to look at it.
+- **"The API call failed" is not a diagnosis.** By the end of today it will be one of
+  five specific, distinguishable failures.
+- **`curl -v` shows every layer at once** — DNS, TCP, TLS, request, response — in one
+  screen.
+- **Reproducing a failure outside your code** is the fastest way to find out whether
+  your code is even involved.
+- **You will use these two tools for the rest of your career**, on every service you
+  ever build or consume.
 
-This is the difference between guessing and knowing. When you eventually call a hosted model endpoint from your own code and it answers `401 Unauthorized`, or `429 Too Many Requests`, or `500 Internal Server Error`, or returns text that your program cannot parse, you have two choices. You can stare at your source code and rearrange it hopefully, or you can reproduce the exact request outside your program, read the exact response, and fix the one thing that is actually wrong. The engineers who debug fastest reach for the second path every time, and the tool they reach for is almost always `curl`: one command that sends any request you can describe and shows you everything that comes back.
-
-The stakes are concrete. A misread status code sends you rewriting working code for an hour when the real problem was a missing header. A request you cannot reproduce outside your application is a bug you cannot isolate, which means a bug you cannot reliably fix. Time, in debugging, is mostly the time you spend not knowing where the problem is. The tools in this lesson collapse that time by letting you look. This is the practical capstone of the whole networking category: everything you learned about how a request travels, you will now learn to observe and diagnose.
+---
 
 ## The idea in plain language
 
-Two families of tools let you inspect network traffic, and you will use both constantly.
+![Diagram: curl compared with browser developer tools](./assets/curl-or-devtools.svg)
 
-The first is `curl`, a command-line program that makes a single HTTP request and prints the result. You type a command, `curl` sends the request you described, and the response comes back to your terminal. Because you control every detail — the URL, the method, the headers, the body — and because you see every detail of what returns, `curl` is the most precise way to ask "what does the server actually do when I send exactly this?" There is no browser, no framework, and no application code in the way to hide or change anything.
+- **Inspecting traffic means composing a request from named parts** and reading a
+  response by its named parts.
+- **`curl` is for one request**, precisely controlled and endlessly repeatable.
+- **Developer tools are for a whole page** — every request it made, in one timeline.
+- **Neither guesses.** They show you what was actually sent and what actually came
+  back.
+- **The skill is not the tools.** It is asking the failure questions in the right
+  order.
 
-The second is your browser's Developer Tools, and specifically its Network tab. A modern web page makes dozens or hundreds of requests — the HTML, then stylesheets, images, fonts, and a stream of background API calls. The Network tab records every one of them as it happens and lets you click any single request to see its method, its status, its headers, its timing, and its response body. Where `curl` is a scalpel for one request you compose by hand, the Network tab is a flight recorder for everything a real page actually did.
-
-Underneath both is a single skill: reading a request and its response as a structured object with named parts, and knowing which part to check when something is wrong. Was the hostname even found? Did the connection open? Did the encryption succeed? What status number came back? Was the body the shape you expected? A failed request is never just "broken"; it failed at one specific stage, and naming that stage is most of the fix. The tools show you the stages. This lesson teaches you to read them.
+---
 
 ## Historical background
 
-`curl` began in 1996 as a small utility named `httpget`, written by the Swedish developer Daniel Stenberg, who wanted a command-line way to fetch currency-exchange rates for an internet relay chat bot. It was renamed `curl` — for "client for URLs" — in 1998, and it has been maintained continuously ever since, with Stenberg still its lead developer nearly three decades later. Under the hood sits `libcurl`, a reusable transfer library first released in 2000, which is now embedded in an astonishing range of software: cars, televisions, phones, printers, game consoles, and the runtimes of most programming languages. When some other program makes an HTTP request, there is a very good chance `libcurl` is doing the actual work. Few pieces of software are so widely deployed and so little noticed.
+- **`curl` was released in 1998**, written by Daniel Stenberg to fetch currency rates
+  from a script.
+- **It now ships on essentially every operating system**, including Windows, and runs
+  in cars, phones and televisions — one of the most widely deployed programs ever
+  written.
+- **Its companion library, libcurl, is what most other tools use underneath**, which
+  is why their behaviour matches.
+- **Browser developer tools arrived later.** Firebug, a Firefox extension from 2006,
+  established the shape; browsers built it in afterwards.
+- **The network panel has barely changed since.** The columns you will read today are
+  the columns from 2010, because they were the right ones.
 
-Browser developer tools have a shorter, faster history. In the early 2000s, web developers debugged by inserting alerts and reloading endlessly. Firebug, a Firefox extension released in 2006 by Joe Hewitt, changed that by adding an inspector, a console, and a network monitor directly in the browser. Its ideas were so obviously right that every major browser built them in: Chrome shipped its Developer Tools with the browser's first release in 2008, and today Chrome, Firefox, Safari, and Edge all ship a Network panel that descends directly from Firebug's. The web platform standardized much of what these panels report, so the columns you will read — status, type, size, time — mean the same thing across browsers.
-
-The theme across both histories is that the web was built to be inspectable. HTTP is a text-based protocol whose messages a human can read; the browser is required to fetch resources over that protocol; and the tooling that grew up around it exposes those messages rather than hiding them. That openness is not an accident. It is why the network can be debugged at all, and it is why the same two tools have stayed useful across twenty-five years of change on the web.
+---
 
 ## What it is — and what it is not
 
-Traffic inspection is the practice of observing the actual HTTP messages exchanged between a client and a server — the real request that left your machine and the real response that came back — instead of inferring them from application behavior. `curl` is a client that composes and sends one such message on demand and prints what returns. Developer Tools is an observer that records the messages a browser already sent and lets you replay and read them. Both answer the same question: not "what do I think happened?" but "what actually crossed the wire?"
+**They are:**
 
-It is worth being clear about what these tools are not. They are not a fix; they are a light. `curl` does not repair a broken server, and the Network tab does not correct your code — they only let you see precisely enough to know what to change. They are also not a general packet sniffer: `curl` and Developer Tools work at the level of HTTP requests and responses, the layer you will spend nearly all your debugging time in, not at the level of individual TCP or IP packets. A separate class of tools, discussed later, drops down to the raw packets when you truly need to. And traffic inspection is not testing: a passing `curl` command tells you the server answered correctly once, from your machine, right now — not that it will for every input, every user, and every load. Inspection tells you what is; testing tells you what holds.
+- Instruments. They report what happened, without opinion.
+- Complementary. `curl` isolates one request; developer tools show the whole page.
+- Exact. `curl` sends precisely what you asked, which is the point.
+
+**They are not:**
+
+- **Not a substitute for reading the error.** Most failures announce themselves
+  clearly, and are read past.
+- **Not identical to your program.** `curl` has its own trust store, its own
+  redirects policy, its own defaults — differences that are themselves informative.
+- **Not a load tester.** Measuring one request tells you about latency, not capacity.
+- **Not safe to paste publicly.** A copied `curl` command carries your live
+  credentials.
+
+---
 
 ## Why it was created and what problems it solves
 
-Every tool here exists to answer one recurring, expensive question: *when a request does not do what I expected, what exactly went wrong?* Without inspection you are reduced to symptoms — "the page is blank," "the app shows an error," "it works on my machine" — and symptoms rarely point at causes. A blank page might be a failed request, a wrong status, a valid response your code mishandled, or a resource blocked by the browser. Each has a different fix, and you cannot tell them apart from the symptom alone.
+- **Isolating the variable.** Was it your code, your network, the server, or the
+  request itself? Nothing else answers this as fast.
+- **Reproducibility.** A `curl` command is a bug report anyone can run.
+- **Automation.** Anything you can inspect, you can script and schedule.
+- **Seeing the invisible.** A browser hides redirects, retries, caching and
+  compression; these tools show them.
+- **Measuring, not guessing.** `-w` turns "it feels slow" into five numbers, each
+  pointing at a different stage.
 
-`curl` solves the reproduction problem. A bug you can only trigger by clicking through an entire application is slow to investigate and easy to misattribute. Reduce it to a single `curl` command and you have isolated it: the command either reproduces the failure or it does not, and either answer is progress. If `curl` succeeds where your program fails, the fault is in your program, not the server. If `curl` fails the same way, you can now vary one thing at a time — one header, one field, one URL — until the response changes, and the thing you changed is the cause. This is the core discipline of debugging: shrink the failing case until only the cause remains.
-
-Developer Tools solves the observation problem for real pages. Modern web applications are too complex to reason about from the outside; a single click may fire a dozen background requests, and any one of them can be the culprit. The Network tab makes that hidden conversation visible, in order, with timing, so you can find the one slow, failed, or malformed request among the many that succeeded. Together the two tools turn "it is broken" into "this request, at this stage, returned this — here is why," which is the sentence every fix begins with.
+---
 
 ## How it works
 
 ![Diagram: narrowing an API failure from the application down to the network](./assets/where-did-it-break.svg)
 
-At its heart, inspecting traffic means composing a request from its named parts and reading a response by its named parts. Let us build up `curl` from the pieces, then look at how Developer Tools presents the same pieces for a whole page.
-
 ### The anatomy of a curl command
 
-Type `curl https://example.com` and, with no options, `curl` makes a GET request and prints the response body to your terminal. Everything else is controlled by flags that add to or reveal parts of the exchange. The single most important flag for debugging is `-v` (verbose), which prints the entire conversation: the lines beginning with `>` are the request `curl` sent, the lines beginning with `<` are the response headers the server returned, and lines beginning with `*` are `curl`'s own notes about resolving the host, opening the connection, and completing the TLS handshake. In one command you see all the networking layers from the past week laid out in order.
+![Diagram: what each prefix in curl verbose output means](./assets/verbose-line-prefixes.svg)
 
 ![Diagram: the anatomy of a curl command, each flag labelled with its job, and the request and response it produces](./assets/curl-anatomy.svg)
 
-The other flags each control one named part of the exchange. The table below lists the ones you will use daily; the lesson's lab exercises every one of them against a real server.
+- **Bare `curl URL` makes a GET** and prints the body.
+- **`-v` is the debugging view.** Lines beginning `>` are what was sent, `<` are the
+  response headers, and `*` are curl's own notes about resolving, connecting and the
+  TLS handshake.
+- **In one command you see every layer from this week**, laid out in order.
 
 | Flag | What it does | Why you reach for it |
 | --- | --- | --- |
-| `-v` | Verbose: prints the full request (`>`), response headers (`<`), and connection notes (`*`) | The default debugging view — see everything at once |
-| `-I` | Fetch headers only (a HEAD request); prints the status line and response headers | Check status and headers without downloading the body |
-| `-L` | Follow redirects to the final destination | A `301`/`302` is not the answer; `-L` chases it to the real one |
-| `-H` | Set a request header, e.g. `-H "Accept: application/json"` | Servers change their answer based on the headers you send |
-| `-X` | Set the HTTP method, e.g. `-X POST` or `-X DELETE` | Exercise methods a browser will not send for you |
-| `-d` | Send a request body, e.g. `-d '{"q":"hi"}'`; implies POST | Reproduce the exact payload your code sends |
-| `-w` | Write out chosen variables after transfer, e.g. `-w "%{http_code}"` | Extract just the status, or a full timing breakdown |
-| `-o` / `-s` | Write the body to a file (`-o`) or silence the progress meter (`-s`) | Keep output clean when you only care about status or timing |
-| `--resolve` | Force a hostname to a specific IP for this request | Test a new server before DNS points to it |
+| `-v` | The full conversation | The default debugging view |
+| `-I` | Headers only (HEAD) | Status and headers, no body download |
+| `-L` | Follow redirects | A `301` is not the answer; chase it |
+| `-H` | Set a request header | Servers answer differently based on them |
+| `-X` | Set the method | Exercise methods a browser will not send |
+| `-d` | Send a body; implies POST | Reproduce your code's exact payload |
+| `-w` | Print chosen variables after transfer | Just the status, or a timing breakdown |
+| `-o` / `-s` | Body to a file / silence the meter | Keep output clean |
+| `--resolve` | Force a hostname to an address | Test a new server before DNS points at it |
 
-Two more capabilities matter often. The `-w` flag reads timing variables that `curl` measures for every transfer: `time_namelookup` (DNS resolution), `time_connect` (TCP connection established), `time_appconnect` (TLS handshake complete), `time_starttransfer` (first byte of the response, often called time to first byte), and `time_total`. Printing these turns `curl` into a stopwatch that tells you *which stage* was slow, not merely that something was. And `curl` handles cookies with `-c` to save them to a file and `-b` to send them back, letting you reproduce a session that a plain request would not have.
+- **`-w` reads timing variables** curl measures on every transfer:
+  `time_namelookup`, `time_connect`, `time_appconnect`, `time_starttransfer` — time
+  to first byte — and `time_total`.
+- **That turns curl into a stopwatch** that says *which stage* was slow.
+- **`-c` and `-b` save and send cookies**, letting you reproduce a session a plain
+  request would not have.
 
-### Reading the DevTools Network tab
+### Reading the network panel
 
-Open Developer Tools (in Chrome, press F12 or Command-Option-I on a Mac; the equivalents in Firefox, Safari, and Edge are nearly identical) and select the Network tab, then reload the page. Every request the page makes appears as a row, and the columns describe each one. The table below names the columns you will read most.
+![Diagram: four recognisable patterns in a network waterfall](./assets/waterfall-shapes.svg)
+
+Open developer tools (F12, or Command-Option-I on a Mac) and reload with the Network
+tab open. Every request is a row.
 
 | Column | What it tells you | What to watch for |
 | --- | --- | --- |
-| Name | The resource requested (file or endpoint) | Find the specific request you care about |
-| Status | The HTTP status code returned | Red rows are `4xx`/`5xx` failures; look here first |
-| Type | The kind of resource (document, script, fetch, image, font) | Filter to `Fetch/XHR` to see only API calls |
-| Initiator | What caused the request (which script or page) | Trace a mystery request back to the code that fired it |
-| Size | Bytes transferred, and whether it was served from cache | A surprisingly large or uncached download |
-| Time | How long the request took end to end | The slow request in a slow page |
-| Waterfall | A timeline bar showing each request's timing phases | Where the time actually went across all requests |
+| Name | The resource requested | Finding the one you care about |
+| Status | The HTTP status code | Red rows first, always |
+| Type | Document, script, fetch, image, font | Filter to `Fetch/XHR` for API calls only |
+| Initiator | What caused the request | Tracing a mystery request to its code |
+| Size | Bytes transferred, and cache hits | A surprisingly large or uncached download |
+| Time | End to end duration | The slow request in a slow page |
+| Waterfall | A timeline bar per request | Where the time actually went |
 
-Click any row and a detail pane opens with sub-tabs: Headers shows the request and response headers and the status; Payload shows the request body you sent; Response (or Preview) shows the body that came back; and Timing breaks the single request into the same phases `curl -w` reports — DNS, connecting, TLS, waiting for the first byte, and downloading. The waterfall on the right assembles all of these into one picture of the page, so a long bar or a late-starting request jumps out. A filter box at the top narrows the list; typing a word matches by name, and the type buttons (`Fetch/XHR`, `JS`, `CSS`, `Img`) hide everything else so you can focus on, say, only the API calls your application made.
+- **Click a row** for Headers, Payload, Response and Timing — the same phases `-w`
+  reports, per request.
+- **The waterfall assembles them into one picture**, so a long bar or a late start
+  jumps out.
+- **Filter by type** to hide everything but the API calls your application made.
 
-### A systematic method for a failed request
+### A systematic method
+
+![Diagram: the five ordered checks for diagnosing a failed request](./assets/five-gates.svg)
 
 ![Flowchart: a troubleshooting decision tree for a failed request, from DNS to connection to TLS to status code to body](./assets/debug-decision-tree.svg)
 
-The decision tree above turns "the request failed" into a short, ordered set of yes/no questions, each with a tool that answers it. Did the hostname resolve to an IP? If not, the problem is DNS — check the name for typos and confirm it resolves. Did the TCP connection open? If not, the server may be down, or a port or firewall is blocking you. Did the TLS handshake succeed? If not, the certificate is expired, untrusted, or mismatched. Did a response come back, and with what status? A `2xx` means success; a `4xx` means *you* sent something wrong (wrong URL, missing authentication, bad input); a `5xx` means the *server* failed handling an otherwise valid request. Only once you have a `2xx` do you ask the last question: is the body the shape you expected — valid, complete, parseable? Walking these gates in order means you never rewrite your request-sending code to fix a problem that was actually in DNS, and you never blame the server for a `4xx` that your own request caused.
+Ask these in order, and stop at the first "no":
+
+1. **Did the name resolve?** If not, it is DNS. Check for typos; confirm with `dig`.
+2. **Did the connection open?** If not, the service is down, or a port or firewall is
+   blocking you.
+3. **Did TLS succeed?** If not, the certificate is expired, untrusted, or for the
+   wrong name.
+4. **What status came back?** `4xx` means your request was wrong; `5xx` means the
+   server failed handling a valid one.
+5. **Is the body the shape you expected?** Only ask this once you have a `2xx`.
+
+- **Walking the gates in order** means you never rewrite request-sending code to fix
+  a DNS problem, and never blame a server for a `4xx` you caused.
+
+---
 
 ## An everyday analogy
 
-Think of an HTTP request as a parcel you send through a courier, and the response as the delivery outcome that comes back. When a parcel goes missing, you do not tear apart your whole shipping operation at random; you check the tracking history stage by stage.
+A doctor working through a differential diagnosis.
 
-`curl -v` is that full tracking history printed for a single parcel: the `*` lines are the courier's internal notes — *address looked up, sorting facility reached, security checkpoint cleared* — and the `>` and `<` lines are the shipping label you wrote and the delivery receipt that came back. The status code is the receipt's outcome stamp: `200` is "delivered," `404` is "no such address," `401` is "recipient refused — no valid identification," `429` is "too many parcels, come back later," and `500` is "the depot caught fire while handling your perfectly valid parcel." A redirect (`301`/`302`) is a "recipient has moved — forwarding to a new address" slip, and `curl -L` is you saying "follow the forwarding slips until the parcel actually arrives" rather than stopping at the first one.
+| The clinic | The request |
+| --- | --- |
+| "Where does it hurt?" | Which stage failed |
+| Taking a pulse | `ping` and `dig` |
+| An X-ray | `curl -v` |
+| A full panel of tests | The network waterfall |
+| Ruling things out in order | The decision tree |
+| Not prescribing before diagnosing | Not editing code before knowing the stage |
 
-The Developer Tools Network tab, by contrast, is the dispatcher's board for *every* parcel your operation sent today: hundreds of rows, each with its destination, its outcome stamp, its weight, and how long it took, with a timeline showing which went out when. When customers complain the whole shipment is late, you scan the board for the one red row or the one bar that stretches far past the others. And the decision tree is the dispatcher's laminated checklist: address valid? facility reached? checkpoint cleared? receipt stamp? contents correct? You run it top to bottom, and the first "no" is where the parcel — and your investigation — stopped. The analogy holds all the way down because the web really was built like a postal system with named stages, which is exactly why it can be traced.
+- **A doctor does not start treatment before the diagnosis.** Rewriting your client
+  code before you know the failure stage is exactly that.
+- **The cheapest tests come first.** `dig` costs a second; reading a stack trace
+  costs twenty minutes.
+
+---
 
 ## Examples in practice
 
-Start with the most useful single command. Running `curl -v https://example.com` and reading the connection notes shows the networking week in one screen:
+- **`curl: (6) Could not resolve host`** — stage one. Nothing else has been attempted.
+- **`curl: (7) Failed to connect`** — the name resolved and nothing accepted the
+  connection.
+- **`curl: (60) SSL certificate problem`** — stage three, and the message names which
+  check failed.
+- **`401` with a correct-looking key** — compare `curl -v` output against your code's
+  actual headers. It is usually a missing `Bearer ` prefix.
+- **A request that works in `curl` and fails in the browser** — almost always CORS,
+  which `curl` does not enforce and browsers do.
 
-```text
-* Host example.com:443 was resolved.
-* IPv4: 104.20.23.154, 172.66.147.243
-*   Trying 104.20.23.154:443...
-* Connected to example.com (104.20.23.154) port 443
-* ALPN: server accepted h2
-* SSL connection using TLSv1.3 / AEAD-CHACHA20-POLY1305-SHA256
-* Server certificate:
-*  subject: CN=example.com
-*  SSL certificate verify ok.
-> GET / HTTP/2
-> Host: example.com
-> User-Agent: curl/8.7.1
-> Accept: */*
->
-< HTTP/2 200
-< content-type: text/html
-```
-
-Read it as the decision tree in action: the host resolved (DNS is fine), the connection opened (TCP is fine), the certificate verified (TLS is fine), and the status is `200` (success). If any line had failed, that line would be exactly where to look.
-
-Next, follow a redirect. `curl -IL https://httpbin.org/redirect/1` requests headers only and follows the forwarding slip. You see two status blocks: first `HTTP/2 302` with a `location: /get` header, then `HTTP/2 200` after `curl` follows it to the real destination. Without `-L`, you would stop at the `302` and wrongly conclude the endpoint returned no data — a classic misread.
-
-Now confirm what you actually sent. The service at `https://httpbin.org/headers` echoes back the request headers it received, so `curl -H "Accept: application/json" https://httpbin.org/headers` returns:
-
-```text
-{
-  "headers": {
-    "Accept": "application/json",
-    "Host": "httpbin.org",
-    "User-Agent": "curl/8.7.1"
-  }
-}
-```
-
-This is how you verify that a header you *think* you are sending is really going out — invaluable when an API behaves as if it never received your authentication or content-type header.
-
-Read status codes deliberately. `curl -o /dev/null -s -w "%{http_code}\n" https://httpbin.org/status/404` throws away the body, silences the progress meter, and prints just `404` — a clean way to check a status in a script. Point it at `/status/500` and you will get a `5xx` code (httpbin's error endpoints are themselves subject to gateway hiccups under load, so you may see `500`, `502`, `503`, or `504` — all of which tell the same story: the failure is the server's, not your request's).
-
-Finally, measure where time goes. A timing breakdown for a real site:
-
-```text
-curl -o /dev/null -s -w "dns:%{time_namelookup} connect:%{time_connect} tls:%{time_appconnect} ttfb:%{time_starttransfer} total:%{time_total}\n" https://example.com
-
-dns:0.003577 connect:0.015769 tls:0.034880 ttfb:0.048609 total:0.048788
-```
-
-The numbers are seconds. DNS took under four milliseconds, the connection was open by sixteen milliseconds, TLS finished at thirty-five, and the first byte arrived at forty-nine — so nearly all the time here was the TLS handshake and the round trip to the server, not the download. When a request feels slow, this one line tells you which stage to blame.
-
-Here is the payoff you will feel most often. When you call a hosted model endpoint and your program reports a failure, reproduce it with `curl`: send the same URL, the same `-H` headers, and the same `-d` body, and read the status and response. A `401` means your credentials or authentication header are wrong or missing; a `429` means you are sending requests too fast and must slow down or back off; a `400` means your request body is malformed — often invalid JSON or a missing field, which the response body will usually name; and a `500` means the server erred on a request it accepted. Reading the exact code and the exact error message from `curl` — outside your application, with nothing in the way — is the fastest route from "my code does not work" to "here is the one thing to change."
+---
 
 ## Implications: security, privacy, performance, scalability, and cost
 
-### Security
+![Diagram: what a copied curl command contains and how to share it safely](./assets/copy-as-curl-danger.svg)
 
-Traffic inspection is the primary way you confirm that security is actually working — that HTTPS negotiated a modern protocol, that a certificate verified, that an authentication header is present and a session cookie is set with sensible flags. But the same visibility cuts both ways. A verbose trace or a Network-tab export contains real secrets: authentication tokens, cookies, and personal data all appear in plain text once you can read the request. Treat that output as sensitive. Never paste a raw `-v` dump or a saved network log into a public forum, issue tracker, or chat without first redacting the `Authorization` header, cookies, and anything that identifies a person. The tools that let you see the traffic let everyone you share the output with see it too.
+- **Security: "Copy as cURL" copies your credentials.** That command contains live
+  session cookies and tokens. Redact before sharing, every time.
+- **A `curl` command in your shell history is a credential in a file**, readable by
+  anything that can read your home directory.
+- **Never paste a verbose output into an issue tracker unredacted.** The
+  `Authorization` header is right there in the `>` lines.
+- **Privacy: developer tools show third-party requests.** Opening the network panel on
+  a normal site is an education in who else is being told about your visit.
+- **Performance: measure before optimising**, and measure the right stage. The
+  timing breakdown exists so you do not guess.
+- **Cost: reproducing with `curl` is free; guessing is not.** The expensive debugging
+  session is the one that changes code before identifying the stage.
 
-### Privacy
-
-Because inspection reveals every field that crosses the wire, it also reveals how much a page discloses about its user — third-party requests, tracking identifiers in query strings, and cookies sent to domains other than the one you visited. Learning to read the Network tab is, incidentally, learning to audit what a site tells others about you. For your own work, the discipline is to send only what a request needs and to keep captured traffic — which may contain user data — out of logs and screenshots that outlive their usefulness.
-
-### Performance
-
-Every timing breakdown in this lesson is a performance measurement. `curl -w` and the DevTools waterfall answer the first question of any slow experience — *where does the time actually go?* — with data instead of a guess. The stages you measured (DNS, connect, TLS, first byte, download) are exactly the levers you can pull: a slow DNS points at resolver configuration, a slow first byte points at the server or the network path, and a large download points at an unoptimized or uncached resource. Measuring before optimizing is the whole game, and these tools are how you measure.
-
-### Scalability
-
-A single `curl` command inspects one request, but the same command scripted in a loop becomes a crude load probe, and the `-w` variables become a stream of measurements you can average. This is not a substitute for real load-testing tools, but it scales your understanding: the same request you debugged by hand can be fired a thousand times to see whether latency holds or the error rate climbs. The Network tab, meanwhile, scales your view of a single complex page, showing how request count and total transfer size grow as an application does — the raw ingredients of how well it will scale to more content and more users.
-
-### Cost
-
-Many services, including hosted model endpoints, bill per request or per unit of data. Being able to see exactly which requests fire, how large they are, and how often they repeat is direct cost control: a runaway retry loop or a request fetching far more data than it needs is money leaking, and the Network tab makes the leak visible. Debugging with `curl` against free public test endpoints, rather than against a metered production service, also keeps the cost of learning at zero — which is exactly what this lesson's lab does.
+---
 
 ## Alternatives: free, open source, and commercial
 
-`curl` and browser Developer Tools will cover the vast majority of your inspection needs, but it is worth knowing the neighbouring tools and when each earns its place.
+![Diagram: curl's timing variables and the stage each measures](./assets/timing-variables.svg)
 
-| Tool | Type | Best for | Cost |
-| --- | --- | --- | --- |
-| `curl` | Free, open source | Scripting and reproducing any single request precisely | Free |
-| Browser Developer Tools | Free, built in | Observing everything a real page does, with timing | Free |
-| HTTPie | Free, open source | The same job as `curl` with friendlier syntax and colour | Free |
-| Postman | Freemium (commercial) | Organizing, saving, and sharing many requests in a team | Free tier; paid plans |
-| Wireshark | Free, open source | Inspecting raw packets below the HTTP layer | Free |
-| mitmproxy | Free, open source | Watching all traffic from an app or phone as a proxy | Free |
+| Tool | Type | Where it fits |
+| --- | --- | --- |
+| `curl` | Free, open source | Everywhere. Present on every machine you will touch. |
+| `httpie` | Free, open source | Friendlier syntax and colour; excellent for exploring |
+| Browser devtools | Bundled, free | Whole-page view, timings, and the initiator chain |
+| Postman / Insomnia | Free tiers | Saved collections, environments, team sharing |
+| `mitmproxy` | Free, open source | Watching and rewriting traffic from apps you control |
+| Wireshark | Free, open source | Below HTTP, when the problem is TCP or TLS itself |
 
-**HTTPie** is a command-line HTTP client built for humans: `http GET httpbin.org/headers Accept:application/json` does what the earlier `curl` command did, with coloured, formatted output and a syntax that reads like the request itself. Choose it when you want readable ad-hoc requests at the terminal; choose `curl` when you want a command that is installed everywhere and scripts cleanly. **Postman** is a graphical application for building and saving requests into shareable collections, with environments for switching between servers; reach for it when you are exploring a large API as a team and want to keep a library of example requests, rather than retyping `curl` commands. Its trade-off is weight and a login where `curl` is instant and local.
+- **Learn `curl` first even if you prefer a GUI.** It is what documentation, error
+  messages and colleagues will speak.
+- **Reach for `mitmproxy` when the client is not yours to instrument** — a mobile app,
+  a closed binary, a container you cannot modify.
 
-**Wireshark** works a full layer below everything else here: it captures raw network packets, so it can show the individual TCP segments and the DNS queries themselves, not just the assembled HTTP messages. You reach for it rarely — when you suspect the problem is beneath HTTP, in the connection or the packets — and it is overkill for ordinary request debugging. **mitmproxy** sits between an application and the internet as a proxy and records every request that passes through, which makes it the tool of choice for seeing what a mobile app or a program you did not write is actually sending. Both are powerful and free; both are more than you need for the day-to-day work of reading a request and its response, which `curl` and Developer Tools handle completely.
+---
 
 ## Comparison with related concepts
 
-| Concept A | Concept B | Key difference |
-| --- | --- | --- |
-| `curl` | Developer Tools Network tab | `curl` composes one request you control; the Network tab records every request a real page made |
-| `curl` | HTTPie | Same purpose; `curl` is ubiquitous and script-friendly, HTTPie is friendlier to read and type |
-| `curl` / DevTools | Wireshark | The former read assembled HTTP messages; Wireshark reads raw packets below HTTP |
-| Traffic inspection | Automated testing | Inspection shows what happened once, now; testing asserts what must hold every time |
-| `4xx` status | `5xx` status | `4xx` means your request was wrong; `5xx` means the server failed a valid request |
-| `-I` (headers only) | `-v` (verbose) | `-I` shows just the response headers; `-v` shows the whole request and response conversation |
+| Term | What it actually is |
+| --- | --- |
+| **Verbose output** | curl's full record of the exchange and its own steps |
+| **Waterfall** | A timeline of every request a page made |
+| **Initiator** | What caused a request to be made |
+| **Time to first byte** | When the response began, not when it finished |
+| **Preflight** | A browser's `OPTIONS` check before a cross-origin request |
+| **Copy as cURL** | A devtools command that reproduces a request — with credentials |
+
+---
 
 ## When to use it — and when not to
 
-Reach for `curl` the instant a request fails in code you wrote: reproduce it outside your program to learn whether the fault is yours or the server's, then vary one thing at a time until the response changes. Reach for it whenever you need to confirm exactly what you are sending or receiving — a header, a body, a status, a redirect chain — because `curl` shows the literal bytes with nothing in between. And reach for it in scripts, where `-w` and `-s` and `-o` let you extract a single value like the status code for an automated check.
+![Diagram: what it means when curl succeeds and your code fails](./assets/isolate-the-variable.svg)
 
-Reach for Developer Tools whenever the thing you are debugging is a real page in a real browser: a blank screen, a slow load, a form that will not submit, an image that will not appear. The Network tab shows you the one failed or slow request among the many, with the timing and headers to explain it, in the exact context the browser produced it. For anything a user experiences in a browser, it is the first place to look.
+- **Reach for `curl` when you can name the one request** that is failing.
+- **Reach for developer tools when you cannot** — when you do not yet know which
+  request is the problem.
+- **Reproduce in `curl` before editing any code.** If `curl` succeeds and your code
+  fails, the difference is in your code, and you have halved the search.
+- **Use `--resolve` to test a server before DNS points at it**, rather than editing
+  your hosts file and forgetting.
+- **Do not use `-k` to make an error go away.** It is stage three telling you
+  something true.
+- **Do not paste a `curl` command with real credentials** anywhere, including into a
+  model.
 
-Know when to leave these tools in the box. They inspect one request, or one page's requests, at one moment — they are not a monitoring system that watches production continuously, not a load test that proves behavior under stress, and not a fix in themselves. When you need to know that something keeps working for everyone over time, you need monitoring and automated tests, not a manual `curl`. And when the problem is genuinely below HTTP — in the packets, the connection, or the network hardware — descend to Wireshark rather than squinting at a `curl` trace. The professional habit is to inspect first to locate the problem precisely, then choose the right tool for the fix.
+---
 
 ## The AI connection
 
-When a model API call misbehaves, the fastest route to the cause is the one you
-practised today: reproduce it with `curl`, outside your application, where
-nothing else can be responsible. A request that works in the terminal and fails
-in code isolates the fault to your client — a header, an encoding, a proxy — in a
-single step.
+![Diagram: the three most common AI API status codes and their causes](./assets/api-error-triage.svg)
 
-Developer tools carry the same value for anything with a browser front end. The
-network panel shows exactly what was sent, what came back, and how long each
-stage took, which turns "the assistant feels slow" into a number attached to a
-stage. The habit worth taking forward is the discipline of reproducing at the
-lowest level that still shows the problem. Most debugging time is spent
-establishing *where* something broke; a tool that removes half the stack from
-suspicion in one command is worth more than a cleverer guess.
+- **Every model provider's documentation opens with a `curl` example.** It is the
+  reference implementation, and running it first tells you whether your key works
+  before any code exists.
+- **`401` is your key; `429` is your rate; `400` is your payload.** Three codes cover
+  most of what goes wrong.
+- **Reproduce a failing generation with `curl`** and you learn immediately whether the
+  problem is your client library or the request itself.
+- **Streaming responses are visible in `curl`** without `-s`, arriving in chunks —
+  which makes the mechanism concrete rather than magical.
+- **Timing a model call with `-w`** separates network latency from generation time,
+  and the two need entirely different fixes.
 
 ---
 
 ## Knowledge check
 
-Try these from memory before looking back:
+```yaml
+quiz:
+  question: "A request succeeds from the command line with curl but fails from JavaScript in the browser, with the same URL, method and headers. What is the most likely cause?"
+  options:
+    - "The browser is enforcing cross-origin rules that curl does not implement"
+    - "The browser is sending a different HTTP version than curl negotiated"
+    - "curl is ignoring a certificate error the browser correctly rejects"
+    - "The server is rate-limiting the browser but not the command line client"
+  answer_index: 0
+  explanation: "Cross-origin restrictions are enforced by browsers as a protection for the user, not by servers. curl has no origin and no same-origin policy, so it is unaffected — which is exactly why a request can work there and be blocked in a page."
+```
 
-1. In the output of `curl -v`, what do the lines beginning with `>`, `<`, and `*` each represent?
-2. You request a URL and get back a `301`. What does `curl -L` do about it, and why would omitting it mislead you?
-3. Walk the failed-request decision tree in order, naming what has failed at each gate: DNS, connection, TLS, status, body.
-4. An API call from your code returns `429`. What does that status mean, and what is the appropriate response?
-5. What is the essential difference between what `curl` shows you and what the Developer Tools Network tab shows you?
+---
 
 ## Hands-on exercise
 
-Time to inspect real traffic. In this exercise — worked through in full in the Day 21 lab directory — you will use `curl` against two public test servers, `https://httpbin.org` (a service that echoes requests and returns any status you ask for) and `https://example.com`, to see each part of a request and response and to read status codes deliberately. `curl` is preinstalled on macOS and Linux, so open your terminal and run each command.
+Reproduce every stage of failure deliberately, then read a real page's waterfall.
+Worked through fully in the Day 21 lab directory.
 
-First, see a full conversation, reading the connection notes as the networking stages:
-
-```bash
-curl -v https://example.com
-```
-
-Next, follow a redirect to its real destination, printing headers only:
-
-```bash
-curl -IL https://httpbin.org/redirect/1
-```
-
-Confirm exactly which headers you sent, using the echo endpoint:
-
-```bash
-curl -H "Accept: application/json" https://httpbin.org/headers
-```
-
-Read a status code cleanly, throwing away the body:
-
-```bash
-curl -o /dev/null -s -w "HTTP %{http_code}\n" https://httpbin.org/status/404
-```
-
-Measure where the time goes on a real request:
-
-```bash
-curl -o /dev/null -s -w "dns:%{time_namelookup} connect:%{time_connect} tls:%{time_appconnect} ttfb:%{time_starttransfer} total:%{time_total}\n" https://example.com
-```
+| What you are doing | Command |
+| --- | --- |
+| See the whole exchange | `curl -v https://example.com` |
+| Headers only | `curl -I https://example.com` |
+| Follow a redirect | `curl -IL http://example.com` |
+| Send JSON | `curl -X POST -H 'Content-Type: application/json' -d '{"a":1}' URL` |
+| Time every stage | `curl -w "@fmt.txt" -o /dev/null -s URL` |
+| Fail at DNS | `curl -v https://no-such-host.invalid` |
+| Fail at TLS | `curl -v https://expired.badssl.com` |
 
 ### Expected output
 
-The commands print, respectively: a full verbose trace whose `*` lines show the host resolving, the connection opening, and the certificate verifying, ending in `< HTTP/2 200`; two status blocks for the redirect, a `302` with a `location` header followed by a `200`; a small JSON object echoing back the `Accept: application/json` header you sent; the single line `HTTP 404`; and a timing line such as `dns:0.003577 connect:0.015769 tls:0.034880 ttfb:0.048609 total:0.048788` (your numbers will differ). The lab's `expected-output/` directory holds a real captured run of every command.
+```text
+*   Trying 93.184.216.34:443...
+* Connected to example.com port 443
+* SSL certificate verify ok.
+> GET / HTTP/1.1
+< HTTP/1.1 200 OK
+time_namelookup: 0.024  time_connect: 0.061
+time_appconnect: 0.128  time_starttransfer: 0.171
+```
+
+- **`*` lines are curl's own notes**, `>` is what it sent, `<` is what came back.
+- **Subtract neighbouring timings** to get each stage's cost, as on Day 15.
 
 ### Validate your work
 
-You are done when you can check every box:
-
-- [ ] You can point at the line in `curl -v` that shows the TLS certificate verifying.
-- [ ] You saw two status codes for the redirect and can explain why `-L` produced the second.
-- [ ] The headers endpoint echoed back the `Accept` header you set with `-H`.
-- [ ] You read `HTTP 404` as the exact status of the deliberate not-found request.
-- [ ] You can name which stage (DNS, connect, TLS, or transfer) took the most time in your timing line.
+- [ ] You produced a failure at DNS, at connection, and at TLS, and can tell them
+      apart from the error alone
+- [ ] You reproduced a `POST` with a JSON body from the command line
+- [ ] You read a timing breakdown and named the slowest stage
+- [ ] You found a page's slowest request in the waterfall
+- [ ] You traced one request back to the script that fired it, using Initiator
+- [ ] `bash tests/run_tests.sh` reports 0 failures
 
 ### Troubleshooting
 
-- **`curl: (6) Could not resolve host`.** DNS failed — usually a typo in the hostname or no internet connection. Check the URL and your connection; this is the first gate of the decision tree.
-- **The redirect shows only one status block.** You omitted `-L`. Add it so `curl` follows the `location` header to the final response.
-- **`/status/500` returns `502`, `503`, or `504` instead of `500`.** That is httpbin's own gateway responding under load. Any `5xx` makes the same teaching point: the failure is the server's, not your request's. Retry, or use `/status/404` for a deterministic code.
-- **The timing numbers are all `0.000000`.** You are likely offline or hitting a cached local resolver; confirm you have network access and are requesting a real remote URL.
+- **`curl` prints nothing.** The body may be empty. Add `-i` to see the status and
+  headers.
+- **Your JSON is rejected.** Shell quoting. Single-quote the whole payload, or use
+  `--data-binary @file.json`.
+- **`-I` returns `405`.** Some servers reject HEAD. Use `-s -o /dev/null -D -` instead.
+- **The network panel is empty.** It only records while open. Reload with it open.
+- **Too many rows to read.** Filter by `Fetch/XHR`, and tick "Disable cache".
 
 ### Common mistakes
 
-- **Stopping at a redirect.** Reading a `301`/`302` as "the server returned nothing." It returned a forwarding address; use `-L` to follow it.
-- **Confusing `4xx` and `5xx`.** A `4xx` means fix *your* request (URL, auth, body); a `5xx` means the server failed. Rewriting your request to fix a `5xx`, or blaming the server for a `4xx`, both waste time.
-- **Forgetting `-o /dev/null` when you only want the status or timing.** Without it, the whole body prints and buries the one line you care about.
+- **Editing code before identifying the stage.**
+- **Sharing a `curl` command with live credentials in it.**
+- **Forgetting `-L`** and treating a `301` as the final answer.
+- **Measuring one request** and concluding something about capacity.
+
+---
 
 ## Practice assignment
 
-Open the debugging worksheet in the starter directory of the Day 21 lab and complete it for real requests. Using `curl`, record three things: a full redirect chain you followed (the intermediate status and `location`, then the final status), the timing breakdown for a site of your choice with a sentence naming the slowest stage, and the status code that `https://httpbin.org/status/503` returns. Then write one short paragraph diagnosing a failure of your own invention — pick a status code (`401`, `404`, `429`, or `500`), state which gate of the decision tree it corresponds to, and describe the single next step you would take to fix it. Keep the worksheet; the reasoning it builds is the reasoning you will use every time a request misbehaves.
+- **Walk the decision tree on three deliberately broken requests** and record which
+  gate each one failed at, with the exact error text.
+- **Convert one request from the network panel into a `curl` command** with "Copy as
+  cURL", then strip its credentials until it fails, to see which header mattered.
+- **Time the same endpoint from two networks** and tabulate all five phases.
+- **Find one third-party request** on a site you use daily, and trace who it goes to.
+
+---
 
 ## Extension challenge
 
-Go one step further and reproduce a small end-to-end exchange, then watch it two ways. First, send a POST with a JSON body and read it echoed back:
+- **Write a health-check script** that walks the whole decision tree automatically and
+  reports which gate failed. Schedule it with Day 14's cron.
+- **Reproduce a CORS failure**, read the preflight `OPTIONS` request in the network
+  panel, and explain exactly which response header was missing.
+- **Compare `curl`'s trust store with your browser's** by finding a certificate one
+  accepts and the other rejects.
+- **Capture the same request in `mitmproxy`** and compare what it shows against
+  `curl -v`. The difference is the part your client was doing silently.
 
-```bash
-curl -X POST -H "Content-Type: application/json" -d '{"day":21,"topic":"inspection"}' https://httpbin.org/post
-```
+---
 
-Read the response: httpbin returns an object whose `json` field contains exactly what you sent and whose `headers` field shows the `Content-Type` you set — proof that your method, header, and body all arrived as intended. Now open your browser's Developer Tools, go to the Network tab, and load any web page; find a single `Fetch/XHR` request, click it, and locate the same parts you just controlled by hand — the request method, the headers, the response body, and the Timing sub-tab with its DNS, connect, TLS, and waiting phases. Seeing that the row in the Network tab and the `curl` command describe the *same* request from two angles is the moment the whole networking category clicks into place: the request you traced in theory across seven lessons is a concrete, inspectable object, and you now have the tools to see it. This capstone feeds directly into the category project, the Request Journey Map, where you will document a single real request from address lookup to rendered pixels using exactly these instruments.
