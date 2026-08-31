@@ -21,6 +21,7 @@ const STEPS = [
   ['validate:projects', ['node', 'scripts/validate/projects.mjs']],
   ['validate:sources', ['node', 'scripts/validate/sources.mjs']],
   ['validate:visuals', ['node', 'scripts/validate/visuals.mjs']],
+  ['validate:animation', ['node', 'scripts/validate/animation.mjs']],
   ['validate:links', ['node', 'scripts/validate/links.mjs']],
   ['validate:privacy', ['node', 'scripts/validate/privacy.mjs']],
   ['validate:secrets', ['node', 'scripts/validate/secrets.mjs']],

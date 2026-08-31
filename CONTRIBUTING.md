@@ -42,7 +42,7 @@ Before opening one:
 
 ```bash
 npm install
-npm run verify:all      # all 24 gates must pass
+npm run verify:all      # all 26 gates must pass
 ```
 
 If you touched a lab, run its own tests too:
