@@ -19,12 +19,18 @@ def test_cfg_extrapolation_math(pipeline):
     assert guided[0, 0] == 1.0 + 7.0 * 0.5 # 4.5
 
 def test_cfg_scale_one_passthrough(pipeline):
-    uncond = np.random.randn(2, 4, 8, 8).astype(np.float32)
-    cond = np.random.randn(2, 4, 8, 8).astype(np.float32)
+    # Seeded: an unseeded draw made this test fail about one run in three,
+    # because the error in a + (b - a) depends on the values drawn.
+    rng = np.random.default_rng(20260831)
+    uncond = rng.standard_normal((2, 4, 8, 8)).astype(np.float32)
+    cond = rng.standard_normal((2, 4, 8, 8)).astype(np.float32)
     
     # Scale 1.0 returns cond exactly
     guided = pipeline.compute_cfg_noise(uncond, cond, guidance_scale=1.0)
-    assert np.allclose(guided, cond)
+    # uncond + 1.0 * (cond - uncond) is cond mathematically and not bit-exact
+    # in float32: the measured error reaches 2.4e-07, two epsilons. allclose
+    # defaults to atol=1e-08, tighter than the dtype can deliver.
+    assert np.allclose(guided, cond, atol=1e-6)
 
 def test_negative_prompt_steering(pipeline):
     neg = np.array([[-1.0, -1.0]], dtype=np.float32)
@@ -35,7 +41,7 @@ def test_negative_prompt_steering(pipeline):
     assert np.allclose(guided, np.array([[9.0, 9.0]]))
 
 def test_vae_roundtrip_dimensions(pipeline):
-    rgb = np.random.randint(0, 256, (2, 3, 64, 64), dtype=np.uint8)
+    rgb = np.random.default_rng(20260831).integers(0, 256, (2, 3, 64, 64), dtype=np.uint8)
     latents = pipeline.encode_pixels_to_latents(rgb)
     
     assert latents.shape == (2, 4, 8, 8) # 8x spatial downsampling, 4 channels
