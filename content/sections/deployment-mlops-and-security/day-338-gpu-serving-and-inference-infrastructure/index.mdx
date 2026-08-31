@@ -110,6 +110,59 @@ Let us inspect the complete **Triton Dynamic Batching and Model Ensemble Lifecyc
 
 ![Triton Inference Server Dynamic Batching and Ensemble Flow showing Dynamic Batch Scheduler aggregating incoming requests into unified batch tensors and passing them through Tokenizer, Model, and Postprocessing Ensembles](./assets/triton-inference-server-dynamic-batching-and-ensemble-flow.svg)
 
+### Why that scheme breaks for text generation
+
+The pipeline above is correct for a model that produces its whole answer in one
+forward pass — a classifier, an embedding model, a vision backbone. Batch four
+requests, run once, return four answers.
+
+Autoregressive generation is not that. Each request needs *one forward pass per
+token it emits*, and different requests emit wildly different numbers of them.
+Batch four requests where three finish in 20 tokens and one runs to 800, and
+with **static batching** the whole batch occupies the GPU until the longest one
+finishes. Three clients wait for a request that is not theirs, and three
+quarters of the batch slots compute padding.
+
+**Continuous batching** — also called iteration-level scheduling — changes the
+unit of scheduling from the request to the token. After every single forward
+pass the scheduler evicts finished sequences and admits waiting ones into the
+freed slots. A request that arrives mid-generation joins the very next
+iteration rather than waiting for the current batch to drain. Reported
+throughput gains over static batching are commonly in the range of ten to
+twenty times for mixed-length workloads, which is why every serious LLM serving
+stack does it and why `max_batch_size` alone is the wrong dial.
+
+### The KV cache is the thing you are actually managing
+
+Generating token *n* requires attending to every previous token. Recomputing
+those keys and values each step would make generation quadratic, so they are
+kept — the **KV cache** — and generation becomes linear.
+
+That cache is large and it grows with every token. Its size is roughly:
+
+```text
+2 (K and V) x layers x heads x head_dim x sequence_length x batch_size x bytes_per_value
+```
+
+For a 7B model at 16-bit with a few thousand tokens of context, this reaches
+gigabytes per sequence. On a 24 GB card the weights are 14 GB, which leaves the
+KV cache as the binding constraint on how many concurrent requests fit — not
+FLOPs, and not the model size everybody quotes.
+
+Naive allocation makes it worse. Reserving `max_sequence_length` per request
+means a client who asks for 20 tokens holds capacity for 4,096, and measured
+utilisation of that reserved memory has been reported as low as 20–40%.
+
+**PagedAttention** applies the operating-system idea from Day 003 directly:
+allocate the KV cache in fixed-size blocks, keep a per-sequence block table, and
+let a sequence's blocks be non-contiguous. Internal fragmentation drops to
+within one block, and blocks can be *shared* — two requests with the same system
+prompt point at the same physical blocks until they diverge, which is
+copy-on-write for attention state.
+
+The practical consequence is worth stating plainly: **on an LLM serving box,
+memory management is the performance work.** Tensor cores are rarely the limit.
+
 ## An everyday analogy
 
 Think of GPU serving and dynamic batching like **a modern commercial elevator system in an 80-story skyscraper**:

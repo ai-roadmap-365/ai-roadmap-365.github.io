@@ -104,6 +104,43 @@ User Submits Prompt: "Explain photosynthesis in 200 words" (500 tokens context)
 
 ![Prefill vs Decode Latency Anatomy comparing Parallel Input Prefill Phase (TTFT) with Sequential Autoregressive Decode Phase (ITL)](./assets/prefill-vs-decode-latency-anatomy.svg)
 
+### Speculative decoding: the other way to attack the decode phase
+
+Caching removes work you have already done. It cannot help with the 3,000ms of
+streaming above, because those 200 tokens have never been generated before.
+
+The opening for attacking that phase comes from *why* decode is slow. It is not
+compute-bound — it is **memory-bandwidth bound**. Each token requires streaming
+the entire weight matrix from HBM into the compute units, and having paid that
+cost, the GPU is barely occupied. A forward pass that processes one token and a
+forward pass that processes eight cost almost the same wall-clock time, because
+the bottleneck is moving the weights rather than doing the arithmetic.
+
+That asymmetry is exploitable. **Speculative decoding** runs a small, cheap
+*draft* model to propose the next k tokens, then has the large *target* model
+verify all k in a **single** forward pass — verification is parallel, exactly
+like prefill. Every proposed token the target model agrees with is kept; at the
+first disagreement, the target's own token is used and the rest are discarded.
+
+The output is **mathematically identical** to what the target model would have
+produced alone. This is the property that matters and the one people
+disbelieve: with the standard rejection-sampling scheme the accepted sequence is
+drawn from exactly the target model's distribution. It is a latency
+optimisation, not a quality trade.
+
+What decides the speedup is the **acceptance rate** — how often the draft model
+guesses what the target would have said. Easy, predictable spans (boilerplate,
+closing brackets, common phrasing) accept readily; genuinely uncertain spans do
+not. Reported end-to-end gains are typically in the range of two to three times
+for a well-matched draft model, and the cost is real: a second model in memory,
+and wasted draft compute on every rejection.
+
+It is worth knowing when it does **not** help. At high batch sizes the GPU is
+already saturated with useful work from other requests, so the spare capacity
+speculative decoding exploits has been spent — the technique pays best exactly
+when serving few concurrent users, which is the opposite of the regime where
+continuous batching pays.
+
 ## An everyday analogy
 
 Think of prompt caching like **a mathematician answering math questions with a whiteboard**:
