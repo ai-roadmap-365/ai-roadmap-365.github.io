@@ -217,6 +217,16 @@ const FLAGS = [
   ['longestParagraph', (r) => r.longestParagraph > 150, 'a paragraph over 150 words'],
   ['heavyParagraphs', (r) => r.heavyParagraphs >= 4, 'four or more paragraphs over 120 words'],
   ['visuals', (r) => r.visuals < 2, 'fewer than two diagrams'],
+  // The binding standard from docs/course-audit/README.md, per amendment A45:
+  // diagrams per 1,000 total words, target 4.0+. It was computed and printed
+  // from the start and never flagged, so five of the six later courses read as
+  // almost clean while sitting at 0.7 — the "thresholds too loose" case the
+  // guidance itself warns about. A metric shown but not flagged is not a check.
+  [
+    'visualsPer1kWords',
+    (r) => r.visualsPer1kWords < 4.0,
+    'below the 4.0 diagrams per 1,000 words standard (pictures do not lead)',
+  ],
   ['quiz', (r) => r.quiz < 5, 'fewer than five quiz questions'],
   ['glossary', (r) => r.glossary < 8, 'fewer than eight glossary terms'],
   ['sources', (r) => r.sources < 3, 'fewer than three sources'],
