@@ -23,8 +23,11 @@ export function rehypeResolveRelativeLinks(options = {}) {
         if (typeof value !== 'string' || !value || ABSOLUTE.test(value)) continue;
         const [pathPart, hash] = value.split('#');
         const cleaned = pathPart.replace(/^\.\//, '');
-        if (!cleaned) continue;
-        node.properties[attr] = `${base}/${cleaned}${hash ? `#${hash}` : ''}`;
+        // A bare "./" is the lab README's "everything you need is in this
+        // directory" link. It means the lab folder, so point at the folder --
+        // left alone it resolves against the page and yields /labs/.
+        const suffix = cleaned ? `/${cleaned}` : '';
+        node.properties[attr] = `${base}${suffix}${hash ? `#${hash}` : ''}`;
       }
     });
   };
