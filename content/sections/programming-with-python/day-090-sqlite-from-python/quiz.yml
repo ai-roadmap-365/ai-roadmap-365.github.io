@@ -1,43 +1,43 @@
 questions:
   - question: 'Your code runs connection.execute("SELECT name, email, pin FROM members WHERE name = ''" + value + "''") and value arrives as Ada'' OR ''1''=''1. What happens, and why?'
     options:
-      - 'Nothing unusual: SQLite escapes the apostrophe automatically, so the lookup simply finds no member'
+      - 'Every row, because the apostrophe closed the literal early'
       - 'A syntax error, because the apostrophe leaves the statement unbalanced'
-      - 'Every row in the table comes back, addresses and PINs included, because the apostrophe closed the string literal early and the rest of the value was parsed as SQL — the WHERE clause is now name = ''Ada'' OR ''1''=''1'', which is true for every row'
+      - 'Nothing unusual: SQLite escapes the apostrophe automatically, so the lookup simply finds no member'
       - 'The statement is refused, because Python''s sqlite3 module blocks apostrophes in interpolated values'
-    answer_index: 2
+    answer_index: 0
     explanation: 'This is captured in the lab, not argued: three private rows come back. Nothing malfunctioned and nothing was escaped or unescaped. By the time the string exists, the value is part of it, so the tokenizer and parser read the whole thing as SQL. The engine answered exactly the question it was asked — a different question from the one the author typed. Note that there was no need for a second statement or a DROP: reading a table you should not see is usually worth more to an attacker than destroying one. The fix is not to filter apostrophes, which is a game you lose eventually; it is to stop putting values into statements at all.'
 
   - question: 'Why is connection.execute("... WHERE name = ?", (name,)) safe when the concatenated version is not?'
     options:
-      - 'Because the statement is compiled — with the placeholder in it — before any value exists, so binding a value afterwards cannot change the statement''s shape. The parser never sees the value at all; the engine compares it to a column as data'
       - 'Because the module escapes quotes in the value before inserting it into the string'
+      - 'The statement is compiled before the value exists'
       - 'Because prepared statements are cached, and a cached statement cannot be modified'
       - 'Because the tuple form validates the value''s type before sending it'
-    answer_index: 0
+    answer_index: 1
     explanation: 'The order of operations is the whole answer. Compile first, bind second. A value attached to an already-compiled statement is a value of a storage class being compared to a column; it has no route back into the parser. Escaping is a different and worse idea: it edits a string and requires you to be right about every encoding and dialect quirk forever, in a helper that gets copied into projects where it is slightly wrong. Binding moves the problem into the engine, where it belongs. Prepared statements are often faster too, but speed is a side effect, not the reason.'
 
   - question: 'What exactly does `with connection:` do?'
     options:
       - 'It opens a transaction at the start of the block and closes the connection at the end'
       - 'It closes the connection when the block ends, committing first if the block succeeded'
+      - 'It commits or rolls back, and leaves the connection open'
       - 'It creates a cursor for the block and discards it afterwards'
-      - 'It commits at the end of the block, or rolls back if the block raised — and leaves the connection open. It does not close anything'
-    answer_index: 3
+    answer_index: 2
     explanation: 'This is the most common misreading in the whole module, and the lab asserts the truth directly: after a with-block the connection is still usable. The form manages a TRANSACTION, not the connection''s lifetime, and it does not even open the transaction — in the module''s default mode the implicit machinery does that before the first data-modifying statement. For closing there is a separate, correct tool in the standard library: contextlib.closing, which exists precisely for objects that have close() but whose own context-manager protocol means something else. The honest full form nests them: with closing(connect(path)) as connection, then with transaction(connection) inside it. Getting this wrong is cheap in a script and expensive in a long-running program, where connections and their locks accumulate under objects nobody remembers.'
 
   - question: 'You call connection.execute("PRAGMA foreign_keys = ON") and a foreign-key violation is still accepted moments later. What is the most likely cause?'
     options:
       - 'The REFERENCES clause was written after the table was created, so it never took effect'
-      - 'The pragma was executed inside an open transaction, where it is a silent no-op — no error, no warning, and the setting simply does not change'
-      - 'Foreign keys only apply to tables declared STRICT'
       - 'The pragma has to be written in lower case to be recognised'
-    answer_index: 1
+      - 'Foreign keys only apply to tables declared STRICT'
+      - 'It ran inside an open transaction, where it is a no-op'
+    answer_index: 3
     explanation: 'Two traps stack here and both are silent. First, PRAGMA foreign_keys is OFF by default and is per connection rather than a property of the file, so every connection has to ask for it — the lab shows a configured connection refusing a bad write while a plain sqlite3.connect to the same file accepts it. Second, setting it inside a transaction does nothing at all: the lab prints the pragma reading back as 0 when set inside a transaction and 1 when set outside one. That is why the pragma belongs in the connection factory, run the instant the connection exists, before anything can open a transaction. Without it, the most valuable line in your schema is a comment.'
 
   - question: 'You are reading ten million rows to build a training set. Which is the right call, and why?'
     options:
-      - 'Iterate the cursor — for row in cursor — because it asks the engine for one row per step and holds one row at a time, while fetchall builds the entire list before your code sees the first row'
+      - 'Iterate the cursor — it holds one row at a time'
       - 'fetchall(), because one round trip is always faster than many'
       - 'fetchmany(10_000_000), because naming the size lets SQLite plan better'
       - 'fetchone() in a while loop, because it is the only method that does not buffer'
@@ -47,26 +47,26 @@ questions:
   - question: 'Which raises sqlite3.ProgrammingError rather than IntegrityError or OperationalError?'
     options:
       - 'Inserting a row whose title duplicates an existing one'
-      - 'Selecting from a table that does not exist'
-      - 'Inserting a loan naming a member who does not exist, with foreign keys on'
       - 'Passing a two-item tuple to a statement that has one placeholder'
-    answer_index: 3
+      - 'Inserting a loan naming a member who does not exist, with foreign keys on'
+      - 'Selecting from a table that does not exist'
+    answer_index: 1
     explanation: 'The three classes divide cleanly, and the division is worth memorising because it tells you who is at fault. IntegrityError means the DATA broke a rule you wrote in the schema — UNIQUE, NOT NULL, CHECK, FOREIGN KEY, and also a type violation in a STRICT table, which is a mild surprise given the class names. OperationalError means the DATABASE could not do it: no such table, no such column, a syntax error, a locked file, a full disk. ProgrammingError means YOUR CODE misused the module: the wrong number of bindings, named placeholders given a sequence, two statements in one execute, a connection used after close. The first is usually a fact about somebody''s input and may deserve a message to a user. The third is always a bug and should never be caught and ignored.'
 
   - question: 'You need to insert 20,000 rows. Rank these three by how much time each saves, largest first.'
     options:
       - 'executemany, then a single transaction, then binding parameters — the driver optimises batches best'
-      - 'Wrapping the whole loop in one transaction, then executemany, then anything else — because the loop with no transaction pays a COMMIT, and on a durable filesystem an fsync, once per row'
       - 'They are equivalent; SQLite batches writes internally regardless of how you issue them'
+      - 'One transaction round the loop, then executemany'
       - 'Binding parameters, then executemany, then the transaction — parameter binding is where the compilation cost goes'
-    answer_index: 1
+    answer_index: 2
     explanation: 'Measured in the lab on 20,000 rows: a loop with no transaction took about 13.4 seconds, the same loop inside one transaction about 0.0095 seconds, and executemany inside one transaction about 0.0054 seconds. So batching was worth roughly three orders of magnitude and executemany a further factor of two on top of it. The lesson is the one people usually have backwards: executemany is the tidy way to express a batch, not the source of the speed. The cost that dominates is durability — each commit waits for the disk. On a container with a virtual disk that does not really flush, the first ratio shrinks a great deal; the ordering never changes. Parameter binding is about safety, and any speed it brings is a bonus.'
 
   - question: 'Your program needs to let a user choose which column to sort by. What is the correct approach?'
     options:
       - 'Pass the column name as a parameter: execute("SELECT ... ORDER BY ?", (column,))'
       - 'Escape the column name and interpolate it into the statement'
-      - 'Look the requested key up in an allow-list you wrote, and use the statement it maps to — a placeholder can only ever stand in for a value'
       - 'Wrap the column name in double quotes, which makes SQLite treat it as an identifier safely'
-    answer_index: 2
+      - 'Look the key up in an allow-list you wrote'
+    answer_index: 3
     explanation: 'ORDER BY ? is not an error, which is what makes it worse than one: the placeholder binds the STRING "year", so every row is ordered by the same constant and nothing is sorted. A test in the lab asserts exactly that by comparing the result with a genuine ORDER BY year. Placeholders substitute values, never identifiers, and no amount of quoting changes that. The correct approach is an allow-list you wrote — and the safest form of an allow-list holds whole statements rather than fragments, so that no SQL string is assembled anywhere in your program. That in turn is what lets a mechanical guard be absolute: the lab parses every file with ast and fails on any statement reaching execute that was built with an f-string, +, % or .format.'

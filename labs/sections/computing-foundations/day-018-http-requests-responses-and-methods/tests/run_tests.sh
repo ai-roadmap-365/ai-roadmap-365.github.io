@@ -73,6 +73,19 @@ else
   skip "network unreachable — 200 and POST-echo checks skipped (offline is fine)"
 fi
 
+# --- The deliverable must DO the work, not describe it ----------------------
+# Every starter prints its own instructions; a finished script does not. This is
+# the check that makes the suite fail for an untouched starter. Without it the
+# whole file passed whether or not the learner had written a single line, which
+# is what an audit found: the tests verified that text was present in a file
+# rather than that the program worked.
+completion_out="$( (cd "${lab_dir}" && bash "examples/http_explorer.sh") 2>&1 || true)"
+if printf '%s' "${completion_out}" | grep -qiE '(exercise[ ]?[0-9])|your turn|replace me|fixme'; then
+  check "the script no longer prints its placeholder instructions" "no"
+else
+  check "the script no longer prints its placeholder instructions" "yes"
+fi
+
 echo
 echo "${checks} checks, ${failures} failure(s), ${skips} skip(s)."
 [ "${failures}" -eq 0 ]

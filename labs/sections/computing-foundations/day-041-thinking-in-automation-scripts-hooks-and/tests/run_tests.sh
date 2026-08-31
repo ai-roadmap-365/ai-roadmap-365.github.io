@@ -92,6 +92,19 @@ else
   check "later stages are skipped after a failure" "yes"
 fi
 
+# --- The learner's own deliverable must be exercised ------------------------
+# Every check above runs examples/pipeline.sh or examples/pre-commit, both of
+# which are provided. Nothing referenced hook_demo.sh, the file the learner
+# actually writes, so the suite passed whether or not it worked. The hook's
+# shell-syntax check is exercise 1 and is a no-op in the starter, so a completed
+# script reaches the forced-failure demo and an untouched one does not.
+demo_out="$( (cd "${lab_dir}" && bash "examples/hook_demo.sh") 2>&1 || true)"
+if printf '%s' "${demo_out}" | grep -q "Pipeline stopped at"; then
+  check "hook_demo.sh demonstrates fail-fast end to end" "yes"
+else
+  check "hook_demo.sh demonstrates fail-fast end to end" "no"
+fi
+
 echo
 echo "${checks} checks, ${failures} failure(s)."
 [ "${failures}" -eq 0 ]

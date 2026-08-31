@@ -22,6 +22,7 @@ const STEPS = [
   ['validate:sources', ['node', 'scripts/validate/sources.mjs']],
   ['validate:visuals', ['node', 'scripts/validate/visuals.mjs']],
   ['validate:animation', ['node', 'scripts/validate/animation.mjs']],
+  ['validate:quiz-balance', ['node', 'scripts/validate/quiz-balance.mjs']],
   ['validate:links', ['node', 'scripts/validate/links.mjs']],
   ['validate:privacy', ['node', 'scripts/validate/privacy.mjs']],
   ['validate:secrets', ['node', 'scripts/validate/secrets.mjs']],

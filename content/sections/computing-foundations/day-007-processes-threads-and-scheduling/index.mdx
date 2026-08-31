@@ -64,7 +64,22 @@ Four mechanisms, from the single process up to the juggling act.
 
 When you run a command, your shell (itself a process) asks the kernel to create a child process, and the kernel builds the full kit: a fresh PID, a private virtual address space holding the program's code, its global data, a **heap** for memory the program requests as it runs, and a **stack** per thread for function calls; a file-handle table whose first three entries are the standard input, output, and error streams you met on Day 6; and a record of the parent's PID. This is why every process on your system except the very first forms one giant family tree — on your Mac or Linux box, `ps -o pid,ppid,command` shows each process alongside the PID of its parent.
 
-From birth to death, a process moves through a small set of states. It starts in a *spawned/new* state while the kernel builds it, then becomes **ready**: runnable, wanting a core, standing in the scheduler's queue. When the scheduler picks it, it is **running** — actually executing on a core — until one of three things happens: its time slice expires and it is preempted back to ready; it asks for something slow (a disk read, a network packet, a timer, user input) and goes to **waiting**, where it consumes no CPU at all until the event arrives and returns it to ready; or it finishes and **exits**, leaving behind its exit code. There is one famous afterlife state: a **zombie** is a process that has exited but whose parent has not yet collected ("reaped") its exit code — a dead entry in the process table, consuming almost nothing, waiting for its parent to ask how it died. A few zombies are normal and momentary; zombies that accumulate mean a buggy parent, a pattern you may someday recognize in a misbehaving data-loading pipeline.
+From birth to death, a process moves through a small set of states, and every
+transition between them has a cause worth naming.
+
+![Diagram: the states a process moves through, and what causes each transition](./assets/process-state-machine.svg)
+
+The state that matters is **running**, because it is the only one that consumes a
+core. A process in *ready* wants one and is queued; a process in *waiting* has
+asked for something slow — a disk read, a packet, a timer — and is charged
+nothing at all until the event arrives. That is the whole answer to how one core
+serves hundreds of processes: most of them are asleep.
+
+One afterlife state is worth knowing. A **zombie** has exited but its parent has
+not yet collected its exit code, so it lingers as a dead entry in the process
+table. A few are normal and momentary. Zombies that accumulate mean a parent that
+never reaps, which is a pattern you may one day recognise in a misbehaving data
+loader.
 
 ![State diagram: the process lifecycle from spawn through ready, running, and waiting to exit](./assets/process-lifecycle.svg)
 
@@ -82,7 +97,25 @@ Now the juggling act. At any moment your machine has perhaps 500 processes conta
 
 ![Timeline: three processes sharing one CPU core through time slices and context switches](./assets/scheduler-timeslices.svg)
 
-The diagram shows one core and three processes over a stretch of milliseconds: A runs, is preempted, B runs, blocks early on a disk read (yielding the rest of its slice), C runs, and so on — with thin dark slivers between slices marking the context switches themselves. Two lessons hide in those slivers. First, a context switch is pure overhead — microseconds of saving and loading during which no useful work happens, plus a subtler tax afterward as the incoming thread finds the CPU caches full of the outgoing thread's data. Thousands of switches per second are fine; force millions (say, by spawning far more busy threads than cores) and the machine spends its life switching instead of working. Second, blocking is free CPU: a thread waiting on disk or network is charged nothing, which is why one core handles hundreds of mostly-idle processes gracefully. Multiply this picture by your core count — an M4-class laptop chip with 14 cores runs up to 14 threads truly simultaneously — and add that schedulers boost the priority of interactive, frequently-sleeping processes over long-running compute hogs, and you have the real answer to "how do 100 programs run at once on 14 cores": they don't; they take very fast turns, and most of them are asleep.
+The diagram shows one core and three processes over a stretch of milliseconds: A
+runs, is preempted, B runs, blocks early on a disk read, C runs. The thin dark
+slivers between slices are the context switches themselves, and two lessons hide
+in them.
+
+First, **a context switch is pure overhead** — microseconds of saving and loading
+during which no useful work happens, plus a subtler tax afterwards as the incoming
+thread finds the caches full of the outgoing thread's data. Thousands per second
+are fine; force millions, by spawning far more busy threads than cores, and the
+machine spends its life switching instead of working.
+
+Second, **blocking is free**. A thread waiting on disk or network is charged
+nothing, which is why one core handles hundreds of mostly-idle processes
+gracefully.
+
+Multiply that by your core count, add that schedulers boost interactive processes
+over long-running compute hogs, and you have the real answer to how 100 programs
+run on 14 cores: they do not. They take very fast turns, and most of them are
+asleep.
 
 ### Jobs and signals: taking the controls in the shell
 
@@ -118,8 +151,6 @@ Now threads: a big banquet order (one process) may have three cooks on it at onc
 Watch it all happen on your real machine. Run `ps -e | wc -l` and you will count hundreds of processes; run `top` (or open Activity Monitor / System Monitor) and sort by CPU, and you will see nearly all of them at 0.0% — the waiting majority — with a few percent scattered among the handful doing anything. Open a modern browser with ten tabs and check again: many separate processes for one application, a deliberate design so that one crashing tab (a dead process) takes down neither the other tabs nor the browser — process isolation used as a crash barrier.
 
 The shell mechanics appear everywhere in real workflows. `python train.py &` starts a training run in the background; `jobs` confirms it is running; `kill %1` or `kill <PID>` ends it politely, giving the program a chance to save a checkpoint. A pipeline like `prepare_data && train` uses exit codes as logic: the second command runs only if the first exits 0. And the first time a long remote job dies the moment you close your laptop, you will recognize SIGHUP doing exactly what it was designed to do in 1970s terminal rooms.
-
-Now the AI connection, concretely. A typical training setup is a small *society* of processes: the main training process owns the model and talks to the GPU, while the framework spawns several **data-loader worker processes** whose only job is reading and preprocessing the next batches so the GPU never waits — producer processes feeding a consumer, scheduled exactly as today's lesson describes. Why worker *processes* rather than threads? Python's GIL: within one Python process, only one thread executes Python code at a time, so true parallel preprocessing on many cores requires separate processes. (You will study the GIL properly in the Python section; today you already know the vocabulary it lives in.) Multi-GPU training goes further — one process per GPU, cooperating explicitly, because isolation plus deliberate communication scales more predictably than shared everything. Meanwhile the GPU has a scheduling story of its own: your process does not command the GPU directly but submits kernels — units of GPU work — into a queue that the GPU driver and hardware schedule onto thousands of cores; when the queue runs dry because a starved data loader delivered late, utilization craters, and the sawtooth graph from this lesson's introduction is the diagnosis. Finally, model *serving* replays the scheduler's oldest dilemma: batch many user requests together and the GPU's throughput soars while each user waits longer; serve each instantly and latency shines while throughput collapses. Time-sharing's latency-versus-throughput trade-off, wearing an AI costume.
 
 ## Implications: security, privacy, performance, scalability, and cost
 
@@ -175,6 +206,30 @@ If you read one thing beyond this course, make it the process and scheduling cha
 Reach for today's model whenever a machine's behavior confuses you: a frozen application (waiting on what? — check its state), a fan screaming with no window open (which process — `top` will name it), a job that dies when you disconnect (SIGHUP), an exit code of 137 in a cluster log (SIGKILL, almost always the out-of-memory killer). Reach for it when designing work: mostly-waiting tasks want concurrency (threads or async), compute-heavy tasks want parallelism (processes, roughly one per core), and anything long-running wants a plan for SIGTERM. Reach for it in every AI pipeline decision about `num_workers`, per-GPU processes, or serving batch sizes — each is this lesson with a framework flag in front of it.
 
 Know also when *not* to descend to this level. Do not hand-manage processes when the tools above you already do it well — frameworks spawn and reap their own workers, and fighting them causes the orphans and zombies you would be trying to prevent. Do not sprinkle threads on slow code before measuring: parallelizing a program that is actually disk-bound, or already bottlenecked on one lock, adds complexity and race-condition risk for nothing. And do not reach for `kill -9` as a habit — the polite signal first is not ceremony; it is the difference between a saved checkpoint and a corrupted one. The professional pattern is the same layered thinking as all week: trust the abstractions by default, and descend deliberately, tools in hand, when the evidence points below.
+
+## The AI connection
+
+A typical training setup is a small *society* of processes. The main process owns
+the model and talks to the GPU, while the framework spawns several **data-loader
+worker processes** whose only job is preparing the next batches so the accelerator
+never waits — producers feeding a consumer, scheduled exactly as this lesson
+describes.
+
+Why worker *processes* rather than threads? Python's global interpreter lock:
+within one process only one thread executes Python at a time, so genuine parallel
+preprocessing needs separate processes. Multi-GPU training goes further, with one
+process per device, because isolation plus deliberate communication scales more
+predictably than sharing everything.
+
+The GPU has a scheduling story of its own. Your process does not command it
+directly; it submits kernels into a queue that the driver schedules onto thousands
+of cores. When that queue runs dry because a starved data loader delivered late,
+utilisation craters — and the sawtooth graph in this lesson's introduction is the
+diagnosis. Serving replays the scheduler's oldest dilemma: batch requests together
+and throughput soars while each user waits longer; serve each instantly and
+latency shines while throughput collapses.
+
+---
 
 ## Knowledge check
 
