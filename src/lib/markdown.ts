@@ -9,5 +9,8 @@ import {
   stripFrontmatter as strip,
 } from '../../scripts/lib/markdown.mjs';
 
-export const renderMarkdown: (markdown: string) => Promise<string> = render;
+export const renderMarkdown: (
+  markdown: string,
+  options?: { relativeBase?: string },
+) => Promise<string> = render;
 export const stripFrontmatter: (source: string) => string = strip;
