@@ -26,6 +26,7 @@ const STEPS = [
   ['validate:links', ['node', 'scripts/validate/links.mjs']],
   ['validate:privacy', ['node', 'scripts/validate/privacy.mjs']],
   ['validate:secrets', ['node', 'scripts/validate/secrets.mjs']],
+  ['validate:commit-identity', ['node', 'scripts/validate/commit-identity.mjs']],
   ['audit:licenses', ['node', 'scripts/validate/licenses.mjs']],
   ['audit:currency', ['node', 'scripts/validate/currency.mjs']],
   ['test', ['npx', 'vitest', 'run']],
