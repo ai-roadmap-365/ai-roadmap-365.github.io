@@ -163,17 +163,38 @@ for (const rel of globSync('{content,public,src}/**/*.svg', { cwd: ROOT }).sort(
     const key = [...classSet].sort().join('.');
     if (reported.has(key)) continue;
 
-    const moving = animationName(computed(motionRules, classSet), keyframeNames);
+    const underReduce = computed(reduceRules, classSet);
+    // Consider an element animated if it animates in EITHER state. Checking only
+    // the motion state skipped a real hazard: an element that animates ONLY
+    // under `reduce`, which is precisely where movement must not appear.
+    const moving =
+      animationName(computed(motionRules, classSet), keyframeNames) ??
+      animationName(underReduce, keyframeNames);
     if (!moving) continue;
     fileAnimates = true;
     reported.add(key);
 
-    const underReduce = computed(reduceRules, classSet);
-
-    // --- The motion must actually stop -----------------------------------
-    if (animationName(underReduce, keyframeNames)) {
-      fail('unstoppable', `.${key} keeps animating under prefers-reduced-motion: reduce`);
-      continue;
+    // --- The MOVEMENT must stop; the meaning need not ---------------------
+    // prefers-reduced-motion is about movement -- translation, scaling,
+    // rotation -- not about change. Opacity and colour are vestibular-safe, so a
+    // flow diagram may keep brightening its stages in sequence under `reduce`
+    // and still communicate the order. Stopping dead was the earlier rule and it
+    // cost the reader the very thing the diagram existed to show.
+    const stillAnimating = animationName(underReduce, keyframeNames);
+    if (stillAnimating) {
+      const body = keyframes.get(stillAnimating) ?? '';
+      const moves = /transform\s*:(?!\s*none)|offset-distance\s*:/.test(body);
+      if (moves) {
+        fail(
+          'unstoppable',
+          `.${key} still MOVES under prefers-reduced-motion: reduce ` +
+            `(@keyframes ${stillAnimating} animates transform) — ` +
+            'degrade to opacity or colour instead of movement',
+        );
+        continue;
+      }
+      // Opacity-only animation under reduce is the encouraged form. It still has
+      // to leave the element visible, so fall through to the check below.
     }
 
     // --- What is left must still be the whole diagram ---------------------
@@ -185,7 +206,10 @@ for (const rel of globSync('{content,public,src}/**/*.svg', { cwd: ROOT }).sort(
     // the same in both states. What matters is content that is visible while
     // moving and gone once it stops, so compare the two.
     const opacity = declValue(underReduce, 'opacity');
-    const still = opacity === null ? 1 : Number.parseFloat(opacity);
+    let still = opacity === null ? 1 : Number.parseFloat(opacity);
+    // If it animates opacity under reduce, judge it on the brightest point it
+    // reaches, not on the declared base -- the reader does see that state.
+    if (stillAnimating) still = Math.max(still, peakOpacity(stillAnimating, still));
     const moved = peakOpacity(
       moving,
       Number.parseFloat(declValue(computed(motionRules, classSet), 'opacity') ?? '1'),

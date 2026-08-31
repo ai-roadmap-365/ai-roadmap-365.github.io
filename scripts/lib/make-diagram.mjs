@@ -37,25 +37,58 @@ function baseStyle(id) {
     .${id}-hi   { fill: #eff6ff; stroke: #1d4ed8; stroke-width: 2.25; }
     .${id}-warn { fill: #fef3c7; stroke: #b45309; stroke-width: 2; }
     .${id}-good { fill: #dcfce7; stroke: #047857; stroke-width: 2; }
-    .${id}-line { stroke: #64748b; stroke-width: 2; fill: none; }`;
+    .${id}-line { stroke: #1d4ed8; stroke-width: 2.5; fill: none; }
+    .${id}-step { fill: #1d4ed8; font-size: 12px; font-weight: 700; font-family: ${MONO}; }`;
 }
 
-/** Motion is opt-in, guarded, and always degrades to a visible resting state. */
-function motion(id, kind) {
-  if (kind !== 'sequence') return '';
+/**
+ * Motion, modelled on the trace technique: each connector draws itself along the
+ * flow and each stage brightens as the flow reaches it, then everything rests in
+ * the finished state.
+ *
+ * The base rules ARE the finished state, so a reader with motion disabled sees
+ * the complete diagram rather than a half-drawn one -- the animation only adds
+ * the order in which it assembles. Under `reduce` the stages still brighten in
+ * sequence, because opacity carries the order without the movement that causes
+ * harm; the flow is still communicated, it simply stops sliding.
+ */
+function motion(id, count) {
+  if (!count) return '';
+  const dur = Math.max(6, count * 1.6);
+  let per = '';
+  for (let i = 0; i < count; i += 1) {
+    const delay = ((i * dur) / (count + 1)).toFixed(2);
+    per += `
+    .${id}-s${i} { animation-delay: ${delay}s; }
+    .${id}-e${i} { animation-delay: ${delay}s; }`;
+  }
   return `
-    /* The token rests visible at the first stage; the static frame already shows
-       every stage and label, so motion only draws attention to the order. */
-    .${id}-tok { fill: #1d4ed8; opacity: 1; }
+    /* Finished state first: this is what a reader with motion off sees. */
+    .${id}-conn { stroke-dasharray: 10 8; stroke-dashoffset: 0; opacity: 1; }
+    .${id}-stage { opacity: 1; }
+${per}
     @media (prefers-reduced-motion: no-preference) {
-      .${id}-tok { animation: ${id}-travel 7s ease-in-out infinite; }
+      .${id}-conn  { animation: ${id}-trace ${dur}s ease-in-out infinite; }
+      .${id}-stage { animation: ${id}-arrive ${dur}s ease-in-out infinite; }
     }
-    @keyframes ${id}-travel {
-      0%, 6%    { transform: translateX(0);    opacity: 1; }
-      94%, 100% { transform: translateX(var(--${id}-run, 600px)); opacity: 1; }
+    @keyframes ${id}-trace {
+      0%        { stroke-dashoffset: 54; opacity: 0.35; }
+      14%, 100% { stroke-dashoffset: 0;  opacity: 1; }
+    }
+    @keyframes ${id}-arrive {
+      0%        { opacity: 0.55; }
+      10%, 22%  { opacity: 1; }
+      34%, 100% { opacity: 1; }
     }
     @media (prefers-reduced-motion: reduce) {
-      .${id}-tok { animation: none; transform: translateX(0); opacity: 1; }
+      /* No movement, but the order is still shown: each stage brightens in turn
+         and stays bright. Opacity and colour are vestibular-safe. */
+      .${id}-conn  { animation: none; stroke-dashoffset: 0; opacity: 1; }
+      .${id}-stage { animation: ${id}-settle ${dur}s ease-in-out infinite; opacity: 1; }
+    }
+    @keyframes ${id}-settle {
+      0%        { opacity: 0.62; }
+      12%, 100% { opacity: 1; }
     }`;
 }
 
@@ -75,13 +108,12 @@ function wrap(text, max) {
 
 export function sequence({ id, title, subtitle, stages, note }) {
   const W = 980,
-    boxW = Math.floor((W - 60 - (stages.length - 1) * 22) / stages.length);
-  const H = 300 + (note ? 34 : 0);
-  const y = 132,
-    run = (boxW + 22) * (stages.length - 1);
+    boxW = Math.floor((W - 60 - (stages.length - 1) * 26) / stages.length);
+  const H = 292 + (note ? 30 : 0);
+  const y = 118;
   let body = '';
   stages.forEach((s, i) => {
-    const x = 30 + i * (boxW + 22);
+    const x = 30 + i * (boxW + 26);
     const cls =
       s.emphasis === 'good'
         ? `${id}-good`
@@ -90,31 +122,56 @@ export function sequence({ id, title, subtitle, stages, note }) {
           : s.emphasis
             ? `${id}-hi`
             : `${id}-box`;
-    body += `\n  <rect class="${cls}" x="${x}" y="${y}" width="${boxW}" height="96" rx="9"/>`;
-    body += `\n  <text class="${id}-name" x="${x + 14}" y="${y + 28}">${esc(s.name)}</text>`;
-    wrap(s.detail ?? '', Math.floor(boxW / 6.6))
+    body += `\n  <g class="${id}-stage ${id}-s${i}">`;
+    body += `\n    <rect class="${cls}" x="${x}" y="${y}" width="${boxW}" height="104" rx="10"/>`;
+    body += `\n    <text class="${id}-step" x="${x + 14}" y="${y + 24}">${String(i + 1).padStart(2, '0')}</text>`;
+    body += `\n    <text class="${id}-name" x="${x + 40}" y="${y + 24}">${esc(s.name)}</text>`;
+    wrap(s.detail ?? '', Math.floor(boxW / 6.4))
       .slice(0, 3)
       .forEach((l, n) => {
-        body += `\n  <text class="${id}-desc" x="${x + 14}" y="${y + 50 + n * 16}">${esc(l)}</text>`;
+        body += `\n    <text class="${id}-desc" x="${x + 14}" y="${y + 48 + n * 16}">${esc(l)}</text>`;
       });
     if (s.cost)
-      body += `\n  <text class="${id}-edge" x="${x + 14}" y="${y + 116}">${esc(s.cost)}</text>`;
+      body += `\n    <text class="${id}-edge" x="${x + 14}" y="${y + 124}">${esc(s.cost)}</text>`;
+    body += `\n  </g>`;
     if (i < stages.length - 1) {
-      const ax = x + boxW + 3;
-      body += `\n  <line class="${id}-line" x1="${ax}" y1="${y + 48}" x2="${ax + 16}" y2="${y + 48}"/>`;
+      const ax = x + boxW + 2,
+        bx = x + boxW + 24;
+      body += `\n  <line class="${id}-line ${id}-conn ${id}-e${i}" x1="${ax}" y1="${y + 52}" x2="${bx}" y2="${y + 52}" marker-end="url(#${id}-tip)"/>`;
     }
   });
-  body += `\n  <rect class="${id}-tok" x="34" y="${y - 26}" width="${Math.min(58, boxW - 8)}" height="14" rx="3" style="--${id}-run: ${run}px"/>`;
-  if (note) body += `\n  <text class="${id}-sub" x="30" y="${H - 20}">${esc(note)}</text>`;
+  if (note) body += `\n  <text class="${id}-sub" x="30" y="${H - 18}">${esc(note)}</text>`;
   return `${head(id, W, H, title, subtitle ?? title)}
   <style>
-${baseStyle(id)}${motion(id, 'sequence')}
+${baseStyle(id)}${motion(id, stages.length)}
   </style>
+  <defs>
+    <marker id="${id}-tip" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#1d4ed8"/>
+    </marker>
+  </defs>
   <rect class="${id}-bg" width="${W}" height="${H}"/>
   <text class="${id}-h1"  x="30" y="40">${esc(title)}</text>
   <text class="${id}-sub" x="30" y="64">${esc(subtitle ?? '')}</text>${body}
 </svg>
 `;
+}
+
+function revealCss(id, rows) {
+  let per = '';
+  for (let i = 0; i < rows; i += 1) {
+    per += `\n    .${id}-r${i} { animation-delay: ${(i * 0.45).toFixed(2)}s; }`;
+  }
+  // The base state is fully visible, so a still frame is the complete table.
+  // The reveal is opacity only -- identical under `reduce`, because nothing
+  // moves. That is what lets it run for every reader on every device.
+  return `
+    .${id}-row { opacity: 1; }${per}
+    .${id}-row { animation: ${id}-reveal ${(rows * 0.45 + 5).toFixed(1)}s ease-in-out infinite; }
+    @keyframes ${id}-reveal {
+      0%       { opacity: 0.5; }
+      9%, 100% { opacity: 1; }
+    }`;
 }
 
 export function compare({ id, title, subtitle, left, right, note }) {
@@ -126,13 +183,13 @@ export function compare({ id, title, subtitle, left, right, note }) {
     out += `\n  <text class="${id}-name" x="${x + 16}" y="${122}">${esc(side.heading)}</text>`;
     out += `\n  <text class="${id}-desc" x="${x + 16}" y="${142}">${esc(side.summary ?? '')}</text>`;
     side.rows.forEach((r, i) => {
-      out += `\n  <text class="${id}-desc" x="${x + 16}" y="${182 + i * 34}">${esc(r)}</text>`;
+      out += `\n  <text class="${id}-desc ${id}-row ${id}-r${i}" x="${x + 16}" y="${182 + i * 34}">${esc(r)}</text>`;
     });
     return out;
   };
   return `${head(id, W, H, title, subtitle ?? title)}
   <style>
-${baseStyle(id)}
+${baseStyle(id)}${revealCss(id, Math.max(left.rows.length, right.rows.length))}
   </style>
   <rect class="${id}-bg" width="${W}" height="${H}"/>
   <text class="${id}-h1"  x="30" y="40">${esc(title)}</text>
