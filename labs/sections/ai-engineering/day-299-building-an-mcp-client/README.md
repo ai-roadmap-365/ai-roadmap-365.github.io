@@ -57,7 +57,9 @@ python3 examples/mcp_client.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Unified tools: ['query_users', 'read_file']
+DB Result: Alice, Bob
+FS Result: File contents: OK
 ```
 
 ## Validation steps

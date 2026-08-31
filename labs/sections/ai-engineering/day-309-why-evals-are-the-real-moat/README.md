@@ -57,7 +57,7 @@ python3 examples/eval_metrics.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Exact Match: 1.0
 ```
 
 ## Validation steps

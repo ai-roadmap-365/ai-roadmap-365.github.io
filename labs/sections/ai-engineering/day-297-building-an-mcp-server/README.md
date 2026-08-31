@@ -57,7 +57,8 @@ python3 examples/custom_mcp_server.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Registered tools: [{'name': 'calculate_tax', 'description': 'Calculate total amount including tax.', 'inputSchema': {'type': 'object', 'properties': {'amount': {'type': 'number'}, 'rate': {'type': 'number'}}, 'required': ['amount']}}]
+Execution result: {'content': [{'type': 'text', 'text': '110.00000000000001'}], 'isError': False}
 ```
 
 ## Validation steps

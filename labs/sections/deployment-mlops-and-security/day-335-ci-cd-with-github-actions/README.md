@@ -57,7 +57,7 @@ python3 examples/batch_pipeline.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'batches_completed': 1, 'batches_quarantined_dlq': 0, 'active_checkpoints': 1}
 ```
 
 ## Validation steps

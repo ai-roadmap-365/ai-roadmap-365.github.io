@@ -57,7 +57,8 @@ python3 examples/speculative_decoding.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+(True, 'kv_0')
+{'draft_tokens': ['a', 'b'], 'emitted_tokens': ['a', 'b', 'c'], 'accepted_count': 2, 'speedup_factor': 3.0, 'rejected_index': None}
 ```
 
 ## Validation steps

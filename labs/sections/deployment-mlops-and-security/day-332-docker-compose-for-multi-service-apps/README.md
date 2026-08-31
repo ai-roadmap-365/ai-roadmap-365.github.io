@@ -57,7 +57,9 @@ python3 examples/gpu_autoscaling.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'action': 'SCALE_UP', 'old_replicas': 1, 'new_replicas': 4, 'reason': 'Waiting queue (20) exceeded capacity'}
+{'action': 'HOLD_COOLDOWN', 'current_replicas': 4, 'desired_replicas': 1, 'seconds_in_cooldown': 0.0, 'reason': 'Queue cleared; waiting for stabilization window'}
+{'action': 'SCALE_DOWN', 'old_replicas': 4, 'new_replicas': 1, 'reason': 'Cooldown window (10s) expired cleanly'}
 ```
 
 ## Validation steps

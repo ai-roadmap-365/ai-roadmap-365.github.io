@@ -35,7 +35,7 @@ bash tests/run_tests.sh
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Suite Decision: {'total_evaluated': 1, 'baseline_score': 0.8, 'candidate_score': 1.0, 'delta': 0.2, 'tolerance_passed': True, 'golden_passed': True, 'failed_golden_count': 0, 'gate_passed': True, 'status': 'APPROVED'}
 ```
 
 ## Security Notes

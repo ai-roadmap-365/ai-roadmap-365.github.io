@@ -57,7 +57,7 @@ python3 examples/logging_analytics.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'trace_id': '9bb3a8c2da24428f967b1f6146ffdf6d', 'tenant_id': 't1', 'prompt_sanitized': 'Email is [REDACTED_EMAIL]', 'completion_sanitized': 'OK', 'prompt_tokens': 100, 'completion_tokens': 50, 'total_tokens': 150, 'cost_usd': 0.0005, 'timestamp': 1788138002.180941}
 ```
 
 ## Validation steps

@@ -57,7 +57,16 @@ python3 examples/feature_orchestrator.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+# Feature Walkthrough: Demo Feature
+
+## Summary of Changes
+The feature was implemented following the 6-stage agentic shipping playbook.
+
+## Modified Files
+- `a.py`
+
+## Verification Evidence
+- Test Exe
 ```
 
 ## Validation steps

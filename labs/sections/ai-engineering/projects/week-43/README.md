@@ -57,7 +57,7 @@ python3 examples/personal_mcp_daemon.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Init response: {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05", "serverInfo": {"name": "personal-mcp-daemon", "version": "1.0.0"}, "capabilities": {"tools": {}, "resources": {}, "prompts": {}}}}
 ```
 
 ## Validation steps

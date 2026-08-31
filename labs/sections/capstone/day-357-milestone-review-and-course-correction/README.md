@@ -57,7 +57,7 @@ python3 examples/audit.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'milestone': 'CAPSTONE_MILESTONE_1', 'overall_status': 'APPROVED', 'checks': {'latency_budget': 'PASS', 'faithfulness_accuracy': 'PASS', 'schema_integrity': 'PASS'}, 'metrics': {'measured_latency_ms': 0.0, 'faithfulness_score': 0.95}}
 ```
 
 ## Validation steps

@@ -58,7 +58,7 @@ python3 examples/full_stack_app.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Normal: {'status': 'SUCCESS', 'cached': False, 'resolved_provider': 'primary_claude', 'fallback_occurred': False, 'actual_cost_usd': 0.00465, 'remaining_balance': 9.99535, 'response': '[primary_claude] Response for: Hi'}
 ```
 
 ## Validation steps

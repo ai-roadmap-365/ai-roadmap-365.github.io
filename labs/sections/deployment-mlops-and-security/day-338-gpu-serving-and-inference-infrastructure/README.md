@@ -57,7 +57,7 @@ python3 examples/gpu_infrastructure.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'batch_size': 2, 'request_ids': ['r1', 'r2'], 'avg_queue_delay_ms': 1.5, 'timestamp': 100.002}
 ```
 
 ## Validation steps

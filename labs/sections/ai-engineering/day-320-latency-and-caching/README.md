@@ -57,7 +57,7 @@ python3 examples/caching_engine.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+('Hi there!', 'TIER_1_EXACT_HIT')
 ```
 
 ## Validation steps

@@ -57,7 +57,13 @@ python3 examples/scoping.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{
+  "project_name": "Enterprise Financial Analyst Assistant",
+  "feasibility_score": 100.0,
+  "feasibility_grade": "EXCELLENT",
+  "warnings": [],
+  "is_approved_for_build": true
+}
 ```
 
 ## Validation steps

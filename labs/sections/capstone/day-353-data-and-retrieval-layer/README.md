@@ -57,7 +57,7 @@ python3 examples/retrieval.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+[{'id': 'doc1', 'text': 'Contract indemnity clause specifies liability limits under $1,000,000.', 'rrf_score': 0.03278688524590164, 'metadata': {}}, {'id': 'doc2', 'text': 'Server error code 0x80040154 occurs during database initialization.', 'rrf_score': 0.016129032258064516, 'metadata': {}}]
 ```
 
 ## Validation steps

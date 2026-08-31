@@ -57,7 +57,7 @@ python3 examples/model_security.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Scanner ready.
 ```
 
 ## Validation steps

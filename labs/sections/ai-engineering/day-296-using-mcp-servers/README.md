@@ -57,7 +57,9 @@ python3 examples/mcp_runner.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Initialized: {'name': 'test-srv', 'version': '1.0.0'}
+Tools: [{'name': 'get_status', 'description': 'Get server health status', 'inputSchema': {'type': 'object'}}]
+Call result: {"status": "ONLINE", "uptime_sec": 4200}
 ```
 
 ## Validation steps

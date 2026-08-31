@@ -32,12 +32,7 @@ python3 examples/production_ai_ops.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
-[PLATFORM] Initialized Unified Monitored AI Platform (Canary: 20%, Error Threshold: 5.0%).
-[INGRESS] Sanitized PII; processed request under trace_id=3a9b1c2d...
-[OBSERVABILITY] Generated metrics report: P50=120ms, P95=145ms, Error Rate=0.0%.
-[COST LEDGER] Recorded $0.0005 attributed spend for tenant_acme.
-[AUTOMATED CIRCUIT BREAKER] Tripped circuit upon error spike; reverted traffic to BASELINE_V1.
+{'trace_id': '7d0f7391b23a45c3a5a7a3ec8f1ca87b', 'tenant_id': 't1', 'user_id': 'u1', 'variant': 'BASELINE_V1', 'prompt_sanitized': 'test query', 'tokens': 150, 'cost_usd': 0.0005, 'is_error': False, 'circuit_tripped': False, 'timestamp': 1788138002.53807}
 ```
 
 ## Validation

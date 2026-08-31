@@ -57,7 +57,7 @@ python3 examples/dataset_curator.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Stratified counts: {'happy_path': 1, 'hard_negative': 0, 'schema_boundary': 0, 'adversarial': 0}
 ```
 
 ## Validation steps

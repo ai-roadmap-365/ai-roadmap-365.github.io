@@ -57,7 +57,8 @@ python3 examples/mcp_resources_prompts.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Resources: {'resources': [{'uri': 'memo://active', 'name': 'Active Note', 'mimeType': 'text/plain'}]}
+Prompts: {'prompts': [{'name': 'summarize', 'description': 'Summarize a document', 'arguments': [{'name': 'doc', 'required': True}]}]}
 ```
 
 ## Validation steps

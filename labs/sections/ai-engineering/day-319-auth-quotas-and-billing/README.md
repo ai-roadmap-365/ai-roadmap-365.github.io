@@ -57,7 +57,7 @@ python3 examples/auth_billing.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+(True, 'HOLD_RESERVED', 'hold_1')
 ```
 
 ## Validation steps

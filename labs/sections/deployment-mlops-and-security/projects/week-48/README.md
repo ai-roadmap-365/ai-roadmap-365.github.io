@@ -37,10 +37,9 @@ python3 examples/deployed_system.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
-[GATEWAY] Initialized LOR proxy across 3 inference worker replicas.
-[CONTINUOUS BATCHING] Processed 10 concurrent requests with zero GPU memory fragmentation.
-[CIRCUIT BREAKER] Isolated degraded replica and routed traffic to healthy workers.
+Route 1: {'status': 'ACCEPTED', 'worker_id': 'worker_0', 'worker_active_count': 1}
+Route 2: {'status': 'ACCEPTED', 'worker_id': 'worker_1', 'worker_active_count': 1}
+Step: {'worker_0': [], 'worker_1': []}
 ```
 
 ## Validation

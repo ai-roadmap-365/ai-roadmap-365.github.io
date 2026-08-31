@@ -57,7 +57,7 @@ python3 examples/cloud_deployment.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'status': 'DEPLOYMENT_SUCCESS', 'active_env': 'GREEN', 'deployed_image': 'v2.0.0', 'timestamp': 1788138002.104724}
 ```
 
 ## Validation steps

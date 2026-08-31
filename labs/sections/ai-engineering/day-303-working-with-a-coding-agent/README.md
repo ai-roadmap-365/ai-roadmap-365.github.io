@@ -57,7 +57,20 @@ python3 examples/spec_compiler.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+# TASK OBJECTIVE
+Refactor API
+
+# SURGICAL CONTEXT
+### File: app.py (NOT FOUND)
+
+# HARD CONSTRAINTS
+- Speed up
+
+# NON-GOALS (DO NOT MODIFY)
+- Do not break tests
+
+# VERIFICATION PLAN
+Run the following c
 ```
 
 ## Validation steps

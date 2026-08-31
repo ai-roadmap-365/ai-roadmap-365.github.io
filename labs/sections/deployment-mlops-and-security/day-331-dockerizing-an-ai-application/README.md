@@ -57,7 +57,8 @@ python3 examples/inference_server.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Step 1: []
+Step 2: ['r1']
 ```
 
 ## Validation steps

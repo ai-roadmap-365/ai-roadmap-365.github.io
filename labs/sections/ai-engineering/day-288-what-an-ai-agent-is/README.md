@@ -57,7 +57,7 @@ python3 examples/agent_state_machine.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+
 ```
 
 ## Validation steps

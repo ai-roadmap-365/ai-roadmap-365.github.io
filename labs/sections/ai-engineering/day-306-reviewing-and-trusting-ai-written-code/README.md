@@ -57,7 +57,7 @@ python3 examples/code_review_scanner.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'file': '<string>', 'passed': False, 'issue_count': 1, 'issues': [{'line': 2, 'rule': 'INSECURE_SHELL_EXECUTION', 'severity': 'CRITICAL', 'message': 'Avoid using os.system; use safe subprocess APIs.'}]}
 ```
 
 ## Validation steps

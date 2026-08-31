@@ -57,7 +57,7 @@ python3 examples/tracing_engine.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Trace Root: {'span_id': '09571464', 'parent_id': None, 'name': 'Test_Trace', 'kind': 'ROOT', 'duration_ms': 0.0, 'attributes': {}, 'children': []}
 ```
 
 ## Validation steps

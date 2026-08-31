@@ -57,7 +57,7 @@ python3 examples/agent.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'status': 'SUCCESS', 'total_turns': 1, 'final_answer': '15000', 'checkpoints': [{'turn': 1, 'thought': 'done', 'action': 'FINAL_ANSWER', 'action_input': {'answer': '15000'}, 'observation': 'COMPLETED'}]}
 ```
 
 ## Validation steps

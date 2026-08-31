@@ -57,7 +57,7 @@ python3 examples/chat_stream_frontend.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Done: {'status': 'COMPLETED', 'final_content': 'Hi!'}
 ```
 
 ## Validation steps

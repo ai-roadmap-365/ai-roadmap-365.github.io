@@ -57,7 +57,7 @@ python3 examples/feature_flags.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'user_id': 'u1', 'bucket': 7, 'assigned_variant': 'CANDIDATE_MODEL_V2', 'response': "[CANDIDATE_MODEL_V2] Response for 'hello'", 'shadow_executed': True}
 ```
 
 ## Validation steps

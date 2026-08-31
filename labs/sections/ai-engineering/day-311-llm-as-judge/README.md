@@ -57,7 +57,7 @@ python3 examples/llm_judge.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Parsed Judge Output: {'score': 5, 'reasoning': 'Fully grounded in doc 1', 'passed': True}
 ```
 
 ## Validation steps

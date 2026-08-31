@@ -58,7 +58,7 @@ python3 examples/security_review.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'application_name': 'Customer Copilot', 'overall_status': 'HARDENED_COMPLIANT', 'pii_vault_active': True, 'prompt_firewall_active': True, 'canary_monitor_active': True, 'attack_success_rate': 0.0, 'supply_chain_compliant': True}
 ```
 
 ## Validation steps

@@ -57,7 +57,7 @@ python3 examples/ai_gateway.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'status': 'ROUTED', 'assigned_replica': 'w1', 'active_on_replica': 1, 'circuit_state': 'CLOSED'}
 ```
 
 ## Validation steps

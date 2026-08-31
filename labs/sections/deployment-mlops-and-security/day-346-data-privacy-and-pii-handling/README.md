@@ -57,7 +57,7 @@ python3 examples/data_privacy.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Test email is <EMAIL_1>
 ```
 
 ## Validation steps

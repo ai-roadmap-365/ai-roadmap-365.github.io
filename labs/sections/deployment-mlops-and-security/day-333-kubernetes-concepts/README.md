@@ -57,7 +57,7 @@ python3 examples/quantizer_profiler.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Metrics: {'mse_error': 0.008, 'snr_db': 20.97, 'compression_ratio': 8.0}
 ```
 
 ## Validation steps

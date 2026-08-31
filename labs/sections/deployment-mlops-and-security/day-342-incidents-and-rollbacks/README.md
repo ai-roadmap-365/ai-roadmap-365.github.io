@@ -57,7 +57,7 @@ python3 examples/incidents_rollbacks.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+[CANDIDATE_V2] Processed: test
 ```
 
 ## Validation steps

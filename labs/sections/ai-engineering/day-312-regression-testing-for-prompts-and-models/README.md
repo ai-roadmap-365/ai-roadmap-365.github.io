@@ -57,7 +57,7 @@ python3 examples/regression_runner.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Report: {'gate_passed': True, 'baseline_accuracy': 0.9, 'candidate_accuracy': 0.92, 'accuracy_delta': 0.02, 'schema_validity_passed': True, 'golden_invariants_passed': True, 'failed_golden_count': 0, 'status': 'APPROVED'}
 ```
 
 ## Validation steps

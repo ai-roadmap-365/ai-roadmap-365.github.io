@@ -57,7 +57,7 @@ python3 examples/vendor_router.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Normal: {'status': 'SUCCESS', 'resolved_provider': 'anthropic', 'provider_name': 'Anthropic Claude 3.5', 'response': '[Anthropic Claude 3.5] Completed: Hello', 'attempted_providers': ['anthropic'], 'fallback_occurred': False}
 ```
 
 ## Validation steps

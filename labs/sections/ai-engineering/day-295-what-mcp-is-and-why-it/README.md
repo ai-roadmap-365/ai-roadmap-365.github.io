@@ -57,7 +57,7 @@ python3 examples/mcp_protocol.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Init response: {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "math-server", "version": "1.0.0"}}}
 ```
 
 ## Validation steps

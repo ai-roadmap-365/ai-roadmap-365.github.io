@@ -58,8 +58,10 @@ class TSNEFromScratch:
 
 def run_tsne_demo():
     np.random.seed(42)
-    c1 = np.random.normal(loc=[-5.0, -5.0], scale=0.5, size=(40, 4))
-    c2 = np.random.normal(loc=[5.0, 5.0], scale=0.5, size=(40, 4))
+    # loc must match the number of FEATURES, not the number of components.
+    # A 2-element loc against size=(40, 4) cannot broadcast and raises.
+    c1 = np.random.normal(loc=[-5.0, -5.0, -5.0, -5.0], scale=0.5, size=(40, 4))
+    c2 = np.random.normal(loc=[5.0, 5.0, 5.0, 5.0], scale=0.5, size=(40, 4))
     X = np.vstack([c1, c2])
 
     tsne = TSNEFromScratch(n_components=2, perplexity=20.0, n_iter=100, lr=50.0).fit_transform(X)

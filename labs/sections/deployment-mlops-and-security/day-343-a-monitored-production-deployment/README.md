@@ -58,7 +58,7 @@ python3 examples/production_deployment.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'trace_id': 'a0de7e3ad0354054b18897f6b5d63174', 'tenant_id': 't1', 'user_id': 'u1', 'variant': 'BASELINE_V1', 'prompt_sanitized': 'test', 'tokens': 150, 'cost_usd': 0.0005, 'is_error': False, 'circuit_tripped': False, 'timestamp': 1788138002.306768}
 ```
 
 ## Validation steps

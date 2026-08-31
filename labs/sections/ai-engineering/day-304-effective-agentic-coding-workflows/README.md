@@ -57,7 +57,7 @@ python3 examples/self_healing_runner.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Execution output: Tests OK
 ```
 
 ## Validation steps

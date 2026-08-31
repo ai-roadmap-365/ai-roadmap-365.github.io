@@ -57,7 +57,7 @@ python3 examples/ai_governance.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+('HIGH_RISK', ['Establish Continuous Risk Management System (Art. 9)', 'Conduct Data Governance & Bias Testing (Art. 10)', 'Provide Technical Documentation & Model Card (Art. 11)', 'Implement Automated Logging & Audit Trails (Art. 12)', 'Enforce Human Oversight & Kill Switches (Art. 14)', 'Obtain CE Conformity Mark & Register in EU Database (Art. 49)'])
 ```
 
 ## Validation steps

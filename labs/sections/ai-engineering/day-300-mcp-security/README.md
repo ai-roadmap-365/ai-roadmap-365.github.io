@@ -57,7 +57,8 @@ python3 examples/mcp_security_guard.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Sandbox root: /private/tmp/mcp_sandbox
+Safe read result: {'content': [{'type': 'text', 'text': 'File data'}], 'isError': False}
 ```
 
 ## Validation steps

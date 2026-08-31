@@ -57,7 +57,7 @@ python3 examples/monitoring_alerting.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+{'total_requests': 1, 'p50_ttft_ms': 100.0, 'p95_ttft_ms': 100.0, 'p99_ttft_ms': 100.0, 'error_rate_pct': 0.0, 'active_alert_count': 0}
 ```
 
 ## Validation steps

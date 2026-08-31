@@ -57,7 +57,7 @@ python3 examples/product_dispatcher.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Org Alpha: {'status': 'SUCCESS', 'tokens_streamed': ['This', ' is', ' a', ' streamed', ' AI', ' response.'], 'response': 'This is a streamed AI response.', 'cost_usd': 0.002, 'cached': False, 'remaining_credits': 49.998}
 ```
 
 ## Validation steps

@@ -57,7 +57,7 @@ python3 examples/react_engine.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+
 ```
 
 ## Validation steps

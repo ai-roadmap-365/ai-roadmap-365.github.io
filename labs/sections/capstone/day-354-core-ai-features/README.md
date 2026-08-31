@@ -57,7 +57,7 @@ python3 examples/core_ai.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Parsed: SLA is 99.9%.
 ```
 
 ## Validation steps

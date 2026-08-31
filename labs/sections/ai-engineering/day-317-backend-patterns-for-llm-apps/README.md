@@ -57,7 +57,7 @@ python3 examples/backend_patterns.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
+Normal: {'status': 'SUCCESS', 'provider': 'primary_model', 'response': '[PRIMARY_CLAUDE] Processed: Hello', 'cached': False}
 ```
 
 ## Validation steps

@@ -43,13 +43,7 @@ python3 examples/ai_security_review.py
 
 ## Expected output
 ```text
-All 5 checks passed 100% with zero errors.
-[PLATFORM] Initialized Unified AI Security Review Platform.
-[PII VAULT] Sanitized 2 customer records into surrogate tokens.
-[PROMPT FIREWALL] Encapsulated prompt in XML delimiters with verification canary.
-[CANARY MONITOR] Successfully intercepted simulated prompt exfiltration attempt.
-[SUPPLY CHAIN] Verified 100% SafeTensors compliance; generated AIBOM manifest.
-[RED TEAM FUZZER] Executed adversarial probe suite: Attack Success Rate (ASR) = 0.0%.
+AI Security Review Platform Ready.
 ```
 
 ## Validation
