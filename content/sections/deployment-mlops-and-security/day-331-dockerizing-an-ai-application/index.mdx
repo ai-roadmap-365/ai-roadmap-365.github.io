@@ -1,366 +1,267 @@
 ---
 day: 331
-title: "Dockerizing an AI Application"
+title: 'Dockerizing an AI Application'
 ---
 
 ## Why this matters
 
-Deploying production Large Language Models using raw PyTorch scripts (`model.generate()`) is disastrously inefficient:
-- **KV Cache Memory Fragmentation:** Pre-allocating contiguous memory for maximum sequence lengths wastes 60% to 80% of expensive GPU VRAM.
-- **Static Batching Idle Bubbles:** When a short 20-token prompt is batched with a long 500-token prompt, the GPU sits idle processing padding tokens until the slowest request finishes.
-- **Memory-Bound Bottleneck:** Generating tokens one-by-one is fundamentally memory bandwidth-bound, leaving GPU tensor cores starving for data.
+Yesterday you learned the rule that decides how long a build takes. Today the question is what ends up *inside* the image, and it is a different problem with a different answer.
 
-Modern high-performance inference servers like **vLLM and HuggingFace Text Generation Inference (TGI)** solve these bottlenecks through **PagedAttention, Continuous (Iteration-Level) Batching, and Tensor Parallelism**, boosting serving throughput by 5x to 10x on identical GPU hardware.
+Almost every guide to writing a good Dockerfile was written for web applications. Its advice is correct and it is aimed at the wrong target. In a web image the biggest thing is the framework, so a multi-stage build that drops the compiler is a large win. In an AI image the biggest thing is usually the model, and no amount of multi-stage discipline touches it.
 
-![PagedAttention Virtual Memory Block Mapping showing Logical KV Cache mapped through a Block Table to Non-Contiguous Physical GPU VRAM Blocks with Zero Fragmentation](./assets/paged-attention-virtual-memory-block-mapping.svg)
+Here is the measurement from today's lab, on one service packaged three ways:
+
+```text
+multi-stage       21128 ->  18053 MB  (3075 MB, 1.17x)
+mount the weights 18053 ->   4553 MB  (13500 MB, 3.97x)
+```
+
+The famous optimisation buys 1.17×. The one nobody mentions buys 3.97×. Both are worth doing, and if you only do the famous one you have taken the smaller half and probably believe you are finished.
+
+That matters because image size is not a disk-space problem. A rollout pulls the image onto every node, so 21 GB across twenty nodes is four and a half hours of pulling before anything serves traffic.
+
+![What Is Actually In An AI Image showing build tooling, framework and weights as proportions of a twenty-one gigabyte image](./assets/what-is-in-an-ai-image.svg)
 
 ## The idea in plain language
 
-Think of vLLM's PagedAttention and Continuous Batching like **a modern high-efficiency municipal bus transit system**:
+Sort everything that could be in your image into three buckets, and the decisions follow.
 
-- **Traditional Static Batching (Charter Bus):** The bus refuses to leave the station until 40 passengers board. When Passenger 1 reaches Stop 2, they cannot get off the bus until Passenger 40 reaches Stop 100 (**Massive Inefficiency & Waiting**).
-- **Continuous Batching (City Metro):** At every single station stop (**Token Iteration**), passengers get off immediately as soon as they reach their destination, and new passengers board the open seats in real-time (**Zero Idle Capacity**).
-- **PagedAttention (Luggage Lockers):** Instead of reserving an entire empty room for each passenger's future luggage, the bus station assigns modular 16-token luggage lockers anywhere in the facility as new bags arrive (**Non-Contiguous Virtual Memory Blocks**).
+**Build-only.** Compilers, headers, `cuda-devel`, anything whose job is to *produce* something. The running process never calls them. These are removed by a **multi-stage build**: do the compiling in one stage, then start a fresh stage from a small base and copy just the artefacts across. The builder is discarded entirely.
+
+**Runtime.** The interpreter, `cuda-runtime`, the framework, your code. The process genuinely needs these, so they ship. You can choose a slimmer base, but you cannot drop them.
+
+**Data.** Model weights, embeddings, static assets. Needed at run time — but unlike runtime code, they do not have to live *in the image*. Mount a volume, or fetch from object storage on start.
+
+That third bucket is the one people do not draw, because in a web application it is empty. Drawing it is the difference between a 18 GB image and a 4.5 GB one.
+
+The reason it works is that weights change on a different schedule from code. Baking them in couples the two: ship a one-line fix and every node re-pulls thirteen gigabytes of unchanged floating point.
 
 ## Historical background
 
-Inference serving engines evolved through three distinct generations:
+### Static linking and the fat binary
 
-### 1. Naive PyTorch Auto-Regression (2020–2022)
-Developers wrapped HuggingFace Transformers in FastAPI endpoints. Serving capacity was limited to 1–2 concurrent requests per A100 GPU due to rigid, unmanaged KV cache allocations.
+Long before containers, shipping software meant deciding what to bundle. A statically linked binary trades size for independence — the same trade an image makes, at a different granularity.
 
-### 2. FasterTransformer & Triton (2022–2023)
-NVIDIA introduced optimized C++/CUDA execution engines. However, request scheduling remained largely static or chunk-based.
+### Multi-stage builds, Docker 17.05 (2017)
 
-### 3. PagedAttention & vLLM / TGI (2023–Present)
-UC Berkeley researchers published PagedAttention (vLLM) in 2023, introducing virtual memory paging for KV caches and iteration-level continuous batching, transforming enterprise LLM economics.
+Before them the standard trick was the "builder pattern": two Dockerfiles and a shell script that copied artefacts between them. `FROM ... AS builder` with `COPY --from=` collapsed that into one file, and slim runtime images became the default rather than an advanced technique.
+
+### Distroless, 2017 onward
+
+Google's distroless images contain an application's runtime dependencies and nothing else — no shell, no package manager. The size win is real and the security win is larger: an attacker who achieves execution finds no tools. The cost is that debugging a running container becomes genuinely hard.
+
+### Model registries and weight formats
+
+Hugging Face Hub, MLflow's model registry and formats like safetensors emerged because the industry converged on the same conclusion this lesson reaches: model weights are *data with a lifecycle of their own*, and they want versioning, access control and distribution separate from the code that loads them.
+
+### The GPU base image problem
+
+NVIDIA publishes `cuda:*-devel` and `cuda:*-runtime` variants precisely because the build/runtime split matters so much here — the devel image is roughly 4 GB against the runtime's 1.6 GB. That the vendor ships two images is the clearest possible signal about which one belongs in production.
 
 ## What it is — and what it is not
 
-Let us define the core mechanisms of modern inference servers:
+Dockerizing an AI application is deciding what belongs in the image, in which stage, and what belongs outside it entirely.
 
-### What High-Performance Inference Servers Are:
-- PagedAttention partitioning Key-Value tensors into non-contiguous physical GPU VRAM blocks via block lookup tables.
-- Continuous batching scheduling incoming requests dynamically at every single token generation step.
-- Tensor Parallelism (TP) sharding linear attention projection matrices across multiple NVLink-connected GPUs.
-- Chunked prefill interleaving compute-heavy prompt encoding with latency-sensitive token decoding.
+### What it is
 
-### What High-Performance Inference Servers Are Not:
-- Simple Python FastAPI wrappers calling `model.generate()`.
-- Requiring all sequences in a batch to have identical token lengths via static zero-padding.
+It is **a sorting problem** first and a Dockerfile second. Get the three buckets right and the file writes itself.
 
-```text
-+-------------------------------------------------------------------------------+
-|                    LLM SERVING ENGINE COMPARISON MATRIX                       |
-+-------------------+-----------------------+-----------------------------------+
-| Feature           | Naive PyTorch / HF    | vLLM / TGI Production Server      |
-+-------------------+-----------------------+-----------------------------------+
-| KV Cache Alloc    | Contiguous Pre-alloc  | PagedAttention Non-Contiguous     |
-| VRAM Waste        | 60% - 80% (Fragmented)| < 4% (Near-Zero Waste)            |
-| Batching Strategy | Static Request-Level  | Continuous Iteration-Level        |
-| Multi-GPU Scaling | Pipeline Parallelism  | High-Speed Tensor Parallel (TP)   |
-| Prefix Caching    | None (Recomputes)     | Automatic Shared KV Cache Blocks  |
-| Serving Throughput| 15 - 30 tokens/sec    | 250 - 600 tokens/sec per GPU      |
-+-------------------+-----------------------+-----------------------------------+
-```
+It is **about deploy time**, not disk. Nobody minds a large file on a laptop; everybody minds a slow rollout.
+
+It is **a licensing decision** when weights are involved. Pushing an image containing a model you may not redistribute is redistribution.
+
+### What it is not
+
+It is not "make the image as small as possible". A distroless image you cannot debug at 3am has costs that do not show up in megabytes.
+
+It is not a reason to avoid large frameworks. Torch is 2.4 GB because it does a great deal; the answer is to ship it once, not to avoid it.
+
+It is not solved by compression. The numbers here are already compressed sizes.
 
 ## Why it was created and what problems it solves
 
-Production inference servers resolve the three primary architectural constraints of LLM serving:
+**Build toolchains in production images.** Hundreds of megabytes and a compiler for anyone who gets execution. *Solution: multi-stage builds.*
 
-### 1. Eliminating KV Cache VRAM Waste
-By treating GPU memory like OS virtual memory pages, PagedAttention eliminates internal and external fragmentation, allowing a single 80GB GPU to serve 4x to 8x more concurrent requests.
+**Rollouts that take hours.** *Solution: get the image small enough that pulling it is not the dominant cost.*
 
-### 2. Eliminating GPU Idle Bubbles via Continuous Batching
-Because requests enter and exit the batch on every token iteration, short queries complete in 15ms without waiting for long 2,000-token summaries running in the same batch.
+**Code changes that force a weights re-pull.** *Solution: separate their lifecycles — weights on a volume or in object storage.*
 
-### 3. Multi-GPU Tensor Parallel Scaling
-For large models exceeding single-GPU memory (e.g. Llama-3-70B requires 140GB in FP16), Tensor Parallelism splits attention and MLP layers across 2, 4, or 8 GPUs with microsecond NCCL AllReduce synchronization over high-speed NVLink.
+**Images that cannot be shared because of what is inside them.** *Solution: keep licensed weights out, so the image can be public and the model private.*
+
+**GPU images that are enormous for no reason.** *Solution: `cuda-runtime`, not `cuda-devel`, in the final stage.*
+
+![Three Packagings of the Same Service showing sizes falling from 21 gigabytes to 4.5 and rollout time from nearly five hours to one](./assets/three-packagings.svg)
 
 ## How it works
 
-Let us inspect the complete **Continuous Iteration-Level Batching Lifecycle**:
+**Declare a builder stage from a full base.** It gets the compiler, the headers, `cuda-devel` — whatever is needed to produce wheels or compile an extension.
 
-```text
-Iteration 1: Batch = [Req A (Decode tok 4), Req B (Decode tok 120)]
-  │ - GPU executes forward pass for 2 active tokens
-  │ - Req A generates <EOS> token -> Req A COMPLETES INSTANTLY & EXITS BATCH!
-  ▼
-Iteration 2: Batch = [Req B (Decode tok 121), Req C (Prefill Prompt 40 tokens)]
-  │ - New Req C enters batch immediately without waiting for batch reset
-  │ - vLLM executes chunked prefill for Req C + decode for Req B in one step
-  ▼
-Iteration 3: Batch = [Req B (Decode tok 122), Req C (Decode tok 1)]
-  │ - Both requests continue auto-regressive decoding concurrently
-```
+**Declare the final stage from a slim base.** `python:3.12-slim` plus `cuda-runtime`, not the devel package.
 
-![Continuous Iteration-Level Batching vs Static Batching comparing Static Batching with massive GPU idle bubbles against Continuous Batching interleaving new requests dynamically at every iteration](./assets/continuous-iteration-level-batching-vs-static-batching.svg)
+**Copy artefacts, not tooling.** `COPY --from=builder /wheels /wheels` then install from them. Copying the toolchain forward defeats the whole arrangement — which is why today's lab checks the *carried* components as well as the stage's own.
+
+**Leave the weights out.** Mount a volume, or fetch on startup with a checksum. The image then contains the code that loads a model rather than the model.
+
+**Add a `USER`.** An AI service typically has a writable cache directory, a mounted volume and a network listener. Root inside a container with a writable mount is the combination that turns an escape from theoretical into practical.
+
+**Measure in rollout seconds, not megabytes.** Size × nodes is the number that a deploy actually spends.
 
 ## An everyday analogy
 
-Think of continuous batching and PagedAttention like **a high-frequency elevator in a skyscraper**:
+Think about moving house.
 
-- **Static Batching:** The elevator goes from Ground to Floor 50. Nobody is allowed to get off at Floor 4, and nobody is allowed to get on at Floor 12 until the elevator returns to Ground (**Locked Batch Cycle**).
-- **Continuous Batching:** The elevator opens doors at every floor: passengers step out instantly when they arrive, and waiting passengers step in immediately (**Continuous Dynamic Flow**).
+**Build-only** is the scaffolding used to get the piano through the window. You do not load it onto the van; you take it down and leave it behind. That is the multi-stage build, and everyone understands it immediately.
+
+**Runtime** is the furniture. It goes on the van because you need it in the new house.
+
+**Data** is the contents of the loft — heavy, and going to the same address, and *not necessarily on this van*. It can be shipped separately, and it should be if you are going to move house again next month, because otherwise every move carries the loft.
+
+The mistake the analogy exposes is the common one: people become very disciplined about the scaffolding, feel efficient, and load the loft onto the van without noticing that it outweighs the furniture four to one.
 
 ## Examples in practice
 
-Let us build a complete Python **LLM Inference Server Simulator** implementing PagedAttention block allocation and continuous iteration-level scheduling:
-
-```python
-from typing import Dict, Any, List, Optional
-
-class PagedKVCacheManager:
-    def __init__(self, total_blocks: int = 16, block_size_tokens: int = 4):
-        self.block_size = int(block_size_tokens)
-        self.total_blocks = int(total_blocks)
-        self.free_blocks: List[int] = list(range(total_blocks))
-        self.block_tables: Dict[str, List[int]] = {}
-        
-    def allocate_for_request(self, req_id: str, num_tokens: int) -> bool:
-        needed_blocks = (num_tokens + self.block_size - 1) // self.block_size
-        if len(self.free_blocks) < needed_blocks:
-            return False
-            
-        allocated = []
-        for _ in range(needed_blocks):
-            allocated.append(self.free_blocks.pop(0))
-        self.block_tables[req_id] = allocated
-        return True
-
-    def append_token(self, req_id: str, current_token_count: int) -> bool:
-        if current_token_count % self.block_size == 0:
-            if not self.free_blocks:
-                return False  # VRAM full
-            new_block = self.free_blocks.pop(0)
-            self.block_tables[req_id].append(new_block)
-        return True
-
-    def free_request(self, req_id: str):
-        if req_id in self.block_tables:
-            for b in self.block_tables[req_id]:
-                self.free_blocks.append(b)
-            del self.block_tables[req_id]
-
-class ContinuousBatchScheduler:
-    def __init__(self, cache_manager: PagedKVCacheManager):
-        self.cache = cache_manager
-        self.waiting_queue: List[Dict[str, Any]] = []
-        self.running_batch: List[Dict[str, Any]] = []
-        
-    def add_request(self, req_id: str, prompt_tokens: int, max_tokens: int):
-        self.waiting_queue.append({
-            "req_id": req_id,
-            "prompt_tokens": prompt_tokens,
-            "max_tokens": max_tokens,
-            "generated_tokens": 0
-        })
-
-    def step(self) -> List[str]:
-        # 1. Admit new requests if VRAM allows
-        admitted = []
-        for req in list(self.waiting_queue):
-            if self.cache.allocate_for_request(req["req_id"], req["prompt_tokens"]):
-                self.running_batch.append(req)
-                self.waiting_queue.remove(req)
-                admitted.append(req["req_id"])
-            else:
-                break  # VRAM full
-                
-        # 2. Generate 1 token for all active running requests
-        completed = []
-        for req in list(self.running_batch):
-            req["generated_tokens"] += 1
-            current_total = req["prompt_tokens"] + req["generated_tokens"]
-            self.cache.append_token(req["req_id"], current_total)
-            
-            if req["generated_tokens"] >= req["max_tokens"]:
-                self.cache.free_request(req["req_id"])
-                self.running_batch.remove(req)
-                completed.append(req["req_id"])
-                
-        return completed
-
-if __name__ == "__main__":
-    cache = PagedKVCacheManager(total_blocks=10, block_size_tokens=4)
-    scheduler = ContinuousBatchScheduler(cache)
-    
-    scheduler.add_request("req_short", prompt_tokens=4, max_tokens=2)
-    scheduler.add_request("req_long", prompt_tokens=4, max_tokens=6)
-    
-    for step_num in range(1, 8):
-        done = scheduler.step()
-        print(f"Step {step_num}: Active={len(scheduler.running_batch)}, Completed={done}, FreeBlocks={len(cache.free_blocks)}")
-```
-
-## Production Architecture Case Study: vLLM Multi-GPU Cluster Deployment
-
-Consider an enterprise fintech company serving 1,000 requests per minute on a cluster of 4x NVIDIA H100 (80GB) SXM5 GPUs.
+The measured output from today's lab, three packagings of one service:
 
 ```text
-+-------------------------------------------------------------------------------+
-|                    VLLM PRODUCTION SERVING BENCHMARKS                         |
-+-------------------+-----------------------+-----------------------------------+
-| Metric            | Standard PyTorch / HF | vLLM Engine (TP=4)                |
-+-------------------+-----------------------+-----------------------------------+
-| Max Concurrency   | 8 streams (OOM Crash) | 64 streams (Stable PagedAttention)|
-| Total Throughput  | 42 tokens/sec total   | 1,280 tokens/sec total            |
-| P95 TTFT Latency  | 1,450 ms              | 180 ms (Chunked Prefill)          |
-| P95 Inter-Token L | 68 ms / token         | 14 ms / token                     |
-| KV Cache VRAM Eff | 24.2% Utilization     | 96.8% Utilization                 |
-+-------------------+-----------------------+-----------------------------------+
+--- 1. single stage, full base, weights baked in ---
+  image  21128 MB   one pull   845.1s   rollout to 20 nodes  16902.0s
+  [build-tooling-shipped] saves 4380 MB
+  [weights-baked-in]      saves 13500 MB
+  [fat-base]              saves 295 MB
+--- 2. multi-stage, slim runtime, weights baked in ---
+  image  18053 MB   one pull   722.1s   rollout to 20 nodes  14442.0s
+  [weights-baked-in]      saves 13500 MB
+--- 3. multi-stage, slim runtime, weights mounted ---
+  image   4553 MB   one pull   182.1s   rollout to 20 nodes   3642.0s
+  no findings
 ```
 
-### 1. vLLM CLI Production Startup Command
-```bash
-python3 -m vllm.entrypoints.openai.api_server   --model meta-llama/Meta-Llama-3.1-70B-Instruct   --tensor-parallel-size 4   --gpu-memory-utilization 0.92   --max-model-len 8192   --enable-chunked-prefill   --enable-prefix-caching   --port 8000
-```
+Plan 2 is a *correctly written* Dockerfile by every standard piece of advice. Multi-stage, slim base, no build tooling. It is 18 GB, and a rollout to twenty nodes takes four hours.
 
-#### 2. Automatic Prefix Caching (APC)
-When thousands of user queries share the exact same 1,500-token system prompt or few-shot examples, vLLM's automatic prefix caching recognizes identical logical blocks in the block table, sharing physical KV blocks across all active requests with zero re-computation.
-
-## Detailed Failure Mode Taxonomy: Inference Server Hazards
+The finding that remains is the one no web-application guide would have taught you to look for.
 
 ```text
-+-------------------------------------------------------------------------------+
-|                      INFERENCE SERVER FAILURE TAXONOMY                        |
-+-------------------+-----------------------+-----------------------------------+
-| Failure Mode      | Root Cause Analysis   | Architectural Mitigation          |
-+-------------------+-----------------------+-----------------------------------+
-| Preemption / Swap | VRAM completely full; | Configure CPU swap space; shed    |
-| Thrashing         | active requests paused| load before reaching 98% VRAM     |
-| Long Prefill      | Massive 10k token     | Enable `--enable-chunked-prefill` |
-| Starvation        | prompt stalls decodes | to slice prefill across iterations|
-| NCCL Deadlock in  | 1 GPU worker hangs or | Set `NCCL_TIMEOUT` and configure  |
-| Tensor Parallel   | drops connection      | automated worker restart hooks    |
-| FlashAttention OOM| Kernel workspace      | Set `gpu_memory_utilization=0.90` |
-| on Max Context    | exceeds reserved VRAM | to preserve 10% CUDA headroom     |
-+-------------------+-----------------------+-----------------------------------+
+  rollout to 20 nodes: 16902s -> 3642s
 ```
 
+Four hours and 42 minutes to one hour and one minute. Same service, same framework, same model — the model is simply no longer travelling inside the container image.
 
-
-## Deep Architectural Breakdown: PagedAttention Memory Virtualization and Chunked Prefill
-
-To understand why PagedAttention is the gold standard for high-throughput LLM serving, let us analyze the mathematical structure of GPU memory allocation:
-
-### 1. Virtual Memory Paging for Attention Key-Value Tensors
-In self-attention, for a sequence of length `L`, the Key and Value matrices require:
-`	ext{Memory}_{	ext{KV}} = 2 	imes 2 	imes n_{	ext{layers}} 	imes n_{	ext{heads}} 	imes d_{	ext{head}} 	imes L 	imes 	ext{bytes\_per\_elem}`
-
-For Llama-3-70B with 80 layers and 64 heads, 1,000 tokens of context consume ~1.3GB of VRAM per request. Without PagedAttention:
-- Contiguous reservation allocates for worst-case `L_{\max} = 8,192`, reserving 10.4GB per request upfront.
-- If the actual request finishes in 500 tokens, 9.75GB sits completely wasted.
-- PagedAttention allocates modular 16-token physical blocks on demand via virtual block tables, keeping waste strictly below `16 	imes 	ext{block\_size} pprox 4\%`.
-
-### 2. Chunked Prefill: Eliminating Decode Latency Spikes
-When a client sends a 4,000-token prompt while 30 other clients are actively receiving streaming decode tokens:
-- **Naive Serving:** The 4,000-token prefill monopolizes the GPU tensor cores for 120ms, causing every active decode stream to experience an ugly 120ms Inter-Token Latency stutter.
-- **Chunked Prefill:** vLLM breaks the 4,000-token prompt into 512-token chunks, interleaving one 512-token prefill chunk with the 30 active decode tokens at every single step, maintaining smooth 15ms decode fluidity.
-
-### 3. Tensor Parallel Communication via NCCL AllReduce
-When splitting a linear projection `Y = X \cdot W` across `N` GPUs:
-- **Column-Parallel Linear (QKV Projection):** Weight `W = [W_1 | W_2 | \dots | W_N]` splits column-wise. Each GPU computes `Y_i = X \cdot W_i` locally with zero communication.
-- **Row-Parallel Linear (Output Projection):** Weight `W` splits row-wise. Each GPU computes partial sum `Z_i = Y_i \cdot W_{	ext{row}, i}`.
-- **NCCL AllReduce:** A single microsecond AllReduce sums the partial activations across all GPUs over high-speed NVLink (900 GB/s per GPU).
+Note also that plan 1 ships `cuda-devel` at 4.1 GB when the running process needs `cuda-runtime` at 1.6 GB. NVIDIA publishing those as two separate images is the vendor telling you which one production wants.
 
 ## Implications: security, privacy, performance, scalability, and cost
 
-### 1. Multi-Tenant KV Cache Isolation
-Ensure that virtual memory block tables strictly isolate blocks between distinct tenant IDs. Shared prefix caching must only apply to public immutable system prompts, never private user data.
+**Security.** The size and security arguments coincide here, which is rare. Build tooling in a runtime image is a compiler available to anyone who achieves execution. A slim base has fewer packages that can have CVEs — most vulnerabilities reported against an application image are in components it never calls.
 
-### 2. Dramatic GPU Hardware Cost Reduction
-By quadrupling serving throughput from 50 to 200 tokens/sec per GPU, continuous batching slashes required GPU cluster instances by 75%, saving tens of thousands of dollars in cloud infrastructure.
+**Supply chain.** Mounting weights makes the mount an input. Whatever can write to that volume can replace your model. Verify a checksum on load; Day 347 treats this properly.
+
+**Privacy and licensing.** An image containing licensed weights, pushed to a public registry, is publication. Keeping weights out means an image leak is not a model leak.
+
+**Performance.** Image size does not affect inference speed at all. It affects how long a node waits before it can serve, which is felt during rollouts, autoscaling events and incident recovery — precisely the moments you are least willing to wait.
+
+**Cost.** Registry egress is billed per gigabyte on most providers. A 21 GB image pulled by twenty nodes on every deploy is 420 GB of egress per rollout.
 
 ## Alternatives: free, open source, and commercial
 
-| Tool / Framework | Type | Best Suited For | Key Capabilities |
-| :--- | :--- | :--- | :--- |
-| **vLLM** | Open Source | High-Throughput Production LLMs | PagedAttention, chunked prefill, APC |
-| **TGI (HuggingFace)** | Open Source / Commercial | Enterprise Production Inference | FlashAttention, continuous batching |
-| **TensorRT-LLM (NVIDIA)** | Open Source | Ultimate GPU Optimization | In-flight batching, FP8 kernels |
-| **SGLang** | Open Source | Complex Structured Workflows | Fast RadixAttention prefix caching |
+**Multi-stage Dockerfiles** — free, standard, and what this lesson assumes. The right default.
+
+**Distroless base images** — Google's, Apache-2.0. Smaller still and no shell, which is excellent for security and painful the first time you need to debug a running pod.
+
+**Chainguard Images** — hardened, minimal, continuously rebuilt against current CVEs. Free tier for many images, commercial for the full catalogue and support.
+
+**`docker buildx` cache mounts and build secrets** — free and built in. A cache mount keeps the pip cache across builds without shipping it; a build secret makes a token available during a `RUN` without it entering any layer. Both solve problems people otherwise solve badly.
+
+**Model registries** — Hugging Face Hub, MLflow, or plain object storage with versioned keys. This is where weights belong, and any of them beats baking the model in.
+
+**Buildpacks** — no Dockerfile; the platform decides. Fine for a web service, and a poor fit here precisely because it will make the weights decision for you.
+
+The honest default: a two-stage Dockerfile on a slim base with `cuda-runtime`, a non-root `USER`, and weights fetched at startup from versioned object storage with a checksum.
 
 ## Comparison with related concepts
 
-```text
-+-----------------------+-----------------------+-----------------------+
-| Dimension             | Static Batching       | Continuous Batching   |
-+-----------------------+-----------------------+-----------------------+
-| Scheduling Unit       | Whole Request Batch   | Single Token Iteration|
-| Padding Tokens        | High (Padded to max)  | Zero Padding          |
-| Short Query Latency   | Blocked by long query | Returns Instantly     |
-| Memory Efficiency     | Fragmented            | Paged Virtual Memory  |
-+-----------------------+-----------------------+-----------------------+
-```
+**Multi-stage build versus slim base.** Different mechanisms for different buckets. Multi-stage removes build-only components entirely; a slim base reduces what the runtime bucket costs. Doing one does not do the other.
+
+**`cuda-devel` versus `cuda-runtime`.** Compiler toolkit versus the libraries a compiled program links against. About 4.1 GB versus 1.6 GB. Confusing them is the single most expensive mistake available in a GPU Dockerfile.
+
+**Baked-in versus mounted weights.** Baked-in is simpler and reproducible: the image is the whole system. Mounted is smaller, decouples the lifecycles, and adds a supply-chain input to verify. For anything above a few hundred megabytes, mounted wins.
+
+**Image size versus layer count.** Squashing layers reduces count and rarely reduces size much. What reduces size is not putting the thing in.
 
 ## When to use it — and when not to
 
-### Deploy vLLM / TGI for:
-- All production LLM API backends, high-concurrency chatbots, coding assistants, and multi-tenant generative SaaS platforms.
+**Always separate build from runtime**, even for a small service. It costs a few lines and it is the difference between shipping a compiler and not.
 
-### Do NOT require vLLM for:
-- Simple tabular scikit-learn models or single-batch offline training jobs.
+**Mount the weights once the model is larger than roughly a gigabyte**, or once it changes on a different schedule from the code. Both are usually true at once.
 
+**Bake them in when the model is small and reproducibility matters more than size** — an embedding model of a few hundred megabytes in an image you want to be a single self-contained artefact is a defensible choice, and the lab's `model-weights-small` entry exists to let you check the arithmetic.
 
-### Production Checklist: High-Throughput Inference Server Deployment
-- [ ] PagedAttention block size tuned (16 or 32 tokens per block based on average prompt length).
-- [ ] Tensor Parallelism size matches physical NVLink domain (e.g. `TP=4` across 4 SXM5 GPUs).
-- [ ] `gpu_memory_utilization` set to 0.90–0.92 to leave headroom for CUDA runtime workspace.
-- [ ] Chunked prefill enabled (`--enable-chunked-prefill`) to eliminate decode latency jitter on long prompts.
-- [ ] Automatic prefix caching enabled (`--enable-prefix-caching`) for multi-turn chat applications.
-- [ ] Prometheus metrics endpoint scraped every 2 seconds for active and waiting request counts.
+**Do not chase the last hundred megabytes.** Once the weights are out, you are usually looking at a framework you cannot remove. Distroless will buy a little more and cost you debuggability.
+
+**Do not put a model in a public image without checking its licence.** This is not an engineering decision and it is not reversible.
 
 ## Knowledge check
 
-1. **How does PagedAttention eliminate KV cache memory fragmentation?** By partitioning KV cache tensors into fixed-size non-contiguous virtual memory blocks managed via block tables.
-2. **What is Continuous Batching?** Scheduling requests at the token iteration level rather than the request level, allowing requests to enter and leave dynamically.
-3. **What is the difference between Time-to-First-Token (TTFT) and Inter-Token Latency (ITL)?** TTFT measures prompt processing time until the first token is emitted; ITL measures the time between generating subsequent tokens.
+1. Why does a multi-stage build save so much less on an AI image than on a web application image?
+2. What is the difference between `cuda-devel` and `cuda-runtime`, and which belongs in the final stage?
+3. Why is image size a deployment problem rather than a disk-space problem?
+4. Mounting weights makes the image far smaller. What does it add that you must then handle?
+5. Why does copying a build *artefact* forward preserve the benefit of a multi-stage build, while copying the *toolchain* forward destroys it?
 
 ## Hands-on exercise
 
-In this lab, you will build an **LLM Inference Server Simulator in Python**. Your implementation will:
-1. Implement a Paged KV Cache Manager managing physical VRAM blocks and block allocation tables.
-2. Build a Continuous Batch Scheduler dynamically admitting waiting requests and generating tokens iteration-by-iteration.
-3. Verify that short requests complete and free their memory blocks immediately without waiting for longer concurrent requests.
-4. Verify graceful admission throttling when physical GPU blocks are exhausted.
+You will size an image from its stages, work out what is making it big, and convert the answer into rollout time.
+
+Open `starter/image_plan.py` in the lab directory and implement the stubbed functions, then run the tests. Docker is not required and no weights are downloaded.
 
 ### Expected output
 
+Running `python3 examples/image_demo.py` sizes three packagings of one service:
+
 ```text
-============================= test session starts ==============================
-collected 5 items
-
-tests/test_inference_server.py .....                                     [100%]
-
-============================== 5 passed in 0.02s ===============================
-[KV CACHE] Initialized 16 physical VRAM blocks (block size = 4 tokens).
-[SCHEDULER] Admitted req_short and req_long into continuous batch.
-[DYNAMIC EXIT] req_short completed at step 2 and released 2 physical blocks.
-[VRAM SATURATION] Admitted additional waiting requests as blocks freed up.
+--- what each change bought ---
+  multi-stage       21128 ->  18053 MB  (3075 MB, 1.17x)
+  mount the weights 18053 ->   4553 MB  (13500 MB, 3.97x)
+  both              21128 ->   4553 MB  (16575 MB, 4.64x)
+  rollout to 20 nodes: 16902s -> 3642s
 ```
+
+The second line is four times the first. That is the finding.
 
 ### Validate your work
 
-Run the pytest test suite:
+Run `bash tests/run_tests.sh`. All twenty tests must pass.
 
-```bash
-pytest tests/run_tests.sh
-```
+Then check three things by inspection. Only the final stage may count toward the size — if the builder's four gigabytes appear in the total, multi-stage will appear to buy nothing at all. An unknown component must contribute zero rather than raising, because naming a package the table does not know is a normal thing to do. And a `final_stage` that names no existing stage must raise `KeyError` rather than quietly using the first one.
 
 ### Troubleshooting
 
-1. **Block table cleanup:** Ensure `free_request` returns all allocated block IDs to `free_blocks`.
-2. **Ceiling division:** Compute needed blocks using `(tokens + block_size - 1) // block_size`.
+**Multi-stage appears to save nothing.** `ImagePlan.size_mb` is summing every stage. Only the final one ships.
+
+**A clean plan produces a finding.** You are treating `cuda-runtime` as build tooling. It is runtime; only `cuda-devel` is build-only.
+
+**`build-tooling-shipped` misses a case.** Check the carried list as well as the final stage's own components.
+
+**Zero bandwidth crashes.** Return `0.0` rather than dividing.
 
 ### Common mistakes
 
-- Holding onto memory blocks after a request finishes, causing artificial VRAM leaks.
+Summing all stages, which silently destroys the entire multi-stage argument.
+
+Confusing the CUDA devel and runtime packages — a 2.5 GB error in either direction.
+
+Reporting savings in megabytes only. Multiply by the fleet; that is what people wait for.
+
+Treating weights as immovable because they are needed at run time. Needed at run time and needed *in the image* are different claims.
 
 ## Practice assignment
 
-Add a **Copy-on-Write (CoW) Prefix Sharing** mechanism allowing multiple requests sharing a common prompt prefix to share identical physical memory blocks.
+Add **layer-level granularity**. Model each component as its own layer with an identity, and compute what a *rebuild* transfers when a registry already holds most of the layers.
+
+Then write a test showing the case that matters: changing only `app-code` should transfer three megabytes, not the whole image. This is why the weights argument is even stronger in practice than the first-pull numbers suggest — a node that already has the weights layer does not re-pull it, but a node that has never seen the image does, and autoscaling creates new nodes precisely when you are busiest.
 
 ## Extension challenge
 
-Implement **Chunked Prefill Scheduling** splitting a 100-token prompt across 4 discrete prefill iterations.
+Take a **real AI service you have built** and put it through the review.
+
+List every component with an honest purpose: `BUILD`, `RUNTIME` or `DATA`. The exercise is the sorting, not the arithmetic — and the interesting output is not the total. It is the one component you had never considered optional.
+
+For most people that is either a dataset copied in "for testing", a set of `dev` dependencies that came along with the requirements file, or a model that could perfectly well be fetched at startup. Then compute what removing it would save across your actual node count, and decide whether you would have guessed the answer before measuring it.

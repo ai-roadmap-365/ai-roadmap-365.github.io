@@ -1,413 +1,272 @@
 ---
 day: 332
-title: "Docker Compose for Multi-Service Apps"
+title: 'Docker Compose for Multi-Service Apps'
 ---
 
 ## Why this matters
 
-Deploying LLMs in production without elastic autoscaling leads to a brutal economic dilemma:
-- **Over-Provisioning:** Keeping 20 high-end GPU instances (NVIDIA H100 / A100) running 24/7 costs **`50,000 to `150,000 per month**, even when nighttime traffic drops to zero.
-- **Under-Provisioning:** During morning traffic spikes, a fixed 4-GPU cluster quickly exhausts its KV cache blocks, causing inference queues to explode and triggering widespread HTTP 504 Gateway Timeouts.
-- **Metric Failure:** Using traditional CPU or Memory metrics fails because a single streaming request can peg a GPU at 100% compute utilization while the server still has ample VRAM to accept 30 more concurrent streams.
+An AI application is almost never one container. There is the API, a database for application state, a vector store, a worker for the slow jobs, and usually a cache. Running those by hand means five `docker run` commands with the right flags in the right order, and getting one wrong at 9am on a Monday.
 
-Implementing **Event-Driven GPU Autoscaling with KEDA and Kubernetes** (scaling on vLLM `num_requests_waiting` queue depth, asymmetric stabilization windows, and Karpenter node provisioning) eliminates idle GPU waste while maintaining strict sub-500ms P95 latency SLAs.
+Compose replaces that with a file. That part is easy and is not what this lesson is about.
 
-![KEDA GPU Queue Depth Autoscaling Topology showing Prometheus scraping vLLM num_requests_waiting metrics, KEDA ScaledObject computing desired replicas, HPA scaling GPU Pods, and Karpenter provisioning cloud GPU nodes](./assets/keda-gpu-queue-depth-autoscaling-topology.svg)
+What this lesson is about is a single word that behaves differently from how everyone reads it. `depends_on` does **not** mean "wait until the database is ready". It means "start that container first". The difference, measured in today's lab:
+
+```text
+api      usable at 1.2s
+postgres usable at 4.4s
+```
+
+The API reports itself up three seconds before the database it queries can accept a connection. Its first query fails.
+
+On your laptop, where Postgres is warm and the page cache is full, it usually does not fail. In CI, where everything is cold, it usually does. That is the worst failure distribution available: it passes where you are looking and fails where you are not, and the resulting bug is filed as "flaky CI" rather than "our startup ordering is wrong".
+
+![What depends_on Actually Waits For contrasting service started with service healthy on the same four-service stack](./assets/what-depends-on-waits-for.svg)
 
 ## The idea in plain language
 
-Think of GPU autoscaling like **managing checkout counters at a massive supermarket during the holidays**:
+A Compose file describes a graph. The services are nodes, `depends_on` gives the edges, and three properties of that graph decide whether the stack works.
 
-- **The Wrong Metric (Cashier Sweat Level / CPU Utilization):** Measuring how fast the cashier's hands are moving is useless. A cashier ringing up a single customer with 200 items is working at 100% capacity (**100% GPU Utilization**), but nobody is waiting behind them (**Queue Depth = 0**).
-- **The Right Metric (Queue Length / Waiting Customers):** You look at how many customers are physically standing in line with full shopping carts (**`num_requests_waiting`**). If lines exceed 5 people per register, the manager immediately calls more cashiers to open new lanes (**KEDA Scale-Up**).
-- **The Cooldown Rule (Stabilization Window):** When the line empties for 2 minutes, the manager does not fire the cashier immediately. They wait 10 minutes to ensure a new tour bus hasn't just pulled into the parking lot (**Scale-Down Stabilization**).
+**Is it acyclic?** If `api` depends on `worker` and `worker` depends on `api`, nothing in the cycle can ever start. Compose refuses the file, and the error is clear — this is the failure you *want*, because it happens immediately and unambiguously.
+
+**Do any two services claim the same host port?** Only the host side can clash. Two containers happily listen on 8080 each because they are in separate network namespaces; `ports: ["8000:8080"]` binds 8000 on the host, and there is exactly one host.
+
+**Does each service wait for what it actually needs?** This is where the real problem lives. There are three conditions:
+
+- `service_started` — the container exists. The default, and it tells you almost nothing.
+- `service_healthy` — the healthcheck passed. This is what "wait for the database" means.
+- `service_completed_successfully` — a one-shot job exited zero. For migrations and seeding.
+
+Writing `depends_on: [postgres]` gets you the first. Writing it with `condition: service_healthy`, plus an actual healthcheck on Postgres, gets you the second. The difference is four seconds of not crashing.
 
 ## Historical background
 
-Autoscaling architectures for machine learning evolved across three generations:
+### Fig, 2013
 
-### 1. Static Threshold CPU/Memory HPA (2018–2021)
-Kubernetes scaled pods when CPU utilization exceeded 80%. This caused catastrophic scaling failures for GPU workloads because GPU compute kernels run asynchronously and CPU usage is largely decoupled from GPU inference saturation.
+Compose began life as Fig, an independent tool for describing multi-container applications in YAML. Docker acquired it in 2014 and renamed it. The core idea — one declarative file for a whole local stack — has barely changed in a decade, which is unusual and says something about how right it was.
 
-### 2. GPU Duty-Cycle Utilization Metrics (2021–2023)
-Engineers used NVIDIA DCGM exporters (`DCGM_FI_DEV_GPU_UTIL`). However, because auto-regressive decoding keeps the GPU tensor cores active on even a single request, the metric read 100% continuously, offering zero visibility into actual queue backlogs.
+### The v2 and v3 schism
 
-### 3. Event-Driven Concurrency & Queue Depth Scaling (2024–Present)
-Modern standards leverage KEDA and Prometheus to scale directly on inference server application metrics (`vllm:num_requests_waiting` and `vllm:num_requests_running`), paired with sub-minute node provisioners like Karpenter.
+Compose file format v3 was designed with Docker Swarm in mind and dropped several options that only made sense on a single host. For years people chose a version number based on which features they needed. The Compose Specification, from 2020, merged the lines again; modern files omit `version:` entirely.
+
+### `wait-for-it.sh` and the era of shell scripts
+
+Before dependency conditions existed, the standard answer to "wait for the database" was a shell script that polled a TCP port before exec'ing the real command. `wait-for-it.sh` and `dockerize` were everywhere. They worked, and they put startup ordering into every image's entrypoint — which is the wrong place for it, because it is a property of the deployment rather than of the application.
+
+### Healthchecks, Docker 1.12 (2016) and Compose conditions
+
+`HEALTHCHECK` in a Dockerfile, then `condition: service_healthy` in Compose, moved the problem to where it belongs: the orchestrator waits, and the application does not need to know it was waited for. Kubernetes readiness probes are the same idea at a larger scale, which is tomorrow's lesson.
 
 ## What it is — and what it is not
 
-Let us define the core mechanisms of production GPU autoscaling:
+Compose is a declarative description of a multi-container application on one host.
 
-### What GPU Autoscaling Is:
-- Scaling pod replicas proportionally to inference server waiting queue depth (`num_requests_waiting`) and active concurrency.
-- Implementing asymmetric scaling dynamics: instant, aggressive scale-up paired with a 300-second scale-down cooldown window.
-- Integrating pod autoscalers (KEDA/HPA) with dynamic cloud node provisioners (Karpenter / Cluster Autoscaler).
-- Configuring scale-to-zero policies for non-production environments to eliminate idle cloud GPU billing.
+### What it is
 
-### What GPU Autoscaling Is Not:
-- Scaling based on generic CPU utilization or disk I/O metrics.
-- Immediately deleting GPU instances the second a queue empties, causing destructive thrashing.
+It is **a local development and small-deployment tool**. One machine, several containers, one file.
 
-```text
-+-------------------------------------------------------------------------------+
-|                    AUTOSCALING METRIC RELIABILITY MATRIX                      |
-+-------------------+-----------------------+-----------------------------------+
-| Metric            | Signal Reliability    | Failure Mode                      |
-+-------------------+-----------------------+-----------------------------------+
-| Host CPU %        | 0% (Completely Blind) | GPU suffocating while CPU is 10%  |
-| GPU Utilization % | 15% (Noisy / Pegged)  | Reads 100% on 1 request or 100 reqs|
-| GPU Memory (VRAM) | 40% (Static Paged)    | vLLM pre-allocates 90% VRAM pool  |
-| Active Streams    | 85% (Good for Concurr)| Misses waiting queue backlog      |
-| Queue Depth       | 100% (Gold Standard)  | Direct, linear scaling indicator  |
-| (`waiting_reqs`)  |                       | for KEDA / HPA                    |
-+-------------------+-----------------------+-----------------------------------+
-```
+It is **a dependency graph** with ordering semantics, which is why graph questions are the useful ones to ask of it.
+
+It is **the readable version of a long `docker run` command**, and its main value is that the flags stop being tribal knowledge.
+
+### What it is not
+
+It is not an orchestrator. No scheduling across machines, no rescheduling on node failure, no rolling updates worth the name. That is tomorrow.
+
+It is not a production deployment for anything that must stay up. A single host is a single point of failure.
+
+It is not a way to avoid understanding networking. Services reach each other by name on a shared network, and knowing that is what stops you publishing a database port to the world.
 
 ## Why it was created and what problems it solves
 
-Production GPU autoscaling solves the three primary financial and operational hazards of AI infrastructure:
+**Five `docker run` commands in the right order.** Undocumented, and different on every machine. *Solution: one file, in the repository.*
 
-### 1. Slashing Cloud Infrastructure Expenses by 60%
-By dynamically scaling GPU instances down during off-peak night hours and scaling to zero on staging clusters, companies save tens of thousands of dollars monthly compared to static over-provisioning.
+**Networking assembled by hand.** *Solution: an implicit network where services resolve each other by service name.*
 
-### 2. Eliminating HTTP 504 Timeouts During Demand Spikes
-When viral traffic surges hit the API, KEDA detects the queue backlog instantly and triggers rapid replica scale-up before client request timeouts expire.
+**"It works on my machine" at the stack level.** *Solution: the same file starts the same topology everywhere.*
 
-### 3. Preventing Costly GPU Node Thrashing
-Scale-down stabilization windows prevent the wasteful cycle of terminating a GPU instance only to have to pay a 60-second cloud instance initialization penalty 2 minutes later.
+**Startup ordering by hope.** *Solution: dependency conditions — though only if you use them, which is the point of today.*
+
+**Local environments that drift from each other.** *Solution: a versioned file rather than a wiki page.*
+
+![Three Failures Visible Before Anything Runs showing a cycle, a host port conflict and a premature start](./assets/failures-visible-before-running.svg)
 
 ## How it works
 
-Let us inspect the complete **KEDA Autoscaling and Node Provisioning Architecture**:
+**Compose reads the file and builds a graph.** Services, networks, volumes, and the `depends_on` edges between them.
 
-```text
-[Incoming User Traffic Burst: 200 req/sec]
-                  │
-                  ▼
-[Load Balancer / Ingress Controller]
-                  │
-                  ▼
-[vLLM Inference Pod Replicas (Active: 2 Pods)]
-  - Active Running Streams: 64
-  - Waiting Queue Backlog: 30 requests waiting!
-                  │
-                  ▼ (Emits Prometheus Metric: num_requests_waiting = 30)
-[Prometheus / OpenTelemetry Collector]
-                  │
-                  ▼ (Scraped every 2 seconds)
-[KEDA Custom Metric ScaledObject]
-  - Target: 5 waiting requests per pod
-  - Desired Replicas = ceil(30 / 5) = 6 Pods (Delta: +4 Pods)
-                  │
-                  ▼
-[Kubernetes HPA (Horizontal Pod Autoscaler)]
-  - Updates Deployment Replicas from 2 ➔ 6
-  - 4 New GPU Pods created in "Pending" state
-                  │
-                  ▼
-[Karpenter / Cloud Node Autoscaler]
-  - Detects 4 Pending GPU pods needing 4x NVIDIA L4 GPUs
-  - Dispatches AWS/GCP API call: Launches 2x `g6.12xlarge` instances
-  - Nodes join cluster in 42 seconds ➔ Pods transition to Running
-                  │
-                  ▼
-[Waiting Queue Drained ➔ Backlog Drops to 0]
-```
+**It refuses a cycle immediately.** There is no valid order, so there is nothing to attempt.
 
-![Scale-Up and Scale-Down Stabilization State Machine showing Instant Scale-Up on queue spike and 300-second Cooldown Stabilization Window before Scale-Down to prevent thrashing](./assets/scale-up-and-scale-down-stabilization-state-machine.svg)
+**It creates a default network.** Every service joins it and is reachable by its service name. `api` connects to `postgres:5432` with no port published at all — this is the part people miss when they publish database ports "so the API can reach it".
+
+**It starts services in dependency order**, waiting according to each edge's condition. With no condition it waits only for the container to be created.
+
+**It publishes only what `ports:` asks for.** That binds on the host. Everything else stays on the internal network.
+
+**Healthchecks run on an interval** and a service is healthy only after one passes. A dependant with `condition: service_healthy` blocks until then, which is exactly the four seconds the naive stack skips.
 
 ## An everyday analogy
 
-Think of GPU autoscaling like **a taxi fleet dispatcher at an international airport**:
+Think of opening a restaurant for the evening.
 
-- **Fixed Fleet (Naive):** The airport keeps 100 taxis idling in the parking lot 24 hours a day, burning gas and paying drivers even at 3:00 AM (**Massive Idle Cost**).
-- **Queue-Based Dispatch (KEDA):** The dispatcher watches the passenger taxi queue at Terminal 1. When a transatlantic Boeing 777 lands and 300 passengers line up, the dispatcher summons 50 nearby drivers immediately (**Rapid Scale-Up**).
-- **Holding Bay (Stabilization):** Once the flight crowd clears, the taxis wait in the holding bay for 15 minutes before driving away, in case the next delayed flight lands (**Cooldown Window**).
+`depends_on` with no condition is the rule "the kitchen staff arrive before the front of house". Fine, and it says nothing about the ovens being hot. The doors open, someone orders, and the kitchen cannot cook — everybody is *present* and nothing is *ready*.
+
+`condition: service_healthy` is the rule "the doors open when the head chef says the kitchen is ready". The head chef saying so is the healthcheck, and it has to mean something: a chef who says "ready" the moment they walk in has given you a signal that carries no information, which is exactly what a healthcheck returning 200 whenever the process is alive does.
+
+The restaurant opens later under the second rule. It also serves food.
+
+And the cycle: front of house waiting for the kitchen while the kitchen waits for front of house. Nobody starts, ever, and the useful thing about this failure is that it is total and immediate rather than intermittent.
 
 ## Examples in practice
 
-Let us build a complete Python **GPU Autoscaling Decision Engine** that models queue depth tracking, desired replica calculations, scale-up damping, and scale-down cooldown stabilization:
-
-```python
-import math
-import time
-from typing import Dict, Any, List, Optional
-
-class GPUAutoscalingDecisionEngine:
-    def __init__(
-        self,
-        min_replicas: int = 1,
-        max_replicas: int = 10,
-        target_waiting_per_pod: int = 5,
-        scale_down_cooldown_seconds: int = 300
-    ):
-        self.min_replicas = int(min_replicas)
-        self.max_replicas = int(max_replicas)
-        self.target_per_pod = int(target_waiting_per_pod)
-        self.cooldown_sec = int(scale_down_cooldown_seconds)
-        
-        self.current_replicas = int(min_replicas)
-        self.last_scale_down_timestamp = 0.0
-        self.idle_since_timestamp: Optional[float] = None
-        
-    def calculate_desired_replicas(self, waiting_requests: int, current_timestamp: float) -> Dict[str, Any]:
-        # 1. Raw Target Calculation
-        if waiting_requests <= 0:
-            raw_desired = self.min_replicas
-        else:
-            raw_desired = math.ceil(waiting_requests / self.target_per_pod)
-            
-        # Clamp within bounds
-        desired = max(self.min_replicas, min(raw_desired, self.max_replicas))
-        
-        # 2. Scale-Up Evaluation (Immediate)
-        if desired > self.current_replicas:
-            self.idle_since_timestamp = None
-            old_replicas = self.current_replicas
-            self.current_replicas = desired
-            return {
-                "action": "SCALE_UP",
-                "old_replicas": old_replicas,
-                "new_replicas": desired,
-                "reason": f"Waiting queue ({waiting_requests}) exceeded target capacity"
-            }
-            
-        # 3. Scale-Down Evaluation (Stabilization Cooldown)
-        if desired < self.current_replicas:
-            if self.idle_since_timestamp is None:
-                self.idle_since_timestamp = current_timestamp
-                return {
-                    "action": "HOLD_COOLDOWN",
-                    "current_replicas": self.current_replicas,
-                    "desired_replicas": desired,
-                    "seconds_in_cooldown": 0,
-                    "reason": "Queue cleared; waiting for stabilization window"
-                }
-                
-            elapsed_cooldown = current_timestamp - self.idle_since_timestamp
-            if elapsed_cooldown >= self.cooldown_sec:
-                old_replicas = self.current_replicas
-                self.current_replicas = desired
-                self.idle_since_timestamp = None
-                return {
-                    "action": "SCALE_DOWN",
-                    "old_replicas": old_replicas,
-                    "new_replicas": desired,
-                    "reason": f"Cooldown window ({self.cooldown_sec}s) expired cleanly"
-                }
-            else:
-                return {
-                    "action": "HOLD_COOLDOWN",
-                    "current_replicas": self.current_replicas,
-                    "desired_replicas": desired,
-                    "seconds_in_cooldown": round(elapsed_cooldown, 1),
-                    "reason": f"Stabilization active ({round(self.cooldown_sec - elapsed_cooldown, 1)}s remaining)"
-                }
-                
-        return {"action": "NO_CHANGE", "current_replicas": self.current_replicas}
-
-if __name__ == "__main__":
-    engine = GPUAutoscalingDecisionEngine(min_replicas=1, max_replicas=8, target_waiting_per_pod=5, scale_down_cooldown_seconds=10)
-    
-    print("Spike:", engine.calculate_desired_replicas(waiting_requests=22, current_timestamp=100.0))
-    print("Immediate Drop:", engine.calculate_desired_replicas(waiting_requests=0, current_timestamp=102.0))
-    print("Cooldown 5s:", engine.calculate_desired_replicas(waiting_requests=0, current_timestamp=107.0))
-    print("Cooldown Expired 12s:", engine.calculate_desired_replicas(waiting_requests=0, current_timestamp=115.0))
-```
-
-## Production Architecture Case Study: KEDA ScaledObject Production Configuration
-
-Consider a multi-tenant enterprise LLM deployment on Kubernetes running vLLM with Prometheus and KEDA.
-
-```yaml
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: vllm-llama3-autoscaler
-  namespace: llm-serving
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: vllm-llama3-70b
-  minReplicaCount: 1
-  maxReplicaCount: 12
-  cooldownPeriod: 300
-  pollingInterval: 5
-  advanced:
-    horizontalPodAutoscalerConfig:
-      behavior:
-        scaleUp:
-          stabilizationWindowSeconds: 0
-          policies:
-          - type: Percent
-            value: 100
-            periodSeconds: 15
-        scaleDown:
-          stabilizationWindowSeconds: 300
-          policies:
-          - type: Pods
-            value: 1
-            periodSeconds: 60
-  triggers:
-  - type: prometheus
-    metadata:
-      serverAddress: http://prometheus-k8s.monitoring:9090
-      metricName: vllm_num_requests_waiting
-      query: sum(vllm:num_requests_waiting{namespace="llm-serving"})
-      threshold: '5'
-```
-
-### 1. Over-Provisioning Warm Buffer via Pause Pods
-To absorb instantaneous micro-bursts before Karpenter boots new physical GPU nodes, production clusters run low-priority "Pause Pods" (`priorityClassName: low-priority`) claiming 2 standby GPUs. When real high-priority LLM pods scale up, Kubernetes immediately evicts the pause pods, allocating warm GPUs in under 2 seconds.
-
-## Detailed Failure Mode Taxonomy: Autoscaling Vulnerabilities
+The measured output from today's lab. One stack — `postgres`, `qdrant`, `api`, `worker` — wired two ways:
 
 ```text
-+-------------------------------------------------------------------------------+
-|                        AUTOSCALING FAILURE TAXONOMY                           |
-+-------------------+-----------------------+-----------------------------------+
-| Failure Mode      | Root Cause Analysis   | Architectural Mitigation          |
-+-------------------+-----------------------+-----------------------------------+
-| Metric Scrape     | Prometheus crashes or | Fallback to active concurrency    |
-| Blackout          | network timeout occurs| HPA rule; maintain last known rep |
-| Scale-Down        | 30s spike followed by | Configure 300s scale-down         |
-| Thrashing         | 30s lull deletes pods | stabilization window in HPA       |
-| Cloud Quota       | Autoscaler requests 10| Set hard maxReplica limits and    |
-| Exhaustion        | GPUs but quota is 4   | monitor cloud vCPU/GPU quota limits|
-| Cold-Start Queue  | New pod takes 3 mins  | Pre-warm model weights on NVMe and|
-| Collapse          | to load model weights | use warm pause pod buffers        |
-+-------------------+-----------------------+-----------------------------------+
+--- depends_on with no condition ---
+  start order  postgres -> qdrant -> api -> worker
+  usable at    api 1.2s  postgres 4.4s  qdrant 2.3s  worker 1.2s
+  [starts-before-ready] api    starts 4.0s before 'postgres' can answer
+  [starts-before-ready] api    starts 1.9s before 'qdrant' can answer
+  [starts-before-ready] worker starts 3.8s before 'postgres' can answer
+  [starts-before-ready] worker starts 0.6s before 'api' can answer
 ```
 
+The start *order* is correct. Postgres does start before the api. That is the trap — the ordering looks right and means nothing, because ordering the creation of containers is not ordering their availability.
 
-
-## Deep Architectural Breakdown: KEDA Custom Scaler Mechanics and Karpenter Node Provisioning
-
-Autoscaling GPU workloads requires coordinated control loops across multiple infrastructure layers:
-
-### 1. The Multi-Tier Autoscaling Control Loop
-Production GPU clusters operate two decoupled scaling loops:
-- **Tier 1 (Pod Autoscaling - KEDA/HPA):** Evaluates Prometheus custom metrics every 5 seconds. If `vllm:num_requests_waiting` exceeds 5 per pod, KEDA updates the Deployment replica count from 2 to 8.
-- **Tier 2 (Node Autoscaling - Karpenter):** Monitors the Kubernetes API server for pods in `Pending` state with `nvidia.com/gpu: 1` resource requests. Karpenter evaluates cloud spot availability, provisions 3x `g5.12xlarge` instances via AWS EC2 Fleet API, and binds the pods within 45 seconds.
-
-### 2. Over-Provisioning and Warm Buffering Strategy
-Because booting a physical cloud GPU node takes 45–60 seconds, sudden traffic spikes can cause queue buildup. Production clusters deploy **Warm Buffers**:
-- Low-priority "Pause Pods" reserve 2 warm GPUs in the cluster.
-- When real inference pods scale up, Kubernetes evicts the low-priority pause pods instantly.
-- Inference pods schedule on the warm GPUs in < 2 seconds, while Karpenter boots replacement nodes in the background.
+Look at the fourth finding especially: the worker starts before the api can answer, and the api itself started before Postgres could answer. Nothing in the chain waits for anything real, so the error compounds downward.
 
 ```text
-+-------------------------------------------------------------------------------+
-|                    AUTOSCALING DYNAMICS TIMELINE (BURST EVENT)                |
-+-------+-----------------------------------------------------------------------+
-| T+00s | Traffic surges: 50 new requests arrive; waiting queue hits 35.        |
-| T+05s | Prometheus scrapes metrics; KEDA computes desired replicas = 8.       |
-| T+07s | HPA creates 6 Pending pods; 2 pods claim warm Pause Pod GPUs instantly.|
-| T+10s | Karpenter detects 4 remaining Pending pods; dispatches cloud API call.|
-| T+48s | 2 new GPU nodes join cluster; remaining 4 pods initialize.            |
-| T+52s | Waiting queue fully drained; cluster operates at steady state.        |
-+-------+-----------------------------------------------------------------------+
+--- depends_on: service_healthy ---
+  usable at    api 5.2s  postgres 4.4s  qdrant 2.3s  worker 5.8s
+  no findings
 ```
+
+The api is now usable at 5.2s instead of 1.2s. **Four seconds slower, and it works.** The first number was never a measurement of when the stack was usable; it was a measurement of when the container existed.
+
+And the file that cannot start at all:
+
+```text
+  cannot start: dependency cycle: api -> worker -> api
+  [undefined-dependency] ghost depends on 'nowhere'
+  [port-conflict] host port 8000 is claimed by 2 services: api, worker
+```
+
+Note that the cycle **suppresses** the timing findings. With no valid start order, "starts too early" is not a meaningful claim, and reporting warnings derived from an impossible ordering would be noise on top of a fatal error.
 
 ## Implications: security, privacy, performance, scalability, and cost
 
-### 1. Cloud GPU Quotas and Multi-AZ Distribution
-Configure Karpenter to distribute GPU instance requests across multiple cloud availability zones (e.g. `us-east-1a`, `us-east-1b`, `us-east-1c`) to prevent instance capacity starvation in any single datacenter zone.
+**Security.** `ports:` binds on the host. On a cloud VM with a permissive security group, `ports: ["5432:5432"]` on Postgres means the internet can reach your database. Services on the Compose network already reach each other by name, so a published port is a deliberate decision about outside traffic, not a prerequisite for internal traffic. `127.0.0.1:5432:5432` binds loopback only, which is what local debugging actually wants.
 
-### 2. Graceful Connection Draining on Scale-Down
-When Kubernetes terminates a GPU replica, the pod must enter a `PreStop` lifecycle hook that stops accepting new HTTP connections and waits for active streaming decode requests to complete cleanly before releasing VRAM.
+**Secrets.** `environment:` values live in the file, and the file lives in Git. Use `env_file:` with the file gitignored, or Docker secrets. A committed `POSTGRES_PASSWORD` is the most common finding in any first review of a Compose stack.
+
+**Availability.** A service that starts before its dependency is ready does not fail quietly. It retries, and if the retry has no backoff it hammers the dependency exactly while that dependency is trying to come up — turning a slow start into a failed one.
+
+**Performance.** Compose adds nothing at run time; the containers are ordinary containers. What it affects is startup, and only through ordering.
+
+**Scalability and cost.** `deploy.replicas` on a single host shares that host's CPU and memory. It is not horizontal scaling; it is concurrency on one machine, with one machine's failure domain.
 
 ## Alternatives: free, open source, and commercial
 
-| Tool / Framework | Type | Best Suited For | Key Capabilities |
-| :--- | :--- | :--- | :--- |
-| **KEDA** | Open Source (CNCF) | Event-Driven Kubernetes Scaling | Prometheus, RabbitMQ, SQS triggers |
-| **Karpenter** | Open Source | Fast Node Provisioning | Launches GPU nodes in < 45 seconds |
-| **Ray Serve** | Open Source | Distributed Python Serving | Native actor autoscaling & queuing |
-| **RunPod / Modal** | Commercial Cloud | Serverless GPU Scaling | Fast cold-start scale-to-zero |
+**Docker Compose** — Apache-2.0, the default, and the right answer for local development. Compose V2 is a Docker CLI plugin rather than a separate Python tool.
+
+**Podman Compose / `podman kube play`** — daemonless and rootless. `podman-compose` reads Compose files; `podman kube play` reads Kubernetes YAML, which makes it a useful stepping stone toward tomorrow.
+
+**Kubernetes with kind or minikube** — a real orchestrator locally. Much heavier, and worth it when local and production should be the same shape.
+
+**Tilt and Skaffold** — development loops on top of Kubernetes, with file watching and live reload. They solve the iteration problem Compose solves, against a cluster.
+
+**Dev Containers** — the VS Code specification, which uses Compose underneath for multi-service setups. A different interface to the same mechanism.
+
+**Managed local stacks** — Supabase CLI, LocalStack and similar ship a curated Compose file for a specific dependency set. Convenient, and worth reading rather than only running.
+
+The honest default: Compose for local development, with `service_healthy` conditions and real healthchecks, and a different tool for production.
 
 ## Comparison with related concepts
 
-```text
-+-----------------------+-----------------------+-----------------------+
-| Dimension             | Standard CPU HPA      | KEDA GPU Queue Depth  |
-+-----------------------+-----------------------+-----------------------+
-| Scaling Metric        | CPU % / Memory %      | `num_requests_waiting`|
-| Reaction to 1 Stream  | Scales up unnecessarily| Remains at 1 Replica |
-| Reaction to 50 Queued | Might not scale (10% CPU)| Instantly Scales Up |
-| Stabilization Window  | Symmetric 30s         | Asymmetric (0s Up/300s Down)|
-+-----------------------+-----------------------+-----------------------+
-```
+**Compose versus Kubernetes.** Compose describes a topology on one host; Kubernetes schedules across many and keeps them running. Compose's `depends_on` is a startup ordering; Kubernetes has no equivalent, because it assumes services fail and recover continuously and expects clients to retry.
+
+**`depends_on` versus a healthcheck.** They are two halves of one mechanism. The condition says what to wait for; the healthcheck is what makes the answer meaningful. `service_healthy` on a service with no healthcheck can never be satisfied — which is why the lab reports it.
+
+**`ports` versus `expose` versus nothing.** `ports` binds on the host; `expose` documents intent; nothing at all is sufficient for service-to-service traffic. Most services need the third.
+
+**Healthcheck versus liveness.** A healthcheck that returns 200 whenever the process is alive duplicates what the runtime already knows. A useful one verifies the thing a dependant is about to rely on — that the database accepts connections, that the model is loaded.
 
 ## When to use it — and when not to
 
-### Deploy KEDA Queue Depth Autoscaling for:
-- All production GPU inference services, multi-model endpoints, and high-concurrency enterprise chatbots.
+**Use it for local development of anything with more than one process.** This is its home ground and it is very good at it.
 
-### Do NOT require complex KEDA Prometheus scalers for:
-- Fixed-capacity internal development environments or single-batch offline pipelines.
+**Use it in CI** to stand up dependencies for integration tests — and note that CI is exactly where the missing condition bites, because everything starts cold.
 
+**Use it for a small single-host deployment** where downtime during a restart is acceptable. A hobby project, an internal tool.
 
-### Production Checklist: GPU Autoscaling & KEDA SRE Standards
-- [ ] KEDA ScaledObject configured with `vllm:num_requests_waiting` Prometheus trigger (threshold: 5).
-- [ ] Scale-up stabilization window set to 0s (instant reaction to traffic spikes).
-- [ ] Scale-down stabilization window set to 300s (5-minute cooldown preventing pod thrashing).
-- [ ] Pod Disruption Budgets (PDB) configured with `minAvailable: 1` to prevent complete cluster drain.
-- [ ] Karpenter configured with multi-AZ fallbacks and Spot instance interruption handlers.
-- [ ] Over-provisioning warm buffer pods deployed to absorb instantaneous traffic bursts.
+**Do not use it where uptime matters.** One host, one failure domain, no rescheduling.
+
+**Do not use `deploy.replicas` and believe you have scaled.** You have several copies on one machine.
+
+**Do not publish a port you do not need published.** The internal network is already there.
 
 ## Knowledge check
 
-1. **Why is GPU utilization percentage ineffective for autoscaling LLMs?** Because a single active stream pegs GPU utilization at 100% while VRAM capacity is still available, and it reads 100% even when 50 requests are backed up.
-2. **What metric is the gold standard for LLM autoscaling?** Inference server waiting queue depth (`num_requests_waiting`) and active concurrent streams.
-3. **What is the purpose of an asymmetric stabilization window?** To allow instantaneous scale-up on traffic bursts while requiring a sustained cooldown period (e.g. 300s) before terminating expensive GPU replicas to prevent thrashing.
+1. Why is the correctly wired stack in the lab *slower* to report ready, and why is that the better number?
+2. Why do `8000:8080` and `8001:8080` not conflict when both containers listen on 8080?
+3. Why does a dependency cycle suppress the "starts before ready" findings rather than being reported alongside them?
+4. `condition: service_healthy` on a service that defines no healthcheck — what happens, and why does the lab treat it as an error?
+5. Why does publishing a database port not help the API reach it?
 
 ## Hands-on exercise
 
-In this lab, you will build a **GPU Autoscaling Decision Engine in Python**. Your implementation will:
-1. Calculate target replica counts dynamically based on waiting request queue depth.
-2. Execute immediate scale-up actions when queue backlogs exceed capacity thresholds.
-3. Enforce scale-down cooldown stabilization timers before reducing replica counts.
-4. Enforce minimum and maximum replica guardrails.
+You will build the graph checks — cycles, ports, ordering, readiness — and measure what a dependency condition changes.
+
+Open `starter/compose_graph.py` in the lab directory and implement the stubbed functions, then run the tests. Docker Compose is not required.
 
 ### Expected output
 
+Running `python3 examples/compose_demo.py` wires one stack two ways:
+
 ```text
-============================= test session starts ==============================
-collected 5 items
-
-tests/test_gpu_autoscaling.py .....                                      [100%]
-
-============================== 5 passed in 0.02s ===============================
-[AUTOSCALING] Initialized engine (min=1, max=10, target=5 reqs/pod).
-[SCALE UP] Immediate scale-up from 1 to 5 replicas on 22 waiting requests.
-[COOLDOWN] Entered 300s stabilization window on zero waiting requests.
-[SCALE DOWN] Scaled down from 5 to 1 replica after cooldown expired.
+--- what the condition changed ---
+  api usable at    1.2s  ->  5.2s
+  worker usable at 1.2s  ->  5.8s
+  premature starts 4  ->  0
 ```
+
+The numbers get worse and the stack starts working. That is the lesson.
 
 ### Validate your work
 
-Run the pytest test suite:
+Run `bash tests/run_tests.sh`. All twenty-six tests must pass.
 
-```bash
-pytest tests/run_tests.sh
-```
+Then check three things by inspection. Under `service_started`, the api must be usable **before** postgres is — if the two wirings behave identically, `ready_times` is treating `service_started` as though it waited for readiness, and the whole comparison collapses. A three-service cycle must be reported once rather than three times. And a cycle must suppress the timing findings, because there is no order to reason about.
 
 ### Troubleshooting
 
-1. **Ceiling formula:** Use `math.ceil(waiting / target_per_pod)` to allocate sufficient capacity.
-2. **Timestamp tracking:** Ensure `idle_since_timestamp` resets to `None` whenever scale-up occurs.
+**A cycle is reported once per member.** Rotate each cycle to start at its smallest name and keep a set of what you have emitted.
+
+**`startup_order` loops forever.** Check for a cycle first and raise.
+
+**The two wirings behave identically.** Under `service_started` a dependant may begin at `ready_times[dep] - dep.ready_seconds`, not at `ready_times[dep]`.
+
+**`healthy-without-healthcheck` never fires.** The check is about the target of the dependency, not the service declaring it.
 
 ### Common mistakes
 
-- Scaling down immediately when waiting requests reach zero, violating the cooldown window.
+Comparing container ports rather than host ports, so nothing ever conflicts.
+
+Treating a self-dependency as acceptable; Compose will not start such a file.
+
+Letting an undefined dependency block the start order — it is a separate finding, and the service is not waiting on anything real.
+
+"Fixing" the correct stack to be as fast as the naive one, which optimises away the entire point.
 
 ## Practice assignment
 
-Add a **Step-Down Rate Limiter** ensuring no more than 1 replica is removed per minute during scale-down.
+Add **restart policies and client retry** to the model, then answer the question the lesson raises but does not settle: if the client retries with backoff, is `service_healthy` still necessary?
+
+Model a service that retries three times with exponential backoff, count the failed requests during startup under each of the four combinations (condition or not, retry or not), and write a test pinning the result. The answer is more interesting than a flat yes or no — retry recovers, and it recovers *after* emitting errors that will page someone, while the condition prevents them being emitted at all.
 
 ## Extension challenge
 
-Implement a **Predictive Autoscaler** using historical hourly traffic distributions to pre-scale GPU replicas 10 minutes ahead of scheduled morning surges.
+Point this at a **real `docker-compose.yml`** you already operate.
+
+Parse it with `yaml.safe_load`, build the `Service` graph — `depends_on` appears in both a list form and a mapping form with conditions, so handle both — and run the review over it.
+
+Then do the part that is uncomfortable: for every `starts-before-ready` finding, work out whether it has ever caused a failure you attributed to something else. Flaky integration tests, a service that needs a restart after `compose up`, an error in the logs at boot that "always looks like that". Startup ordering bugs are rarely filed as startup ordering bugs, which is exactly why they survive so long.

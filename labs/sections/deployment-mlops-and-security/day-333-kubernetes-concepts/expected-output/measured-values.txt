@@ -1,2 +1,55 @@
-tensors_quantized=4
-compression_ratio=8.0
+Measured on macOS 26.5.1 (Apple Silicon), Python 3.14.0, pytest 9.1.1.
+
+  python3 examples/reconcile_demo.py -> 22 lines, exit 0
+  bash tests/run_tests.sh            -> 19 passed in 0.01s
+  the untouched starter              -> 18 failed, 1 passed in 0.06s
+
+One deployment, one loop, four situations.
+
+  1. first deploy      converged in 2 steps  -> 3 alive, 3 serving
+  2. a node dies       delete api-001, create api-004  -> converged in 1 more step
+  3. a manual delete   create api-005                  -> converged in 1 more step
+  4. a rolling update  completed in 5 steps, every pod on app:1.5
+
+The thing worth noticing is that scenarios 2 and 3 produce the SAME behaviour.
+A node failure and somebody running `kubectl delete pod` are indistinguishable
+to the loop, because the loop does not ask how the gap appeared. It compares
+what was declared against what exists and takes one step.
+
+That is why `kubectl delete pod` is not a destructive operation, and it is the
+single idea the day is about.
+
+The first deploy takes 2 steps rather than 1 because a pod needs one tick to
+move from Pending to Running and another to pass its readiness probe. After
+step 1 there are 3 alive and 0 serving. The spec is satisfied and a Service
+would route to nothing.
+
+The rollout, step by step:
+
+  step 1: 3 actions  4 alive, 2 serving   two 1.4 pods, two 1.5 pods
+  step 2: 0 actions  4 alive, 4 serving   waiting for the new pods to be ready
+  step 3: 3 actions  3 alive, 2 serving
+  step 4: 0 actions  3 alive, 3 serving   waiting again
+  step 5: complete
+
+Step 2 is the instructive one. Zero actions, and the rollout is NOT finished.
+The controller has replaced as many pods as maxUnavailable allows and may not
+retire another until the replacements are serving. An earlier version of the
+demo treated "no actions" as "rollout complete" and reported success while two
+pods were still on the old image -- which is why rollout_done exists as a
+separate question.
+
+The guarantee, measured:
+
+  serving during rollout: [2, 4, 2, 3]   minimum 2
+  replicas 3, max_unavailable 1  ->  floor of 2
+
+The observed minimum is exactly the floor. The budget is fully used and never
+exceeded, and the 4 in the middle is maxSurge permitting one extra pod so the
+rollout can make progress without dipping below it.
+
+One implementation note. New pods must be scheduled onto a LIVE node. An
+earlier version placed replacements on the default node, which was the node
+that had just died, so the loop reaped them and recreated them forever and
+converge raised. That is a real failure mode when a scheduler's node filter is
+wrong, and test_replacements_are_not_scheduled_onto_a_dead_node pins it.

@@ -1,2 +1,50 @@
-scaling_events=8
-cooldown_holds=4
+Measured on macOS 26.5.1 (Apple Silicon), Python 3.14.0, pytest 9.1.1.
+
+  python3 examples/compose_demo.py -> 28 lines, exit 0
+  bash tests/run_tests.sh          -> 26 passed in 0.01s
+  the untouched starter            -> 26 failed in 0.08s
+
+One AI stack -- postgres, qdrant, api, worker -- wired two ways. The only
+difference is the depends_on condition and the presence of healthchecks.
+
+  depends_on with no condition   api usable 1.2s   worker usable 1.2s   4 premature starts
+  depends_on: service_healthy    api usable 5.2s   worker usable 5.8s   0 premature starts
+
+The naive stack is FASTER and wrong. Read it against the dependency:
+
+  api      usable at 1.2s
+  postgres usable at 4.4s
+
+The api reports itself up three and a bit seconds before the database it
+queries can accept a connection. Its first query fails. On a laptop, where
+postgres is warm and the page cache is full, it usually does not; in CI, where
+everything is cold, it usually does. That is the worst possible failure
+distribution -- it passes where you look and fails where you do not.
+
+The four premature starts, in full:
+
+  api    starts 4.0s before 'postgres' can answer
+  api    starts 1.9s before 'qdrant' can answer
+  worker starts 3.8s before 'postgres' can answer
+  worker starts 0.6s before 'api' can answer
+
+Note the last one. The worker waits for the api, the api waits for postgres,
+and none of the waiting means anything, so the error compounds down the chain.
+
+The broken file, which cannot start at all:
+
+  cannot start: dependency cycle: api -> worker -> api
+  undefined-dependency  ghost depends on 'nowhere'
+  port-conflict         host port 8000 claimed by api and worker
+
+Note that the cycle SUPPRESSES the timing findings. There is no start order, so
+"starts too early" is not a meaningful claim, and ready_times would raise.
+Reporting a fatal error and a set of warnings derived from an impossible
+ordering would be noise.
+
+One implementation note. Under service_started a dependant may begin as soon as
+the dependency's CONTAINER exists, which is ready_times[dep] minus that
+service's ready_seconds -- not ready_times[dep]. An earlier version used the
+latter and the two stacks behaved identically, which quietly destroyed the
+entire comparison. test_service_started_does_not_wait_for_the_dependency_to_be_usable
+pins it.

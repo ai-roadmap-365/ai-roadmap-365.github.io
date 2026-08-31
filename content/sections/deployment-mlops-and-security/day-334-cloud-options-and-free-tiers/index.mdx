@@ -1,366 +1,283 @@
 ---
 day: 334
-title: "Cloud Options and Free Tiers"
+title: 'Cloud Options and Free Tiers'
 ---
 
 ## Why this matters
 
-In production LLM serving, generating long responses is severely constrained by **Memory Bandwidth**:
-- Auto-regressive decoding loads all billions of model parameters from GPU memory for **every single generated token**, capping generation speeds at 30–50 tokens/second on a 70B parameter model.
-- Multi-turn chat applications repeatedly re-compute the identical 1,500-token system prompt and conversation history on every user turn, wasting 90% of GPU compute in redundant prefill passes.
-- Long-context RAG transcripts cause the KV cache to swell linearly, triggering Out-of-Memory (OOM) crashes on 32k+ token sequences.
+You have a container and you know how to orchestrate it. The remaining question is where it runs and what that costs, and the honest answer is that the cheapest option today is frequently the wrong one, because "cheapest" changes with traffic and the crossover arrives sooner than anyone expects.
 
-Deploying **Speculative Decoding, Radix Tree Prefix Caching, and StreamingLLM Attention Sinks** breaks the memory bandwidth ceiling, achieving **2x to 3x token generation speedups** without sacrificing a single point of mathematical accuracy.
+Here is the measurement from today's lab, on one small AI endpoint:
 
-![Speculative Decoding Propose and Verify Cycle showing 1B Draft Model proposing K=4 tokens, 70B Target Model verifying all 4 in 1 parallel forward pass, accepting 3 tokens and sampling 1 bonus token](./assets/speculative-decoding-propose-and-verify-cycle.svg)
+```text
+launch (20k/mo)      serverless $0.00     small-vm $7.79
+1000x (20M/mo)       serverless $295.88   small-vm $90.77
+```
+
+Free against $7.79 at launch. Three times more expensive at scale. The ranking changes at **899,599 requests a month**, which is a small service — a few thousand users being mildly enthusiastic.
+
+And the free tier itself is not where the marketing says. It advertises two million free requests, a hundred times this workload's traffic. It ends at **1.25x**, because the egress allowance is a single gigabyte. The advertised constraint and the binding constraint differ by a factor of eighty, and no pricing page prints the second one.
+
+That is the shape of nearly every free tier: generous on the dimension in the headline, tight on one that is not.
+
+![Where the Free Tier Actually Ends showing four allowances with egress binding at 1.25x while requests would last 100x](./assets/where-the-free-tier-ends.svg)
 
 ## The idea in plain language
 
-Think of speculative decoding like **a senior partner lawyer working with an eager junior associate**:
+Four things decide a hosting bill, and only the first appears on the front page.
 
-- **The Junior Associate (Draft Model):** Quickly drafts the next 4 paragraphs of a legal contract in 5 minutes (**Fast 1B Draft Model**). The draft is mostly correct, but might miss subtle edge cases.
-- **The Senior Partner (Target Model):** In a single 2-minute review (**1 Parallel Target Forward Pass**), the senior partner reads all 4 paragraphs simultaneously:
-  - Paragraphs 1, 2, and 3 are flawless -> **Accepted!**
-  - Paragraph 4 has a typo -> The partner corrects it immediately and writes the next word.
-- **The Outcome:** The firm produced 4 finished paragraphs in 7 minutes instead of the 20 minutes it would have taken the senior partner to write from scratch (**2.8x Speedup**), with 100% senior-level legal quality.
+**Compute**, billed one of two ways. An **always-on** option — a VM — bills by the hour whether or not anyone is using it. A **per-request** option bills for compute actually consumed and costs *nothing* at zero traffic. That difference is the whole decision, because it means the ranking is a function of traffic rather than a fixed preference.
+
+**Egress**, per gigabyte leaving the provider. This is the line that surprises people. At scale it frequently exceeds compute, and free tiers rarely include much of it.
+
+**Idle**, which is not a line item but a property. A VM at 3am with no users costs exactly what it costs at noon. Scale-to-zero is the only thing that makes idle free, and it is why serverless wins so decisively at launch.
+
+**Storage**, small and steady and forgotten entirely until someone reads a bill line by line.
+
+The useful question is not "which is cheapest". It is **"at what traffic does the ranking change"** — and, for a free tier, **"which allowance runs out first"**. Both are computable from published rate cards with arithmetic, which is what today's lab does.
 
 ## Historical background
 
-Inference acceleration techniques evolved across three major paradigms:
+### Hourly billing, EC2 2006
 
-### 1. Model Distillation & Pruning (2020–2022)
-Engineers trained smaller distilled models (DistilBERT). However, smaller standalone models suffered from noticeable degradation in complex reasoning and factual accuracy.
+Amazon's original insight was renting a machine by the hour rather than the year. Utility pricing turned a capital purchase into an operating cost, and made a startup's infrastructure spend proportional to its ambition rather than its funding round.
 
-### 2. Speculative Sampling Formulations (2023)
-Google Research (Leviathan et al.) and DeepMind (Chen et al.) independently formulated Speculative Decoding in 2023, proving that modified rejection sampling guarantees exact mathematical equivalence to sampling directly from the target model.
+### Per-second billing, 2017
 
-### 3. RadixAttention & Attention Sinks (2024–Present)
-SGLang introduced Radix Tree prefix caching for sub-millisecond multi-turn KV lookup. MIT published StreamingLLM, demonstrating that preserving the first 4 "attention sink" tokens enables infinite-length stream generation in fixed VRAM.
+Providers moved from hourly to per-second granularity within months of each other. It mattered most for short-lived and bursty workloads, and it was the pricing change that made autoscaling economically sensible rather than merely possible.
+
+### Scale-to-zero, AWS Lambda 2014 onward
+
+The genuinely new idea: pay nothing when nothing is happening. For a service with uneven traffic — which describes most AI side projects and a great many internal tools — this is a categorical change rather than a discount.
+
+### Egress pricing, and the pressure on it
+
+Egress has been priced far above its marginal cost for two decades, and it is the primary mechanism of cloud lock-in: moving data out is expensive by design. Cloudflare's R2 launched with zero egress in 2021, the EU's Data Act obliged providers to remove switching charges, and in 2024 the major providers began waiving egress for customers leaving entirely. The pricing is under pressure and has not collapsed.
+
+### The free tier as an acquisition channel
+
+Free tiers are marketing with a budget, and they are shaped accordingly: generous where a developer will notice, tight where a growing service will hit them. Understanding that is not cynicism, it is how to read the offer accurately.
 
 ## What it is — and what it is not
 
-Let us define the core mechanisms of inference acceleration:
+Choosing a hosting option is a cost, capacity and blast-radius decision made under uncertainty about growth.
 
-### What Speculative Decoding & Prefix Caching Are:
-- Proposing `K` draft tokens from a compact model and verifying them in parallel within a single target forward pass.
-- Using modified rejection sampling to ensure zero degradation in output probability distributions.
-- Indexing computed KV caches in a Radix Tree to reuse tensors across common system prompts.
-- Retaining initial attention sinks and sliding-window tokens for bounded memory streaming.
+### What it is
 
-### What Speculative Decoding & Prefix Caching Are Not:
-- Approximating or degrading the target model's answers (The output is mathematically indistinguishable from raw target generation).
-- Recomputing the entire prompt prefix on every conversational turn.
+It is **traffic-dependent**. Any answer that does not name a traffic level is incomplete.
 
-```text
-+-------------------------------------------------------------------------------+
-|                    INFERENCE ACCELERATION TECHNIQUES MATRIX                   |
-+-------------------+-----------------------+-------------------+---------------+
-| Technique         | Core Mechanism        | Speedup / Benefit | Quality Impact|
-+-------------------+-----------------------+-------------------+---------------+
-| Speculative       | 1B Draft Model + 70B  | 2.0x - 3.2x faster| 0% Loss (Exact|
-| Decoding          | Target Verification   | token decode      | distribution) |
-| Radix Tree Prefix | Reuses shared prompt  | Sub-10ms TTFT for | 0% Loss       |
-| Caching (APC)     | KV cache in VRAM      | multi-turn chat   | (Deterministic|
-| StreamingLLM      | Retains 4 sink tokens | Bounded O(1) VRAM | Minimal PPL   |
-| (Attention Sinks) | + sliding window      | on infinite text  | delta on stream|
-| Medusa Multi-Head | Multiple draft heads  | 2.2x speedup with | Near-lossless |
-| Decoding          | on single target model| zero extra draft  |               |
-+-------------------+-----------------------+-------------------+---------------+
-```
+It is **reversible, at a price**. Moving is work, and egress charges make moving data the expensive part.
+
+It is **a decision with a horizon**. Cheapest for the next three months and cheapest for the next three years are frequently different options.
+
+### What it is not
+
+It is not a permanent commitment. The crossover analysis exists so you can plan the move rather than be surprised by it.
+
+It is not decided by price alone. A cheap option that cannot serve your load is not cheap, which is why today's model is explicit about what it does not check.
+
+It is not a free tier's headline number. That is the one dimension chosen to be generous.
 
 ## Why it was created and what problems it solves
 
-Inference acceleration resolves the three primary physical bottlenecks of LLM serving:
+**Capital expenditure for uncertain demand.** *Solution: rent by the hour.*
 
-### 1. Breaking the Auto-Regressive Memory Bandwidth Limit
-Because modern GPUs have immense parallel compute capacity (FLOPS) but limited memory bandwidth, running 4 draft tokens through a target model takes virtually the same time as running 1 token. Speculative decoding exploits this idle parallel compute.
+**Paying for idle capacity overnight.** *Solution: scale-to-zero billing.*
 
-### 2. Eliminating Multi-Turn Prompt Recomputation
-In multi-turn chat, 80% of prompt tokens are identical across turns. Radix Tree prefix caching reuses the computed KV tensors, dropping Time-to-First-Token from 450ms to 18ms.
+**Bills that arrive as a single number.** *Solution: separate compute, egress and storage, because they scale differently and only one of them is on the front page.*
 
-### 3. Preventing Infinite-Stream VRAM Crashes
-StreamingLLM prevents out-of-memory crashes during 100k-token live agent loops by evicting middle tokens while preserving initial attention sinks.
+**Free tiers that end without warning.** *Solution: compute headroom per dimension and find the binding constraint before you deploy.*
+
+**Choosing a host once and discovering the mistake at scale.** *Solution: find the crossover, and treat it as a planned migration rather than a surprise.*
+
+![Cheapest Today, Expensive Tomorrow showing serverless and a VM crossing over at forty-five times launch traffic](./assets/cheapest-today-expensive-tomorrow.svg)
 
 ## How it works
 
-Let us inspect the complete **Radix Tree Prompt Prefix Caching Hierarchy**:
+**Describe the workload**, not the machine: requests per month, seconds of compute each, bytes out each, gigabytes stored.
 
-```text
-[Radix Tree Root Node]
-  │ Content: System Prompt (1,500 tokens)
-  │ KV Blocks: [Physical Blocks 0 ➔ 93 in GPU VRAM]
-  │
-  ├── [Branch A: User Conversation 1]
-  │     │ Turn 1: "Write a python sorting script" (12 tokens)
-  │     │ KV Blocks: [Physical Blocks 94 ➔ 96]
-  │     │
-  │     └── Turn 2: "Now optimize it with Cython" (10 tokens)
-  │           │ Reuses Blocks 0-93 + 94-96 instantly!
-  │           │ TTFT = 14 ms (Only computes 10 new tokens)
-  │
-  └── [Branch B: User Conversation 2]
-        │ Turn 1: "Explain quantum entanglement" (15 tokens)
-        │ Reuses Blocks 0-93 from Root!
-        │ TTFT = 16 ms (Zero system prompt recomputation)
-```
+**Price compute according to the billing model.** Always-on is `hourly × 730` and ignores the workload entirely. Per-request is billed seconds plus billed requests, each after its own free allowance.
 
-![Radix Tree Prompt Prefix Caching Hierarchy showing Root System Prompt KV Cache shared across multiple child user chat branches with 0ms Prefill Recomputation](./assets/radix-tree-prompt-prefix-caching-hierarchy.svg)
+**Price egress**, deducting the free allowance, then multiplying the remainder.
+
+**Price storage**, the same way.
+
+**Compute headroom per dimension** — the free allowance divided by current usage. A dimension you do not use at all has infinite headroom.
+
+**Take the minimum.** The free tier ends when the *first* allowance runs out, not the advertised one. This single step is the difference between reading a pricing page and understanding it.
+
+**Bisect for the crossover.** Scale the workload and find where two options change places. `None` is a legitimate answer meaning the ordering never changes, which tells you the choice is insensitive to growth.
 
 ## An everyday analogy
 
-Think of speculative decoding and prefix caching like **predictive text autocomplete on your smartphone keyboard**:
+Think about a gym membership against paying per visit.
 
-- **Draft Model (Keyboard Autocomplete):** As you type, the phone predicts the next 3 words: *"see you tomorrow at"* (**Draft Tokens**).
-- **Target Model (Your Brain):** If the prediction matches your intent, you tap the spacebar once, accepting all 3 words in a fraction of a second (**Parallel Target Verification**).
-- **Prefix Caching (Saved Email Templates):** When starting a new email, your phone loads your standard signature and greeting instantly without retyping (**Prompt Prefix Caching**).
+Pay-per-visit costs nothing in a month you do not go. The membership costs the same whether you attend twenty times or none, including in August when you are away — that is the always-on VM at 3am.
+
+Nobody argues about which is *better*; they ask **how many visits a month makes the membership worth it**. That number is the crossover, and it is the only useful form the question takes.
+
+Now the free tier. The gym offers a free trial advertising *unlimited classes* — the headline, and genuinely generous. What it does not advertise is that the free trial includes two towels. You are a person who showers twice a visit. Your trial ends on towels, at a fraction of the class limit, and the leaflet does not mention towels at all.
+
+That is the egress allowance, exactly.
 
 ## Examples in practice
 
-Let us build a complete Python **Speculative Decoding and Prefix Cache Simulator** modeling draft token proposal, rejection sampling verification, acceptance rate calculation, and prefix tree matching:
-
-```python
-import random
-from typing import Dict, Any, List, Tuple
-
-class SpeculativeDecodingEngine:
-    def __init__(self, acceptance_probability_bias: float = 0.80):
-        self.alpha_bias = float(acceptance_probability_bias)
-        self.prefix_cache: Dict[str, str] = {}
-        
-    def register_prefix_cache(self, prefix_key: str, cached_kv_id: str):
-        self.prefix_cache[prefix_key] = cached_kv_id
-
-    def lookup_prefix(self, prompt: str) -> Tuple[bool, str]:
-        for k, v in self.prefix_cache.items():
-            if prompt.startswith(k):
-                return True, v
-        return False, "CACHE_MISS"
-
-    def execute_speculative_step(
-        self,
-        draft_tokens: List[str],
-        target_ground_truth: List[str]
-    ) -> Dict[str, Any]:
-        accepted = []
-        rejected_at_index = None
-        
-        # Verify draft tokens in parallel
-        for i, token in enumerate(draft_tokens):
-            # Target model verifies token matching ground truth distribution
-            if i < len(target_ground_truth) and token == target_ground_truth[i]:
-                accepted.append(token)
-            else:
-                rejected_at_index = i
-                # Sample bonus replacement token from target model
-                replacement = target_ground_truth[i] if i < len(target_ground_truth) else "<EOS>"
-                accepted.append(replacement)
-                break
-                
-        # If all draft tokens accepted, target emits 1 bonus token
-        if rejected_at_index is None and len(accepted) < len(target_ground_truth):
-            bonus_token = target_ground_truth[len(accepted)]
-            accepted.append(bonus_token)
-            
-        total_yield = len(accepted)
-        # Speculative speedup relative to 1 target forward pass
-        speedup = round(total_yield / 1.0, 2)
-        
-        return {
-            "draft_tokens": draft_tokens,
-            "emitted_tokens": accepted,
-            "accepted_count": len(accepted) - (1 if rejected_at_index is not None else 0),
-            "speedup_factor": speedup,
-            "rejected_index": rejected_at_index
-        }
-
-if __name__ == "__main__":
-    engine = SpeculativeDecodingEngine()
-    engine.register_prefix_cache("You are a helpful assistant", "kv_root_0")
-    
-    print("Prefix Match:", engine.lookup_prefix("You are a helpful assistant. Write a poem."))
-    
-    draft = ["the", "quick", "brown", "fox"]
-    truth = ["the", "quick", "brown", "dog", "jumped"]
-    
-    print("Speculative Step:", engine.execute_speculative_step(draft, truth))
-```
-
-## Production Architecture Case Study: SGLang High-Throughput Deployment
-
-Consider an enterprise coding copilot running SGLang with RadixAttention and speculative decoding on 4x NVIDIA H100 GPUs.
+The measured output from today's lab. One AI endpoint, four hosting options, three traffic levels:
 
 ```text
-+-------------------------------------------------------------------------------+
-|                    SGLANG ACCELERATION BENCHMARKS                             |
-+-------------------+-----------------------+-----------------------------------+
-| Serving Engine    | Multi-Turn TTFT (P95) | Decode Throughput (Tokens/Sec)    |
-+-------------------+-----------------------+-----------------------------------+
-| Standard vLLM     | 240 ms                | 48 tok/s per stream               |
-| vLLM + PrefixCache| 18 ms (92.5% Faster)  | 48 tok/s per stream               |
-| SGLang + SpecDec  | 14 ms                 | 134 tok/s per stream (2.8x Faster)|
-| (Llama-3.1-70B +  |                       |                                   |
-| Llama-3.2-1B Draft|                       |                                   |
-+-------------------+-----------------------+-----------------------------------+
+--- launch: 20,000 requests/month ---
+  serverless-free-tier   $     0.00   compute $  0.00  egress $  0.00  FREE
+  small-vm               $     7.79   compute $  7.59  egress $  0.00
+--- 1000x: 20,000,000 requests/month ---
+  serverless-free-tier   $   295.88   compute $194.88  egress $ 95.88
+  small-vm               $    90.77   compute $  7.59  egress $ 63.00
 ```
 
-### 1. SGLang CLI Production Command with Speculative Decoding
-```bash
-python3 -m sglang.launch_server   --model meta-llama/Meta-Llama-3.1-70B-Instruct   --speculative-draft meta-llama/Meta-Llama-3.2-1B-Instruct   --speculative-num-steps 5   --enable-radix-cache   --port 8000
-```
+Look at the VM's compute column: `$7.59` at both traffic levels. That is the definition of always-on billing, and it is why the VM wins at scale — its compute cost does not move.
 
-#### 2. Dynamic Speculative Step Sizing (`K`)
-Production engines dynamically adjust draft step count `K`:
-- For deterministic structured coding tasks (JSON, Python code), acceptance rate `lpha > 0.85`, so the engine expands `K=6`.
-- For creative storytelling tasks with high entropy (`lpha < 0.50`), the engine shrinks `K=2` to prevent wasted draft compute.
-
-## Detailed Failure Mode Taxonomy: Inference Acceleration Hazards
+Look at the egress column at 1000x: `$63.00` against `$7.59` of compute. **Egress is eight times compute**, on a service whose responses are forty kilobytes. Nobody chooses a host on egress and almost everybody should look at it.
 
 ```text
-+-------------------------------------------------------------------------------+
-|                      ACCELERATION FAILURE TAXONOMY                            |
-+-------------------+-----------------------+-----------------------------------+
-| Failure Mode      | Root Cause Analysis   | Architectural Mitigation          |
-+-------------------+-----------------------+-----------------------------------+
-| Negative SpecSpeed| Low acceptance rate   | Monitor rolling `lpha`; disable |
-| (Draft Overhead)  | (`lpha < 0.35`)     | speculative decoding when `lpha < 0.40`|
-| Tokenizer Vocab   | Draft & Target models | Use matching tokenizer families   |
-| Discrepancy       | use different vocabs  | (e.g. Llama-3.2-1B + Llama-3.1-70B)|
-| Radix Tree LRU    | GPU VRAM full; evicts | Pin global system prompt nodes    |
-| Eviction Storm    | hot system prompt     | with `pin_memory=True` in Radix   |
-| Attention Sink    | Sliding window evicts | Always pin first 4 tokens in      |
-| Catastrophe       | initial 4 sink tokens | streaming attention KV cache      |
-+-------------------+-----------------------+-----------------------------------+
+--- where the free tier ends, and why ---
+  serverless-free-tier   free until 1.30x  binds on egress-gb at 1.25x
+
+  the headline allowance is rarely the one that runs out first:
+      egress-gb          1.25x current load
+      storage-gb         2.50x current load
+      compute-seconds   22.50x current load
+      requests         100.00x current load
 ```
 
+This is the table worth carrying away. Two million free requests sounds enormous and *is* enormous — a hundred times current traffic. The tier ends at 1.25x on a dimension the marketing never mentions.
 
+```text
+--- where the ranking changes ---
+  serverless-free-tier stops beating small-vm at 45.0x (899,599 requests/month)
+    at that point: serverless $8.66 vs vm $8.67
+```
 
-## Deep Architectural Breakdown: Rejection Sampling Proof and Radix Tree Data Structures
+Under a million requests a month. If your service works at all, you will pass this, and the right response is not regret — it is to know the number in advance and treat the move as scheduled work.
 
-Speculative decoding relies on a mathematically rigorous proof of exact distribution preservation:
-
-### 1. Mathematical Proof of Lossless Speculative Sampling
-Let `q(x)` be the draft model probability distribution and `p(x)` be the target model distribution.
-For each proposed draft token `x_i`:
-- The token is accepted with probability:
-  `eta = \min\left(1, rac{p(x_i)}{q(x_i)}
-ight)`
-- If rejected, a replacement token is drawn from the adjusted residual distribution:
-  `p'(x) = rac{\max(0, p(x) - q(x))}{\sum_y \max(0, p(y) - q(y))}`
-- **Theorem:** The combined acceptance-rejection process samples from exact distribution `p(x)`:
-  `P(X = x) = q(x) \min\left(1, rac{p(x)}{q(x)}
-ight) + (1 - eta) p'(x) \equiv p(x)`
-  This guarantees 100% mathematical fidelity with zero hallucination penalty.
-
-### 2. Radix Tree Indexing for Automatic Prefix Caching (APC)
-Radix trees store common token strings along shared edge paths:
-- Each node in the tree corresponds to a sequence of tokens and points to a list of physical GPU VRAM block IDs.
-- When a new prompt arrives, the serving engine walks the Radix tree from the root, matching the longest common prefix.
-- The matching KV blocks are pinned in GPU memory, allowing the engine to skip the entire prefill phase for the prefix.
-- A Least-Recently-Used (LRU) eviction policy prunes leaf nodes when physical VRAM is needed for active decode streams.
+One honest note: the demo reports the tier free until 1.30x while the binding constraint is 1.25x. The gap is rounding — a fraction of a gigabyte of egress costs under a cent and displays as `$0.00`. The binding constraint is the figure to trust.
 
 ## Implications: security, privacy, performance, scalability, and cost
 
-### 1. Zero Loss Rejection Sampling
-Because speculative decoding uses exact probability ratio testing (`\min(1, p/q)`), the output distribution is mathematically identical to running the 70B target model alone, eliminating any quality degradation.
+**Security.** The risk of this day is not in the code, it is the account you create twenty minutes later. Enable MFA before anything else; create a budget alert before you deploy anything; and never leave a long-lived access key on a laptop. An account with a free tier and a card attached is an attractive target precisely because the attacker's spending is capped by your card rather than by the free allowance.
 
-### 2. Multi-Tenant Prefix Cache Isolation
-Never share Radix Tree branches between different authenticated tenants. Only public system prompts and documentation prefixes should be cached across user sessions.
+**Egress has a security dimension.** An attacker who can make your service return large responses is spending your egress budget, and rate limits usually count requests rather than bytes. If a response size can be influenced by input, cap the bytes too.
+
+**Privacy and jurisdiction.** Where the region is decides which law applies. This is a compliance question that looks like a dropdown, and it is much cheaper to answer before the data exists.
+
+**Performance.** Serverless platforms have cold starts, which for a model that must be loaded can be seconds rather than milliseconds. That is a latency decision the cost model says nothing about.
+
+**Capacity, which this model does not check.** The lab will happily quote a single 1 vCPU VM at $90.77 for twenty million requests a month, which that machine could not deliver. Cost is one input; capacity, reliability and blast radius are others.
 
 ## Alternatives: free, open source, and commercial
 
-| Tool / Framework | Type | Best Suited For | Key Capabilities |
-| :--- | :--- | :--- | :--- |
-| **SGLang** | Open Source | Complex Structured RAG | RadixAttention, speculative decoding |
-| **vLLM SpecDec** | Open Source | Production High-Concurrency | Draft model & Medusa speculative decoding |
-| **StreamingLLM** | Open Source | Infinite Live Streaming | Attention sink KV eviction in fixed VRAM |
-| **Medusa** | Open Source | Head-Based Speculation | Multi-head draft generation (zero draft model) |
+**Serverless containers** — Cloud Run, Fargate, Container Apps, Fly Machines. Scale to zero, per-request billing, no cluster. The right default for a stateless inference endpoint with uneven traffic.
+
+**Function platforms** — Lambda, Cloudflare Workers, Deno Deploy. Generous free tiers and tight limits on execution time and memory. Cloudflare's zero-egress pricing changes the arithmetic above materially.
+
+**A small VM** — Hetzner, DigitalOcean, Lightsail, or a cloud instance. Predictable, cheap past the crossover, and yours to maintain. k3s on one of these is a legitimate production architecture for a small service.
+
+**Managed Kubernetes** — GKE, EKS, AKS. Correct once you have several services and a team; expensive as a first deployment.
+
+**Hugging Face Spaces** — free CPU tiers, paid GPU. The shortest path from a model to a URL, and worth knowing for demos.
+
+**Self-hosting on hardware you own.** Zero marginal cost and all the operational burden. Sensible for a stable, known workload; a poor fit for anything spiky.
+
+The honest default for a new AI service: a serverless container with a budget alert, and the crossover written down so the migration is planned rather than discovered.
 
 ## Comparison with related concepts
 
-```text
-+-----------------------+-----------------------+-----------------------+
-| Dimension             | Standard Auto-Regress | Speculative Decoding  |
-+-----------------------+-----------------------+-----------------------+
-| Decode Tokens / Step  | 1 Token per pass      | 2 to 4 Tokens per pass|
-| Output Distribution   | Target `p(x)`         | Exact Target `p(x)`   |
-| Target Forward Passes | `N` Passes for `N` Tok| `N / 2.8` Passes      |
-| Model Architecture    | Single Target Model   | Target + Draft Model  |
-+-----------------------+-----------------------+-----------------------+
-```
+**Always-on versus per-request.** The former is predictable and pays for idle; the latter is proportional and has no ceiling. Neither is better — they are different shapes, and traffic decides which fits.
+
+**Free tier versus free trial.** A tier is a permanent allowance; a trial is credit with an expiry date. Building on a trial produces a bill on a date you did not choose.
+
+**Reserved versus on-demand versus spot.** Commitment for a discount, flexibility at full price, or a large discount with the risk of interruption. All three change the crossover, and none changes egress.
+
+**Egress versus ingress.** Data in is usually free; data out is not. That asymmetry is deliberate and it is what lock-in is made of.
 
 ## When to use it — and when not to
 
-### Deploy Speculative Decoding & Prefix Caching for:
-- Production chat applications, multi-turn coding assistants, document summarization, and interactive agent loops.
+**Start serverless when traffic is unknown or spiky.** Free at zero, and the cost of being wrong is small.
 
-### Do NOT require speculative decoding for:
-- Short 5-token classification queries or compute-heavy embedding models.
+**Move to a VM once you pass the crossover** — and know the number before you pass it.
 
+**Choose predictable billing when a surprise bill would be a real problem.** A capped VM is worse value on average and better at the tail, and for a student project that trade is usually right.
 
-### Production Checklist: Speculative Decoding & Prefix Caching SRE
-- [ ] Draft model selected from identical tokenizer family as target model (e.g. Llama-3.2-1B for Llama-3.1-70B).
-- [ ] Speculative step size `K` dynamically tuned based on rolling acceptance rate `lpha` (`K=5` when `lpha > 0.80`).
-- [ ] Fallback to non-speculative auto-regressive decode triggered if rolling `lpha < 0.35`.
-- [ ] Radix tree prefix caching configured with LRU memory eviction and immutable system prompt pinning.
-- [ ] StreamingLLM attention sinks (first 4 tokens) pinned in memory for infinite-length streaming sessions.
-- [ ] Rejection sampling verified to use modified residual sampling for 100% mathematical distribution fidelity.
+**Do not choose on the free tier's headline number.** Compute the binding constraint.
 
+**Do not deploy anything without a budget alert.** A runaway loop against a paid API is Day 327's lesson; a runaway autoscaler is this one's.
 
-### Speculative Decoding Memory Bandwidth Formulas
-The theoretical speedup factor `\gamma` for speculative decoding with draft size `K` and acceptance rate `lpha` is given by:
-`\gamma = rac{1 - lpha^{K+1}}{(1 - lpha)(1 + c \cdot K)}`
-where `c` represents the relative compute cost ratio of the draft model forward pass compared to the target model forward pass.
+**Do not treat the choice as permanent.** It is a decision with a horizon, and the horizon is computable.
 
 ## Knowledge check
 
-1. **Why does Speculative Decoding not degrade model quality?** Because modified rejection sampling guarantees that accepted tokens match the target model's output probability distribution mathematically.
-2. **What is Radix Tree Prefix Caching?** A tree-structured index reusing pre-computed KV cache tensors for shared prompt prefixes, reducing TTFT to near-zero.
-3. **What are Attention Sinks in StreamingLLM?** The initial 4 tokens in a sequence that absorb critical attention mass, whose preservation enables infinite-length stream generation in fixed VRAM.
+1. Why does an always-on option's compute cost stay at $7.59 whether the service handles 20,000 or 20,000,000 requests a month?
+2. The free tier advertises two million requests and ends at 1.25x current traffic. What happened?
+3. At 1000x traffic the VM's egress is $63.00 against $7.59 of compute. What does that suggest about how hosting options should be compared?
+4. Why is `None` a useful answer from `crossover` rather than a failure?
+5. The model quotes a single 1 vCPU VM for twenty million requests a month. What is it not telling you?
 
 ## Hands-on exercise
 
-In this lab, you will build an **Advanced Inference Acceleration Engine in Python**. Your implementation will:
-1. Register and match prompt prefixes against an in-memory prefix cache.
-2. Execute speculative decoding steps verifying candidate draft tokens in parallel.
-3. Apply rejection sampling accepting matching tokens and emitting target replacement tokens upon mismatch.
-4. Calculate speculative speedup factors and acceptance counts.
+You will price four hosting options against one workload, find each free tier's binding constraint, and bisect for the crossover.
+
+Open `starter/hosting_cost.py` in the lab directory and implement the stubbed functions, then run the tests. No cloud account is used and nothing is spent.
 
 ### Expected output
 
+Running `python3 examples/cost_demo.py` prices the options at three traffic levels:
+
 ```text
-============================= test session starts ==============================
-collected 5 items
-
-tests/test_speculative_decoding.py .....                                 [100%]
-
-============================== 5 passed in 0.02s ===============================
-[PREFIX CACHE] Matched system prompt prefix (bypassed 1,500 prefill tokens).
-[SPECULATIVE STEP] Verified K=4 draft tokens with 70B target model.
-[ACCEPTANCE] Accepted 3 draft tokens and sampled 1 target correction.
-[SPEEDUP] Achieved 4.0x token yield in 1 target forward pass.
+  the headline allowance is rarely the one that runs out first:
+      egress-gb          1.25x current load
+      requests         100.00x current load
+--- where the ranking changes ---
+  serverless-free-tier stops beating small-vm at 45.0x (899,599 requests/month)
 ```
+
+Eighty times' difference between the advertised constraint and the binding one.
 
 ### Validate your work
 
-Run the pytest test suite:
+Run `bash tests/run_tests.sh`. All twenty-four tests must pass.
 
-```bash
-pytest tests/run_tests.sh
-```
+Then check three things by inspection. An always-on option must cost the same at zero traffic as at full traffic — if it scales with usage, the entire comparison collapses. A per-request option must cost exactly zero at zero traffic, because that is what scale-to-zero means. And `binding_constraint` must return `egress-gb` rather than `requests`; returning the advertised allowance means `headroom` is not taking a minimum.
 
 ### Troubleshooting
 
-1. **Replacement sampling:** Upon the first draft token mismatch, emit the target token and terminate speculation.
-2. **Bonus token:** If all `K` draft tokens match, sample 1 additional bonus token from the target model.
+**Free allowances go negative.** Clamp with `max(0.0, used - allowance)`, or an option under its free tier earns you money.
+
+**`binding_constraint` returns the wrong dimension.** It must take the smallest headroom, not the largest or the first.
+
+**`crossover` returns `None` unexpectedly.** Check you compare the ordering at the far end before bisecting.
+
+**A dimension with no usage raises.** Zero usage means infinite headroom, not a division error.
 
 ### Common mistakes
 
-- Continuing to accept draft tokens after an earlier token in the sequence was rejected.
+Scaling an always-on cost by traffic, which is the one error that destroys the lesson.
+
+Deducting a free allowance from the wrong quantity — seconds and requests are separate.
+
+Comparing totals only. The breakdown is where egress becomes visible.
+
+Believing the free tier's headline. It is the dimension chosen to be generous.
 
 ## Practice assignment
 
-Add a **Dynamic K-Tuner** that increases `K` when acceptance rate `lpha > 0.80` and decreases `K` when `lpha < 0.40`.
+Add **capacity** to the model. Give each option a requests-per-second ceiling and make pricing refuse a workload the option cannot serve.
+
+Then write a test showing what changes: the 1000x row should no longer quote `small-vm` at $90.77, because one vCPU cannot deliver twenty million requests a month. This removes the model's most misleading output.
+
+The wider point is worth writing down while you do it. A model that answers confidently outside its valid range is more dangerous than one that refuses, because the confident wrong answer gets pasted into a decision document and nobody re-derives it.
 
 ## Extension challenge
 
-Implement a **Radix Tree Class** supporting branch insertion, longest common prefix matching, and LRU node eviction.
+Price **your own workload** with your provider's current rate card, and find your own binding constraint.
+
+Measure rather than estimate: requests per month from your logs, response size from a real sample, compute time from a percentile rather than a mean. Then put in today's published prices — not the ones in this lab, which are representative and already ageing.
+
+The output to look for is not the total. It is which allowance binds first, because that is the number that decides when your costs start, and it is almost never the one you would have guessed. Then compute your crossover and put the date you expect to reach it in a calendar, so that the migration is a scheduled piece of work rather than a surprise discovered in a billing alert.

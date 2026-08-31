@@ -1,350 +1,278 @@
 ---
 day: 333
-title: "Kubernetes Concepts"
+title: 'Kubernetes Concepts'
 ---
 
 ## Why this matters
 
-Deploying LLMs solely on multi-thousand-dollar cloud GPU clusters creates severe commercial and operational roadblocks:
-- **Cloud Infrastructure Costs:** Serving millions of users via cloud APIs generates unsustainable monthly inference bills.
-- **Privacy & Compliance:** Processing sensitive medical records, classified legal documents, or private personal data on third-party cloud servers violates strict regulatory compliance.
-- **Offline / Edge Availability:** Mobile apps, automotive cockpits, robotics, and industrial IoT devices must function without constant internet connectivity.
+Kubernetes has a reputation for complexity that is mostly earned by its surface area — hundreds of resource types, a YAML dialect with real depth, and an ecosystem that assumes you already know the vocabulary.
 
-Mastering **Edge Deployment and Quantization** (GGUF binary format, AWQ 4-bit compression, llama.cpp C++ runtime, and layer offloading) allows running state-of-the-art 7B–14B parameter models directly on Apple Silicon laptops, consumer workstations, and mobile devices at 40+ tokens/second.
+Underneath all of it there is one idea, and it fits in about forty lines of Python:
 
-![Affine Weight Quantization Mapping Flow showing 32-bit Floating Point Range mapped through Scale Factor and Zero Point into 4-bit Integer Grid with Dequantization Reconstruction](./assets/affine-weight-quantization-mapping-flow.svg)
+> a loop compares what you declared against what exists, and takes one step to close the gap
+
+That is it. Every behaviour people find surprising falls out of it. Today's lab implements the loop and then runs four situations through it — a first deploy, a node dying, somebody deleting a pod by hand, and a rolling update. Two of those produce **identical** behaviour, which is the moment the idea lands:
+
+```text
+--- 2. a node dies, taking one pod with it ---
+    delete api-001      node node-a is gone
+    create api-004      2 of 3 replicas present
+--- 3. somebody deletes a pod by hand ---
+    create api-005      2 of 3 replicas present
+```
+
+The loop does not ask how the gap appeared. A hardware failure and a person typing `kubectl delete pod` are the same input. That is why deleting a pod is not a destructive operation, and it is why you cannot fix anything durably by editing a running pod.
+
+![The Reconciliation Loop showing desired state compared against actual state producing one step of actions](./assets/the-reconciliation-loop.svg)
 
 ## The idea in plain language
 
-Think of model quantization like **compressing a high-resolution 4K movie to fit on an airplane tablet**:
+You write down what you want. A controller makes it true, continuously.
 
-- **The Master Film (FP16 Baseline):** The raw studio film is 100GB in size (**14GB in 16-bit Float**). It looks gorgeous, but it won't fit on your smartphone and consumes all your storage.
-- **Smart 4-bit Quantization (AWQ / GGUF):** A specialized compression algorithm reduces the file to 3.5GB (**4-bit Integer Grid**). It preserves 100% of the sharpness on the lead actors' faces (**Salient 1% Weight Channels**), while subtly compressing the blurry background trees.
-- **The Hybrid Player (llama.cpp Layer Offloading):** If your tablet has a fast dedicated graphics chip with only 2GB of memory, the player renders the first half of the visual effects on the GPU and the rest on the main processor (**Hybrid CPU/GPU Offloading**).
+**Desired state** is a Deployment: this image, this many replicas, this much surge tolerance during an update. It describes an outcome and contains no instructions.
+
+**Actual state** is the set of pods that exist right now, each with a phase and a readiness answer.
+
+**The loop** runs forever. Each pass it computes the difference and issues actions — create these, delete those — then does it again. It is *level-triggered*, not edge-triggered: it responds to the current gap rather than to events. Miss an event and nothing breaks, because the next pass sees the same gap.
+
+The second idea is **readiness**, and it is the one that separates Kubernetes from a restart script. A pod being Running says the container started. A pod being *ready* says its readiness probe passed. A Service routes only to ready pods.
+
+Yesterday's Compose lesson asked that question once, at startup. Kubernetes asks it every few seconds, forever, and removes a pod from the load balancer the moment the answer changes.
 
 ## Historical background
 
-Model compression and edge deployment evolved through three major technological breakthroughs:
+### Borg, 2003 onward
 
-### 1. Naive Post-Training Quantization (PTQ) & INT8 (2020–2022)
-Early methods applied naive round-to-nearest (RTN) INT8 quantization. While effective for convolutional networks, applying RTN to 7B+ LLMs caused massive perplexity spikes due to extreme outlier activation channels.
+Google's internal cluster manager ran essentially everything Google did for a decade before Kubernetes existed. Its central lesson, published in 2015, was that declarative specification plus continuous reconciliation scales in a way that imperative deployment scripts do not.
 
-### 2. GPTQ and SmoothQuant (2022–2023)
-Researchers introduced second-order Hessian error minimization (GPTQ) and activation smoothing (SmoothQuant), achieving stable 4-bit weight quantization.
+### Kubernetes, 2014
 
-### 3. GGUF, AWQ, and llama.cpp (2023–Present)
-Georgi Gerganov developed `llama.cpp` in pure C/C++ with zero dependencies, establishing the universal GGUF binary format. MIT published AWQ (Activation-aware Weight Quantization), proving that protecting 1% of salient channels yields near-lossless 4-bit reasoning on edge devices.
+Released by Google and donated to the newly formed CNCF in 2015. It is Borg's ideas rebuilt in the open, with an API server, a set of controllers and a scheduler — the controllers being the interesting part, because each is just a loop of the kind you will write today.
+
+### The operator pattern, 2016
+
+CoreOS observed that if a controller is only a loop over a resource type, you can write your own for your own resource types. An operator encodes how to run a specific piece of software — a database, a message broker — as a controller. That the idea generalises this cleanly is evidence the core abstraction was right.
+
+### Level-triggered versus edge-triggered
+
+A design decision worth knowing by name. An edge-triggered system reacts to events and breaks when one is lost. A level-triggered system reacts to state and is self-correcting by construction — a missed event costs one pass of the loop, not correctness. Kubernetes is level-triggered throughout, and that choice is why it recovers from its own outages.
+
+### Deployments, 1.2 (2016)
+
+Rolling updates were originally a client-side operation: `kubectl rolling-update` orchestrated it from your laptop, and closing the laptop stopped the rollout. Moving it into a controller made it survive the client, which is the same insight one level up.
 
 ## What it is — and what it is not
 
-Let us define the core principles of edge quantization and deployment:
+Kubernetes is a set of controllers that continuously drive a cluster's actual state toward a declared state.
 
-### What Edge Quantization Is:
-- Compressing 16-bit floating-point weights into 4-bit integer representations using affine scaling and zero-point parameters.
-- Protecting the top 1% salient activation channels (AWQ) to prevent reasoning degradation.
-- Packaging models, tokenizers, and metadata into a unified endian-safe GGUF binary file for instant memory-mapped (`mmap`) loading.
-- Splitting transformer layers dynamically across GPU VRAM and CPU system RAM via layer offloading.
+### What it is
 
-### What Edge Quantization Is Not:
-- Retraining the entire model from scratch (Quantization is applied post-training in minutes).
-- Deleting model layers or pruning attention heads randomly.
+It is **declarative**. You describe an outcome; controllers work out the steps.
 
-```text
-+-------------------------------------------------------------------------------+
-|                    QUANTIZATION FORMAT COMPARISON MATRIX                      |
-+-------------------+-----------------------+-------------------+---------------+
-| Format / Method   | Bits per Weight       | 7B Model VRAM Size| PPL Quality   |
-+-------------------+-----------------------+-------------------+---------------+
-| FP16 (Baseline)   | 16.0 bits             | 14.2 GB           | Baseline (1.0)|
-| INT8 (bitsandbytes| 8.0 bits              | 7.5 GB            | 99.9% Baseline|
-| AWQ (4-bit)       | 4.0 bits              | 4.1 GB            | 99.4% Baseline|
-| GGUF Q4_K_M       | 4.5 bits (Mixed-bit)  | 4.4 GB            | 99.2% Baseline|
-| EXL2 (ExLlamaV2)  | 3.0 - 6.0 bits (Var)  | 3.2 - 5.8 GB      | SOTA on GPU   |
-| Ternary / 2-bit   | 1.58 - 2.0 bits       | 2.1 GB            | Noticeable drop|
-+-------------------+-----------------------+-------------------+---------------+
-```
+It is **self-correcting**. Gaps are closed whenever they appear, whatever caused them.
+
+It is **a scheduler plus a control plane**. Where things run and whether they are still running.
+
+### What it is not
+
+It is not a deployment script. There is no sequence of steps, and asking "what does it do first" usually means the model has not landed yet.
+
+It is not a way to make an application reliable. It restarts things. An application that corrupts data when killed will corrupt data more often.
+
+It is not required. A single VM running Compose is a legitimate architecture, and for a service with one instance it is often the better one.
 
 ## Why it was created and what problems it solves
 
-Edge deployment resolves the three primary barriers to local generative AI:
+**Machines fail and somebody has to notice.** *Solution: a loop that notices continuously and refills the gap.*
 
-### 1. Slashing VRAM Requirements from 16GB to 4GB
-Quantizing models to 4-bit allows 7B parameter models (such as Llama-3-8B and Mistral-7B) to run entirely within the 8GB unified memory of base M1/M2/M3 MacBooks or consumer NVIDIA RTX GPUs.
+**Deployment scripts that must be re-run correctly after a partial failure.** *Solution: declare the outcome; the loop is safe to interrupt at any point.*
 
-### 2. Eliminating Zero-Data-Retention Compliance Concerns
-Because inference executes 100% locally on the user's laptop or mobile device, zero customer text or private data ever leaves the local hardware perimeter.
+**Rolling updates orchestrated from a laptop.** *Solution: a controller with a budget for how much may be unavailable at once.*
 
-### 3. Circumventing Memory-Bandwidth Bottlenecks
-In auto-regressive decoding, generating a token requires streaming all model weights through memory. By reducing weight size by 70%, the GPU/CPU memory bus reads 70% fewer bytes per token, directly accelerating generation speeds on memory-bandwidth constrained edge hardware.
+**Traffic sent to processes that have not finished starting.** *Solution: readiness probes gating Service membership.*
+
+**Capacity decided by hand.** *Solution: a scheduler that places pods against declared requests.*
+
+![Four Situations, One Loop showing a first deploy, node failure, manual deletion and a rolling update handled identically](./assets/four-situations-one-loop.svg)
 
 ## How it works
 
-Let us inspect the complete **Hybrid CPU/GPU Layer Offloading Lifecycle in llama.cpp**:
+**You submit a Deployment.** The API server stores it. Nothing has happened yet.
 
-```text
-[Input Prompt: "Write a python sorting script"]
-                    │
-                    ▼
-[Host Application / llama.cpp Engine]
-                    │
-    Is GPU VRAM sufficient for all 32 layers?
-                    ├── YES ➔ Offload 100% layers to GPU VRAM (Maximum speed)
-                    │
-                    └── NO (Available VRAM = 5.2GB | Total Model = 8.4GB)
-                              │
-                              ▼
-                [DYNAMIC LAYER OFFLOADING]
-                - Layers 0 ➔ 20 loaded into GPU VRAM (--n-gpu-layers 20)
-                - Layers 21 ➔ 32 loaded into Host System RAM
-                              │
-                              ▼
-                [EXECUTION PIPELINE PER TOKEN]
-                1. GPU processes Layers 0 ➔ 20 at 900 GB/s bandwidth
-                2. Activations transferred via PCIe / Apple Unified Bus (10 microseconds)
-                3. CPU processes Layers 21 ➔ 32 using AVX-512 / ARM NEON vector instructions
-                4. Softmax sampled ➔ Emits output token
-```
+**A controller notices a difference** between the declared replica count and the pods that exist, and creates the missing ones.
 
-![llama.cpp Hybrid GPU/CPU Layer Offloading showing Layers 0 to 20 loaded in GPU VRAM (6GB) and Layers 21 to 32 computed in Host System RAM (16GB) via Unified Memory Bus](./assets/llama-cpp-hybrid-gpu-cpu-layer-offloading.svg)
+**The scheduler assigns each pod to a node** — and to a *live* one. Today's lab makes this explicit for a reason: an earlier version placed replacements on the node that had just died, reaped them, and churned forever. That is a real failure mode when a node filter is wrong.
+
+**The kubelet on that node starts the container.** The pod becomes Running.
+
+**The readiness probe runs.** When it passes, the pod becomes ready and the Service starts routing to it. Between Running and ready, the pod exists and receives nothing.
+
+**A rolling update changes the desired image.** The controller replaces stale pods within two limits: `maxUnavailable` sets the floor of how many must keep serving, `maxSurge` the ceiling of how many may exist temporarily. It then waits for the new pods to become ready before retiring any more.
+
+**That wait is the interesting part.** A reconcile pass during it returns *no actions* while the rollout is plainly unfinished — because the controller has spent its budget and may not spend more until readiness arrives.
 
 ## An everyday analogy
 
-Think of model quantization and layer offloading like **moving a library of books across town in a small pickup truck**:
+Think of a thermostat rather than a heating schedule.
 
-- **Uncompressed FP16 (Heavy Hardcover Books):** Each book is bound in 5-pound wooden covers. You can only fit 20 books in the truck bed, requiring 5 trips (**Huge Memory Footprint**).
-- **Quantization (Paperback Pocket Editions):** You print the exact same text on thin, lightweight paper (**4-bit Integer Weights**). Now all 100 books fit in a single truck trip (**70% Smaller**).
-- **Layer Offloading (Two Movers):** The fast mover (**GPU**) carries 70 books up the stairs, while the second mover (**CPU**) carries the remaining 30 books at the same time (**Collaborative Partitioning**).
+A schedule is imperative: turn the heating on at seven, off at nine. If the power flickers at 06:59 the schedule misses its cue and the house stays cold, because a schedule reacts to *moments*.
+
+A thermostat is declarative: keep it at twenty degrees. It never asks why the room is cold — a window left open, a power cut, someone turning the radiator down — and it does not need to. It compares, acts a little, and compares again.
+
+That is the whole lesson, including the part people find surprising: **you cannot override a thermostat by holding the radiator valve.** Turn it down by hand and the thermostat notices the room is cold and compensates. The only durable way to change the outcome is to change the number on the thermostat.
+
+`kubectl edit` on a running pod is holding the valve. `kubectl edit` on the Deployment is changing the number.
 
 ## Examples in practice
 
-Let us build a complete Python **Model Quantizer and Memory Profiler Engine** that calculates affine scale factors, zero points, quantizes float arrays into 4-bit integer representations, and reconstructs dequantized weights with error metrics:
-
-```python
-import numpy as np
-from typing import Dict, Any, Tuple
-
-class ModelQuantizerProfiler:
-    def __init__(self, bit_width: int = 4):
-        self.bits = int(bit_width)
-        self.q_min = 0
-        self.q_max = (1 << self.bits) - 1  # 15 for 4-bit
-        
-    def quantize_tensor(self, weights: np.ndarray) -> Tuple[np.ndarray, float, float]:
-        # 1. Compute Min/Max Range
-        w_min = float(np.min(weights))
-        w_max = float(np.max(weights))
-        
-        # Avoid division by zero
-        if w_min == w_max:
-            return np.zeros_like(weights, dtype=np.uint8), 1.0, 0.0
-            
-        # 2. Calculate Scale and Zero Point
-        scale = (w_max - w_min) / float(self.q_max - self.q_min)
-        zero_point = round(-w_min / scale)
-        zero_point = max(self.q_min, min(zero_point, self.q_max))
-        
-        # 3. Affine Quantization Mapping
-        quantized = np.round(weights / scale) + zero_point
-        quantized = np.clip(quantized, self.q_min, self.q_max).astype(np.uint8)
-        
-        return quantized, scale, zero_point
-
-    def dequantize_tensor(self, q_weights: np.ndarray, scale: float, zero_point: float) -> np.ndarray:
-        return (q_weights.astype(np.float32) - zero_point) * scale
-
-    def compute_quantization_error(self, original: np.ndarray, reconstructed: np.ndarray) -> Dict[str, float]:
-        mse = float(np.mean((original - reconstructed) ** 2))
-        snr_db = float(10 * np.log10(np.mean(original ** 2) / (mse + 1e-9)))
-        return {
-            "mse_error": round(mse, 6),
-            "snr_db": round(snr_db, 2),
-            "compression_ratio": round(32.0 / self.bits, 2)
-        }
-
-if __name__ == "__main__":
-    quantizer = ModelQuantizerProfiler(bit_width=4)
-    raw_weights = np.random.randn(1000).astype(np.float32)
-    
-    q_data, s, z = quantizer.quantize_tensor(raw_weights)
-    reconstructed = quantizer.dequantize_tensor(q_data, s, z)
-    
-    metrics = quantizer.compute_quantization_error(raw_weights, reconstructed)
-    print("Quantization Metrics (4-bit):", metrics)
-```
-
-## Production Architecture Case Study: On-Device Edge Assistant Deployment
-
-Consider an edge-native enterprise coding assistant running on Apple Silicon M3 MacBooks (16GB Unified RAM) with zero cloud network calls.
+The measured output from today's lab. One deployment, four situations:
 
 ```text
-+-------------------------------------------------------------------------------+
-|                    EDGE INFERENCE PERFORMANCE BENCHMARKS                      |
-+-------------------+-----------------------+-----------------------------------+
-| Configuration     | Memory Footprint (RAM)| Generation Speed (Tokens/Sec)     |
-+-------------------+-----------------------+-----------------------------------+
-| Llama-3-8B FP16   | 15.8 GB (OOM Pressure)| 8.4 tok/s (Memory swapped to disk)|
-| Llama-3-8B Q8_0   | 8.6 GB (High RAM)     | 24.2 tok/s (Active Unified GPU)   |
-| Llama-3-8B Q4_K_M | 4.6 GB (Optimal RAM)  | 54.8 tok/s (Instant Metal GPU)    |
-| Mistral-7B AWQ    | 4.2 GB                | 58.2 tok/s (Near-zero PPL loss)   |
-+-------------------+-----------------------+-----------------------------------+
+--- 1. first deploy: nothing exists yet ---
+  converged in 2 steps -> 3 alive, 3 serving
 ```
 
-### 1. llama.cpp Local Server Startup Command
-```bash
-./llama-server   -m ./models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf   -c 8192   -ngl 33   --threads 8   --port 8080   --cont-batching
-```
-
-#### 2. FlashAttention-Metal Integration
-On macOS, `llama.cpp` leverages Apple Metal Performance Shaders (MPS) and unified memory architecture. Because the CPU and GPU share the exact same high-speed physical memory bus (up to 400 GB/s on M3 Max), zero data copying occurs between host RAM and GPU VRAM during layer execution.
-
-## Detailed Failure Mode Taxonomy: Edge Quantization Hazards
+Two steps, not one. After the first pass three pods exist and **none of them serves** — they are Running and have not yet passed their probe. The spec is satisfied and a Service would route to nothing, which is exactly the distinction the day is built on.
 
 ```text
-+-------------------------------------------------------------------------------+
-|                      EDGE QUANTIZATION FAILURE TAXONOMY                       |
-+-------------------+-----------------------+-----------------------------------+
-| Failure Mode      | Root Cause Analysis   | Architectural Mitigation          |
-+-------------------+-----------------------+-----------------------------------+
-| Activation Outlier| Rounding large outlier| Use AWQ / SmoothQuant to scale    |
-| Destruction       | vectors breaks math   | weights by activation magnitude   |
-| Context Window    | KV cache in FP16      | Quantize KV cache to 4-bit        |
-| VRAM OOM          | overflows remaining MB| via `--quantize-kv 1` in llama.cpp|
-| Thermal Throttling| Continuous GPU load   | Limit thread count to performance |
-| Speed Drop        | overheats phone/laptop| cores only (e.g. `-t 4` on M-chip)|
-| Tokenizer Mismatch| Custom GGUF lacks     | Ensure chat template and vocab are|
-| on Custom Chat    | `<|im_start|>` tokens | embedded in GGUF metadata header  |
-+-------------------+-----------------------+-----------------------------------+
+--- 2. a node dies ---
+    delete api-001      node node-a is gone
+    create api-004      2 of 3 replicas present
+--- 3. somebody deletes a pod by hand ---
+    create api-005      2 of 3 replicas present
 ```
 
+Same reason string, same action. The loop has no notion of cause.
 
+```text
+--- 4. a rolling update to app:1.5 ---
+  step 1: 3 action(s)  -> 4 alive, 2 serving
+  step 2: 0 action(s)  -> 4 alive, 4 serving  (waiting for the new pods to become ready)
+  step 3: 3 action(s)  -> 3 alive, 2 serving
+  step 5: rollout complete — every pod on app:1.5
+  serving during rollout: [2, 4, 2, 3]  minimum 2
+```
 
-## Deep Architectural Breakdown: Mathematical Quantization Schemes and Apple Metal Acceleration
+Step 2 deserves a moment. **Zero actions, and the rollout is not finished.** The controller replaced as many pods as `maxUnavailable` permitted and is now blocked until the replacements are ready.
 
-Quantization transforms continuous probability landscapes into discrete integer coordinates:
+"Nothing to do this pass" and "the work is complete" are different questions, and conflating them makes a half-finished rollout report success — which an earlier version of this lab did, cheerfully declaring victory with two pods still on the old image.
 
-### 1. Symmetric vs Asymmetric Linear Quantization
-- **Symmetric Quantization:** Forces the zero point `Z = 0`, clamping weights symmetrically around zero:
-  `S = rac{\max(|w|)}{2^{b-1} - 1}, \quad q = 	ext{round}\left(rac{w}{S}
-ight)`
-  Faster computation on hardware without unsigned offset registers.
-- **Asymmetric Quantization:** Uses dynamic zero point `Z`, capturing asymmetric weight distributions:
-  `S = rac{w_{\max} - w_{\min}}{2^b - 1}, \quad Z = 	ext{round}\left(-rac{w_{\min}}{S}
-ight), \quad q = 	ext{clamp}\left(	ext{round}\left(rac{w}{S}
-ight) + Z, 0, 2^b - 1
-ight)`
-
-### 2. AWQ (Activation-Aware Weight Quantization) Salience Formulation
-AWQ observes that weight error does not correlate directly with output perplexity. Instead, weight channels multiplied by large activation magnitudes carry 99% of semantic information. AWQ solves:
-`W' = W \cdot S_X^{-1}, \quad X' = S_X \cdot X`
-where `S_X` scales the top 1% salient channels to protect them from truncation error during 4-bit rounding.
-
-### 3. Apple Silicon Unified Memory Architecture (UMA)
-On modern M-series processors (M2/M3/M4 Max/Ultra), unified memory provides up to 128GB of RAM accessible by CPU and GPU at 400–800 GB/s. `llama.cpp` uses Metal Performance Shaders (MPS) to execute GEMM kernels directly against unified system RAM with zero PCIe copy overhead.
+The guarantee holds throughout: with three replicas and `maxUnavailable=1`, at least two must serve at every moment. The observed minimum is exactly two. The budget is fully used and never exceeded.
 
 ## Implications: security, privacy, performance, scalability, and cost
 
-### 1. 100% Air-Gapped Operation
-Local quantized models run completely offline with network interfaces disabled, satisfying defense, intelligence, and healthcare air-gapped regulatory standards.
+**Security.** The loop erases manual changes to running pods. An attacker who modifies a pod has made a change with a short half-life; one who modifies your manifests has made a permanent one. That asymmetry is the argument for treating the manifest repository as production infrastructure, with the review requirements that implies.
 
-### 2. Zero Recurring Cloud API Billing
-Running inference on existing company laptops shifts compute expenses entirely to local edge hardware, eliminating variable SaaS token subscription costs.
+**Readiness as a control.** A probe decides whether requests reach a process, which makes it a traffic control rather than diagnostics. A probe that always passes routes traffic to a pod that cannot serve. A probe that checks a *downstream dependency* removes every pod from the Service when that dependency wobbles, turning a partial outage into a total one. Probe what this pod can do.
+
+**Performance.** Reconciliation is not free — a large cluster's control plane is a real workload — but it does not sit in the request path. What does affect latency is scheduling: a pod that cannot be placed stays Pending indefinitely, which is the most common "why is nothing happening".
+
+**Scalability.** Horizontal scaling becomes a number in a spec. The limits move to the things Kubernetes does not manage for you: connection pools, database capacity, per-tenant quotas.
+
+**Cost.** Requests reserve capacity whether used or not. Over-requesting is the most common source of a cluster bill that does not match its utilisation, and it is invisible until someone graphs requested against used.
 
 ## Alternatives: free, open source, and commercial
 
-| Tool / Framework | Type | Best Suited For | Key Capabilities |
-| :--- | :--- | :--- | :--- |
-| **llama.cpp** | Open Source (C++) | CPU, Apple Silicon, Edge | GGUF, mixed-bit quantization, Metal |
-| **Ollama** | Open Source | User-Friendly Local CLI | One-click GGUF model manager |
-| **ExLlamaV2 (EXL2)** | Open Source (CUDA) | Extreme High-Speed GPU | Variable mixed-bit GPU inference |
-| **AutoAWQ** | Open Source (Python) | High-Performance AWQ | 4-bit activation-aware quantization |
+**Docker Compose** — yesterday's tool. One host, no rescheduling. For a single-instance service where a restart is acceptable, it is simpler and sufficient.
+
+**k3s, kind, minikube** — Apache-2.0. Real Kubernetes, small enough for a laptop or a single VM. k3s in particular is a reasonable production choice for a small deployment.
+
+**Nomad** — HashiCorp, BUSL since 2023. A scheduler without Kubernetes' object model. Considerably simpler, with a correspondingly smaller ecosystem.
+
+**Managed Kubernetes** — GKE, EKS, AKS. You stop operating the control plane and start paying for it. Usually the right trade once a cluster matters.
+
+**Serverless containers** — Cloud Run, Fargate, Container Apps. Scale to zero, no cluster to run, and no scheduler to reason about. For a stateless AI inference endpoint with uneven traffic this is frequently the better answer, and tomorrow's lesson prices it.
+
+The honest default for a small AI service: not Kubernetes. Reach for it when you have several services, several machines, and a real need for rescheduling — not before.
 
 ## Comparison with related concepts
 
-```text
-+-----------------------+-----------------------+-----------------------+
-| Dimension             | Cloud FP16 GPU API    | Edge GGUF Q4_K_M      |
-+-----------------------+-----------------------+-----------------------+
-| Network Dependency    | Mandatory (Internet)  | 100% Offline Capable  |
-| Memory Footprint      | 14 GB - 140 GB        | 4 GB - 16 GB          |
-| Privacy Security      | Cloud Data Transit    | Local Memory Sandbox  |
-| Operating Cost        | `0.002 / 1k tokens    | `0.00 (Local Hardware)|
-+-----------------------+-----------------------+-----------------------+
-```
+**Declarative versus imperative.** `kubectl apply -f` states an outcome; `kubectl run` performs an action. The first is repeatable and the second is a one-off, which is why the first is what belongs in a repository.
+
+**Level-triggered versus edge-triggered.** Reacting to state rather than to events. A lost event costs one pass of the loop instead of correctness.
+
+**Readiness versus liveness.** Readiness gates traffic; liveness triggers a restart. Confusing them produces a service that restarts pods for being briefly busy, which is worse than the original problem.
+
+**Deployment versus Pod versus Service.** The Deployment is the declared state, the Pod is the running thing, the Service is the stable address that routes to ready pods. Editing the middle one is the mistake.
+
+**`maxUnavailable` versus `maxSurge`.** A floor on capacity and a ceiling on total pods. The floor protects the service; the ceiling protects the cluster.
 
 ## When to use it — and when not to
 
-### Deploy Edge Quantized Models for:
-- Local desktop developer tools, mobile offline assistants, privacy-sensitive clinical workstations, and embedded robotics.
+**Use it when you have more machines than you want to think about**, and things must be rescheduled when one dies.
 
-### Do NOT require edge quantization for:
-- Massive 405B frontier models that exceed unified RAM capacity or high-concurrency cloud API gateways.
+**Use it when you run many services** and want one uniform way to deploy, roll back and observe them.
 
+**Use it when your organisation already has a cluster.** The marginal cost of one more workload is small; the cost of the first one is not.
 
-### Production Checklist: On-Device & Edge Quantization Optimization
-- [ ] 4-bit quantization format selected based on target hardware (GGUF for CPU/Metal, AWQ/EXL2 for NVIDIA GPU).
-- [ ] Calibration dataset representative of target domain used during AWQ/GPTQ quantization passes.
-- [ ] Perplexity measured on standard benchmark (WikiText-2 / C4) verifying `< 0.1` PPL degradation.
-- [ ] Memory-mapped I/O (`mmap`) verified for instant model weight loading without RAM duplication.
-- [ ] Thread count pinned to physical performance cores (`-t 4` or `-t 8`) to avoid thermal throttling.
-- [ ] KV cache quantization enabled (`--quantize-kv 1`) to preserve RAM during 8k+ context sequences.
+**Do not use it for a single service on a single machine.** You have added a control plane to solve a problem you do not have.
 
+**Do not use it to make an unreliable application reliable.** It restarts things, faster and more often.
 
-### Edge Hardware Acceleration Matrix
-- **Apple Silicon (M1/M2/M3/M4):** Unified memory bus with Metal Performance Shaders (MPS) provides up to 800 GB/s bandwidth, running 70B quantized models locally.
-- **Snapdragon NPU (Qualcomm Hexagon):** Dedicated neural processing unit on mobile devices executing INT4 quantized models at sub-watt power draw.
-- **NVIDIA Jetson (Orin Nano / AGX):** Embedded edge GPU boards executing TensorRT-LLM and AWQ kernels for robotics and computer vision systems.
-- **Raspberry Pi 5 / ARM Cortex:** Pure CPU inference using llama.cpp ARM NEON vector SIMD instructions for lightweight 1B–3B parameter models.
+**Do not adopt it during an incident**, or a week before a deadline. The learning curve is real and it is not front-loaded — the surprises arrive later.
 
 ## Knowledge check
 
-1. **How does 4-bit quantization reduce memory footprint by 70%?** By mapping continuous 16-bit floating-point weights to discrete 4-bit integers using scale factors and zero points.
-2. **What makes AWQ superior to naive round-to-nearest quantization?** It identifies and protects the top 1% salient weight channels corresponding to large activation magnitudes.
-3. **What is Layer Offloading in llama.cpp?** Splitting model layers dynamically between GPU VRAM and CPU system RAM based on available memory.
+1. Why do a node failure and `kubectl delete pod` produce identical behaviour from the controller?
+2. Why does a first deploy of three replicas take two reconciliation steps rather than one?
+3. A reconcile pass returns no actions during a rolling update that is plainly unfinished. What is happening?
+4. Why must replacement pods be scheduled onto a live node, and what happens if they are not?
+5. Why is editing a running pod not a durable way to change anything?
 
 ## Hands-on exercise
 
-In this lab, you will build a **Model Quantizer and Memory Profiler in Python**. Your implementation will:
-1. Calculate affine scale factors and zero points for floating-point weight tensors.
-2. Quantize continuous float32 arrays into discrete 4-bit integer values (range 0 to 15).
-3. Dequantize 4-bit integer grids back into reconstructed floating-point representations.
-4. Calculate Mean Squared Error (MSE) and Signal-to-Noise Ratio (SNR) distortion metrics.
+You will implement the reconciliation loop and run four situations through it.
+
+Open `starter/reconcile.py` in the lab directory and implement the stubbed functions, then run the tests. No cluster is required.
 
 ### Expected output
 
+Running `python3 examples/reconcile_demo.py` puts one deployment through four situations:
+
 ```text
-============================= test session starts ==============================
-collected 5 items
-
-tests/test_quantizer_profiler.py .....                                   [100%]
-
-============================== 5 passed in 0.02s ===============================
-[QUANTIZER] Initialized 4-bit affine quantizer (range 0 - 15).
-[MAPPING] Quantized 1,000 float32 weights into 4-bit integer array.
-[RECONSTRUCTION] Dequantized weights with MSE error < 0.005.
-[COMPRESSION] Achieved 8.0x compression ratio over float32.
+  step 2: 0 action(s)  -> 4 alive, 4 serving  (no action — waiting for the new pods to become ready)
+  serving during rollout: [2, 4, 2, 3]  minimum 2
+  2 required, 2 observed
 ```
+
+The minimum equals the floor exactly. The budget is fully used and never exceeded.
 
 ### Validate your work
 
-Run the pytest test suite:
+Run `bash tests/run_tests.sh`. All nineteen tests must pass.
 
-```bash
-pytest tests/run_tests.sh
-```
+Then check three things by inspection. A first deploy must converge in **two** steps — one tick to run, another to become ready. Losing a node and deleting a pod by hand must produce the same kind of action; if they differ, the loop is reasoning about history it should not have. And during the rollout, `serving` must never fall below `replicas - max_unavailable` while `alive` never exceeds `replicas + max_surge`.
 
 ### Troubleshooting
 
-1. **Clip bounds:** Ensure quantized integer arrays are clipped to `[0, 15]`.
-2. **Division by zero:** Handle constant weight arrays where `w_min == w_max`.
+**`converge` raises "did not converge".** Almost always replacements being scheduled onto the dead node — filter `dead_nodes` in `schedule`.
+
+**The rollout exceeds the surge ceiling.** Your create step is not counting the stale pods it is keeping. Take the minimum of both limits.
+
+**A half-finished rollout reports success.** `rollout_done` is not a synonym for "no actions this pass".
+
+**Pods never serve.** `tick` advances one state per call; a pod needs two.
 
 ### Common mistakes
 
-- Calculating scale using `q_max` without subtracting `q_min`.
+Treating "no actions" as completion, which is the subtle one and the one that matters.
+
+Deleting stale pods without checking how many are currently serving, which takes the service down during an update.
+
+Checking `phase` rather than `serving` in `rollout_done`, so a cluster routing to nothing looks finished.
+
+Scheduling onto any node in the list rather than a live one.
 
 ## Practice assignment
 
-Add a **Per-Channel Quantization** mode where scale factors and zero points are calculated independently for each output channel row.
+Add **resource requests and node capacity**. Give each node a CPU budget and each pod a request, then make `schedule` refuse to place a pod that does not fit.
+
+Write a test showing what happens when the cluster is full: the Deployment does not fail, it does not error, and it does not converge — pods stay Pending indefinitely while the controller keeps trying. This is the most common "why is nothing happening" in a real cluster, and the reason it confuses people is that nothing is broken. The loop is working exactly as designed, and the answer is simply not reachable.
 
 ## Extension challenge
 
-Implement **Activation Outlier Channel Scaling** multiplying the top 1% weight columns by an activation magnitude vector before quantization.
+Add a **liveness probe**, then use it to find the trap.
+
+Liveness differs from readiness in consequence: a failed readiness probe removes a pod from the Service, and a failed liveness probe restarts the container. Model both, then construct the scenario worth understanding — a liveness probe that checks a downstream dependency, and a dependency that is briefly slow.
+
+What you should observe is every pod restarting at once, each restart making the dependency slower, and the cluster converting a transient wobble into a self-sustaining outage. Then answer the design question: what should a liveness probe actually check? The rule that survives is that a liveness probe should test only whether *this process* is wedged, and never whether the system around it is healthy.

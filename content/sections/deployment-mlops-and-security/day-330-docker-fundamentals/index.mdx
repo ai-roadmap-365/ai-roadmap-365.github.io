@@ -1,388 +1,264 @@
 ---
 day: 330
-title: "Docker Fundamentals"
+title: 'Docker Fundamentals'
 ---
 
 ## Why this matters
 
-Shipping AI and LLM workloads to production requires packaging not just Python code, but massive binary dependencies, GPU drivers, CUDA kernels, and multi-gigabyte model weights.
+You have spent a year building things that run on your machine. This week is about making them run somewhere else, and the first problem is not the cloud — it is that "somewhere else" has a different Python, a different libc, a different CUDA driver and none of your environment variables.
 
-Naive AI containerization produces catastrophic operational failures:
-- Monolithic Dockerfiles swell to **15GB to 25GB in size**, causing Kubernetes node autoscaling to take 8 to 15 minutes just to download and extract the container image (**Cold-Start Paralysis**).
-- Misconfigured CUDA versions create runtime mismatch errors (`CUDA driver version is insufficient for CUDA runtime version`).
-- Running containers as `root` exposes the host cluster to container breakout attacks across exposed GPU device nodes (`/dev/nvidia*`).
+A container is the answer the industry settled on: package the filesystem the application needs alongside the application, and the target machine only has to be able to run containers. That is the whole idea, and it is not the hard part.
 
-Mastering **Production AI Containerization** (Multi-Stage Dockerfiles, CUDA runtime optimization, model baking strategies, and health probes) shrinks image footprints by over 90% and enables instant sub-10-second cluster autoscaling.
+The hard part is the **build cache**, because it is where the time goes. A Dockerfile with the instructions in the wrong order rebuilds in 76 seconds after you edit one line of Python. The same instructions in the right order rebuild in one second. Both take the same time on a first build. Nothing else changes — not the base image, not the packages, not the application.
 
-![Multi-Stage AI Dockerfile Build Pipeline showing Stage 1 Builder with GCC, NVCC, and Wheel Compilation, and Stage 2 Lean Runner (850MB) with Runtime CUDA Libraries and Non-Root User](./assets/multi-stage-ai-dockerfile-build-pipeline.svg)
+That ratio is the lesson. Over a day of development it is the difference between a tight loop and a coffee break, and it is decided entirely by where you put one `COPY` line.
+
+![The Layer Cache Rule showing that a layer is reused only when every layer before it was reused and its own inputs are unchanged](./assets/the-layer-cache-rule.svg)
 
 ## The idea in plain language
 
-Think of containerizing an AI application like **packing for an international space mission**:
+An image is a stack of **layers**. Each instruction in a Dockerfile produces one, and each layer is a filesystem diff — what changed relative to the layer beneath.
 
-- **The Construction Hangar (Stage 1 Builder):** You use giant cranes, heavy welding torches, and raw steel beams to assemble the space capsule (**GCC, NVCC, CMake, and build tools**).
-- **The Final Space Capsule (Stage 2 Lean Runner):** When the capsule launches, you do NOT load the 50-ton welding crane into orbit. You only launch the completed, lightweight capsule containing astronauts and mission equipment (**Compiled Wheels and Lean CUDA Runtime**).
-- **The Engine Mount (NVIDIA Container Toolkit):** The rocket engine connects to the launch pad's fuel line (**Host GPU Driver**) through a standardized umbilical adapter (**NVIDIA Container Runtime Hook**).
+When you rebuild, Docker walks the instructions from the top and asks a question at each one:
+
+> can I reuse the layer I built last time?
+
+The answer is yes only when **both** of these hold:
+
+**Every layer above it was reused.** A layer is a diff against a specific parent. If the parent is new, the diff has nothing to attach to, so the layer must be rebuilt whether or not its own inputs changed.
+
+**Its own inputs are unchanged.** For most instructions the input is the instruction text. For `COPY` and `ADD` it is also the *contents of the files being copied* — which is what makes those two the instructions that decide your build time.
+
+Put those together and the consequence is sharp. `COPY . .` early in a Dockerfile makes every layer beneath it depend on every file in your project. Edit a README and the dependency install re-runs.
+
+The fix costs nothing: copy the dependency manifest, install, and only then copy the source. The install layer now depends on `requirements.txt` alone, and it survives every edit that does not change your dependencies.
 
 ## Historical background
 
-AI containerization architectures developed across three major evolutionary phases:
+### chroot, 1979
 
-### 1. Monolithic Virtual Machines & Conda Images (2018–2021)
-Engineers packaged entire Ubuntu OS virtual machines containing full Anaconda installations, CUDA development kits, and raw Jupyter notebooks, yielding 30GB images with 20-minute boot times.
+`chroot` changed a process's idea of the filesystem root. It isolated the view of files and nothing else — same network, same process table, same users. Useful, and not a sandbox, which is a distinction people re-learn painfully.
 
-### 2. Single-Stage GPU Dockerfiles (2021–2023)
-Developers migrated to `nvidia/cuda:devel` base images. However, leaving C++ compilers, git, and pip caches in the final image kept image sizes bloated around 12GB–18GB.
+### FreeBSD Jails and Solaris Zones, 2000–2004
 
-### 3. Multi-Stage Distroless & Runtime Containers (2024–Present)
-Modern production pipelines leverage multi-stage builds separating `devel` compilation from `runtime` execution, non-root security contexts, and optimized model weight layer caching.
+The first serious attempts at whole-system isolation on a shared kernel: separate process tables, network interfaces and root users. The idea was proven a decade before Linux made it ubiquitous.
+
+### cgroups and namespaces, 2006–2008
+
+Google contributed cgroups (resource limits) to Linux; namespaces (isolated views of PIDs, mounts, networks, users) arrived alongside. Together these are what a Linux container actually *is*. Everything after this is packaging and ergonomics.
+
+### Docker, 2013
+
+Docker did not invent containers. It invented a **format and a workflow**: a text file describing a build, a layered image format that deduplicates and caches, and a registry to push to. That combination is why containers spread — not the isolation, which had existed for years.
+
+### OCI, 2015 onward
+
+The Open Container Initiative standardised the image and runtime formats, which is why Podman, containerd, Buildah and Kubernetes all consume the same images. A Dockerfile is portable in a way that a vendor's packaging format is not.
 
 ## What it is — and what it is not
 
-Let us define the core principles of production AI containerization:
+A container image is a layered filesystem plus metadata describing how to start a process in it.
 
-### What AI Containerization Is:
-- Decoupling build-time compilation tools (`gcc`, `nvcc`) from production runtime execution using multi-stage Docker builds.
-- Leveraging the NVIDIA Container Toolkit to map host GPU kernel drivers into container userspace CUDA runtime libraries.
-- Enforcing non-root container users (`USER appuser`) and read-only root filesystems for zero-trust security.
-- Implementing dedicated HTTP `/health/live` and `/health/ready` probes verifying GPU memory allocation before traffic ingress.
+### What it is
 
-### What AI Containerization Is Not:
-- Installing kernel-level GPU drivers (`nvidia-driver-550`) inside the Docker container.
-- Downloading multi-gigabyte model weights over public HTTP on every container replica restart.
+It is **a filesystem and a default command**. Not a virtual machine and not a running thing — an image is inert until a runtime starts a process against it.
 
-```text
-+-------------------------------------------------------------------------------+
-|                    AI CONTAINERIZATION ARCHITECTURAL MATRIX                   |
-+-------------------+-----------------------+-----------------------------------+
-| Metric / Feature  | Naive Monolithic Image| Production Multi-Stage Container  |
-+-------------------+-----------------------+-----------------------------------+
-| Base Image        | `nvidia/cuda:devel`   | `nvidia/cuda:runtime-slim`        |
-| Final Image Size  | 14.5 GB - 22.0 GB     | 750 MB - 1.2 GB                   |
-| Pull Time (Node)  | 6 to 12 minutes       | 15 to 30 seconds                  |
-| Execution User    | `root` (UID 0)        | `appuser` (UID 10001 - Non-root)  |
-| Build Artifacts   | Compilers & pip cache | 100% Discarded in Stage 1         |
-| Security Posture  | High CVE vulnerability| Minimal attack surface            |
-+-------------------+-----------------------+-----------------------------------+
-```
+It is **layered and content-addressed**. Layers are shared between images, which is why pulling a second image based on the same base is fast.
+
+It is **reproducible only as far as you make it**. `FROM python:3.12-slim` today and in a year are different images.
+
+### What it is not
+
+It is not a security boundary by default. A container shares the host kernel. It is a strong isolation boundary and a weak security one; treat it as the former.
+
+It is not a virtual machine. There is no guest kernel, which is why a container starts in milliseconds and why a Linux container needs a Linux kernel underneath.
+
+It is not a way to make a slow application fast. It changes where the code runs, not how well.
 
 ## Why it was created and what problems it solves
 
-Production containerization resolves the four primary operational bottlenecks of cloud AI infrastructure:
+**"Works on my machine."** The single most expensive sentence in software. *Solution: ship the filesystem the application depends on, not a list of instructions for recreating it.*
 
-### 1. Eliminating Autoscaling Cold-Start Delays
-A 15GB container takes minutes to pull across cluster nodes during sudden traffic spikes. Shrinking the image to 850MB allows new GPU replicas to initialize in under 20 seconds.
+**Dependency conflicts between projects.** Two applications needing different versions of the same system library. *Solution: each gets its own filesystem.*
 
-### 2. Preventing CUDA Driver-Runtime Conflicts
-Understanding the separation between the host kernel driver (`nvidia.ko`) and container CUDA runtime (`libcudart.so`) ensures that a single GPU host cluster can run containers built with different minor CUDA versions seamlessly.
+**Slow, fragile provisioning.** Configuration-management scripts that drift and are never exactly re-run. *Solution: a build that starts from a fixed base and is described in one file.*
 
-### 3. Bulletproof Container Isolation and Security
-Running as non-root with dropped Linux capabilities (`cap_drop: ALL`) guarantees that remote code execution vulnerabilities in LLM libraries cannot compromise the underlying Kubernetes worker nodes.
+**Deploy artifacts that are not the thing you tested.** *Solution: the image you tested is the image that runs, identified by digest.*
+
+**Rebuild times that make iteration painful.** *Solution: a layer cache — which only helps if the instructions are ordered so that the expensive layer sits above the volatile one.*
+
+![Instruction Order Decides Rebuild Time showing the same instructions in two orders and the resulting cache hits](./assets/instruction-order-decides-rebuild-time.svg)
 
 ## How it works
 
-Let us inspect the complete **Host GPU Driver to Container Runtime Mapping**:
+**A build starts from a base image.** `FROM python:3.12-slim` provides a filesystem with Python already in it.
 
-```text
-+-------------------------------------------------------------------------------+
-| HOST OS KERNEL (Physical GPU Server)                                          |
-|  - Physical GPU: NVIDIA H100 SXM5 (80GB VRAM)                                 |
-|  - Kernel Module: nvidia.ko (Driver Version 550.54.14)                        |
-|  - Device Nodes: /dev/nvidia0, /dev/nvidiactl, /dev/nvidia-uvm                |
-+-------------------------------------------------------------------------------+
-                                      │
-                                      ▼
-+-------------------------------------------------------------------------------+
-| NVIDIA CONTAINER TOOLKIT (OCI Runtime Hook)                                   |
-|  - Injects /dev/nvidia* device nodes into container cgroups                   |
-|  - Binds libcuda.so.1 driver library dynamically at container start           |
-+-------------------------------------------------------------------------------+
-                                      │
-                                      ▼
-+-------------------------------------------------------------------------------+
-| DOCKER CONTAINER USER SPACE (Lean Multi-Stage Image)                          |
-|  - User: appuser (UID 10001)                                                  |
-|  - CUDA Runtime: libcudart.so.12                                              |
-|  - PyTorch 2.4 / vLLM / FastAPI App                                           |
-|  - Ready Probe: GET /health/ready -> 200 OK (GPU Initialized)                 |
-+-------------------------------------------------------------------------------+
-```
+**Each instruction adds a layer.** `RUN` executes a command and captures what changed. `COPY` adds files. `ENV`, `WORKDIR`, `USER`, `CMD` change metadata and add nothing to the filesystem, which is why they are free.
 
-![Host GPU Driver to Container Runtime Mapping showing Host Kernel NVIDIA Driver, NVIDIA Container Toolkit mounting /dev/nvidia* devices, and Container userspace CUDA Runtime](./assets/host-gpu-driver-to-container-runtime-mapping.svg)
+**The builder computes a cache key per layer** from the parent layer's identity, the instruction text, and — for `COPY` and `ADD` — a hash of the file contents being copied.
+
+**On a rebuild it walks down until a key differs.** Everything from that point rebuilds. This is the rule, and it is why "which layer missed first" explains the entire cost of a build.
+
+**Layers are immutable and all of them are kept.** A file you `COPY` and later `RUN rm` is gone from the final filesystem and completely present in the layer beneath. That is a size problem and, when the file was a `.env`, a security incident.
+
+**`.dockerignore` controls what the build context contains**, which controls what a broad `COPY` can read — and therefore what can invalidate the cache.
 
 ## An everyday analogy
 
-Think of AI containerization like **a professional mobile food truck**:
+Think of a recipe where each step is photographed, and you may resume from any photograph rather than starting over.
 
-- **The Kitchen Factory (Builder Stage):** The truck was designed and welded in a heavy industrial factory with plasma cutters and sheet metal benders (**Stage 1 Build Tools**).
-- **The Clean Food Truck (Runner Stage):** When driving on city streets, the truck only carries cooking equipment, fresh ingredients, and the chef (**Stage 2 Production Container**).
-- **The City Utility Hookup (GPU Container Toolkit):** When parked at the festival, the food truck plugs into a standard high-voltage power outlet provided by the city park (**Host GPU Driver Connection**).
+Yesterday you made the dish. Today one ingredient changed. If the changed ingredient goes in at step two, every photograph from step two onward is worthless and you cook almost the whole dish again. If it goes in at step nine, you resume from photograph eight.
+
+The cooking is identical. The **order** decides how much you repeat.
+
+And the part that maps most exactly: you cannot resume from photograph nine just because step nine is unchanged. Step nine assumed the pan looked like photograph eight. If eight is gone, nine is gone, regardless of its own ingredients.
+
+That is the whole cache rule, and it is why a Dockerfile is written expensive-and-stable first, cheap-and-volatile last.
 
 ## Examples in practice
 
-Let us build a complete Python **Container Builder and GPU Health Probe Engine** that models multi-stage dependency extraction, model weight verification, and container health lifecycle checks:
-
-```python
-import os
-import json
-from typing import Dict, Any, List, Optional
-
-class ContainerEnvironmentValidator:
-    def __init__(self, target_image_type: str = "production_runtime"):
-        self.image_type = target_image_type
-        self.installed_packages: Dict[str, str] = {}
-        self.gpu_devices: List[str] = []
-        self.model_weights_cached: bool = False
-        self.is_running_as_non_root: bool = False
-        
-    def simulate_build_stage(self, stage: str, wheels_built: List[str]):
-        if stage == "builder":
-            # Stage 1: Build wheels and discard build tools
-            self.installed_packages["build_tools"] = "DISCARDED"
-            for w in wheels_built:
-                self.installed_packages[w] = "COMPILED_WHEEL"
-        elif stage == "runner":
-            # Stage 2: Install only compiled wheels
-            self.installed_packages = {k: v for k, v in self.installed_packages.items() if v == "COMPILED_WHEEL"}
-            self.is_running_as_non_root = True
-
-    def configure_gpu_devices(self, devices: List[str], vram_per_device_gb: int = 24):
-        self.gpu_devices = devices
-        self.vram_gb = vram_per_device_gb
-
-    def verify_readiness_probe(self) -> Dict[str, Any]:
-        # Evaluates Kubernetes readiness criteria before receiving traffic
-        if not self.gpu_devices:
-            return {"status": "NOT_READY", "reason": "NO_GPU_DEVICES_DETECTED", "http_code": 503}
-            
-        if not self.is_running_as_non_root:
-            return {"status": "SECURITY_WARNING", "reason": "RUNNING_AS_ROOT", "http_code": 500}
-            
-        return {
-            "status": "READY",
-            "http_code": 200,
-            "gpu_count": len(self.gpu_devices),
-            "vram_allocated_gb": len(self.gpu_devices) * self.vram_gb,
-            "security_context": "NON_ROOT_USER"
-        }
-
-if __name__ == "__main__":
-    validator = ContainerEnvironmentValidator()
-    validator.simulate_build_stage("builder", ["torch-2.4.0", "vllm-0.6.0", "flash-attn-2.6"])
-    validator.simulate_build_stage("runner", [])
-    validator.configure_gpu_devices(["/dev/nvidia0", "/dev/nvidia1"], vram_per_device_gb=80)
-    
-    print("Readiness Probe:", json.dumps(validator.verify_readiness_probe(), indent=2))
-```
-
-## Production Architecture Case Study: Multi-Cloud GPU Serving Cluster
-
-Consider a high-throughput AI infrastructure platform deploying 500 GPU inference containers across AWS EKS and Google Cloud GKE.
+Here is the measured output from today's lab. Two Dockerfiles build the same application from the same base image with the same packages. One line of source code changed.
 
 ```text
-+-------------------------------------------------------------------------------+
-|                    ENTERPRISE CONTAINER METRICS BENCHMARK                     |
-+-------------------+-----------------------+-----------------------------------+
-| Metric            | Monolithic Dockerfile | Multi-Stage Lean Container        |
-+-------------------+-----------------------+-----------------------------------+
-| Image Pull Time   | 8 mins 45 secs        | 22 seconds (95.8% Faster)         |
-| Disk Image Size   | 16.4 GB               | 920 MB (94.4% Smaller)            |
-| Node Cold-Start   | 11 mins 10 secs       | 48 seconds Total                  |
-| Known CVEs        | 142 Vulnerabilities   | 3 Low Vulnerabilities             |
-| Autoscaling Speed | Fails during bursts   | Scales to 50 pods in < 90 seconds |
-+-------------------+-----------------------+-----------------------------------+
+--- naive: COPY . . then install ---
+  cold build   0/6 layers cached  rebuild 76.0s
+  after edit   2/6 layers cached  rebuild 76.0s
+  first miss   line 3: COPY . .
+               reads changed file(s): src/app.py
+--- ordered: manifest, install, then source ---
+  cold build   0/8 layers cached  rebuild 77.0s
+  after edit   4/8 layers cached  rebuild 1.0s
 ```
 
-### 1. Multi-Stage Dockerfile Production Template
-```dockerfile
-# ─────────────────────────────────────────────────────────────
-# STAGE 1: Compilation Builder (Discarded)
-# ─────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS builder
-WORKDIR /build
+**76 seconds against 1.** Both miss on the same file — `src/app.py`. The difference is *where* the miss happens. In the naive file `COPY . .` sits above the install, so the install is downstream and re-runs. In the ordered file the install sits above the copy and is reused.
 
-RUN apt-get update && apt-get install -y --no-install-recommends     python3-dev python3-pip gcc g++ cmake git &&     rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip3 wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt
-
-# ─────────────────────────────────────────────────────────────
-# STAGE 2: Lean Production Runtime (850MB)
-# ─────────────────────────────────────────────────────────────
-FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS runner
-WORKDIR /app
-
-# Create unprivileged non-root user
-RUN groupadd -g 10001 appgroup &&     useradd -u 10001 -g appgroup -s /bin/bash appuser &&     apt-get update && apt-get install -y --no-install-recommends python3 python3-pip &&     rm -rf /var/lib/apt/lists/*
-
-# Install pre-compiled wheels from Stage 1
-COPY --from=builder /wheels /wheels
-RUN pip3 install --no-cache-dir /wheels/* && rm -rf /wheels
-
-COPY --chown=appuser:appgroup src/ /app/src/
-USER appuser
-
-EXPOSE 8000
-HEALTHCHECK --interval=10s --timeout=3s --retries=3   CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"
-
-ENTRYPOINT ["python3", "-m", "src.main"]
-```
-
-#### 2. Persistent Volume Pre-Warming vs Layer Baking
-For models under 7B parameters (e.g. Mistral-7B, Llama-3.2-3B), weights are converted to SafeTensors and baked directly into a dedicated Docker image layer (`COPY --from=weights-stage /models /app/models`). For 70B+ parameter models, weights are pre-warmed onto local NVMe instance storage or shared EFS volumes to avoid 140GB container registry transfers.
-
-## Detailed Failure Mode Taxonomy: AI Container Hazards
+Read the cold builds too, because that is the part that makes this an easy decision: 76.0s and 77.0s. Ordering the instructions costs nothing on a first build and returns the entire install on every build after it.
 
 ```text
-+-------------------------------------------------------------------------------+
-|                         AI CONTAINER FAILURE TAXONOMY                         |
-+-------------------+-----------------------+-----------------------------------+
-| Failure Mode      | Root Cause Analysis   | Architectural Mitigation          |
-+-------------------+-----------------------+-----------------------------------+
-| CUDA Driver       | Container requires    | Match container CUDA toolkit with |
-| Version Mismatch  | higher driver than host| host driver compatibility matrix  |
-| Root Breakout     | Container runs as root| Enforce non-root user (`appuser`) |
-| Vulnerability     | with mounted /dev devices| and drop all Linux capabilities |
-| OOM Kill on Boot  | PyTorch pre-allocates | Set `PYTORCH_CUDA_ALLOC_CONF` and |
-| (VRAM Crash)      | all GPU VRAM at once  | reserve headroom for KV cache     |
-| Zombie Process    | Python PID 1 ignores  | Use `tini` / dumb-init as the     |
-| Accumulation      | SIGTERM signals       | container init process            |
-+-------------------+-----------------------+-----------------------------------+
+--- lint: naive ---
+  line  3 [copy-before-install] COPY . . before the install layer
+  line  4 [pip-cache-kept]      no --no-cache-dir, so the wheel cache ships
+  line  0 [runs-as-root]        no USER instruction
+--- lint: ordered ---
+  no findings
 ```
 
+`line 0` is not a bug. The finding is about the *absence* of an instruction, and an absence has no line to point at.
 
-
-## Deep Architectural Breakdown: CUDA Container Layer Optimization and Cold-Start Mechanics
-
-When building container images for GPU-accelerated deep learning applications, standard container optimization techniques fall short. The primary operational bottlenecks are image pull latency and GPU driver initialization:
-
-### 1. The Multi-Layer Caching Hierarchy in GPU Containers
-Standard PyTorch base images (`nvidia/cuda:12.4.1-devel-ubuntu22.04`) can easily exceed 15GB if not engineered carefully. A production Dockerfile must partition layers based on change frequency:
-
-```dockerfile
-# Immutable System Layer (Cached across all models)
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS base
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends     python3.11     python3-pip     libgomp1     && rm -rf /var/lib/apt/lists/*
-
-# Pre-Compiled Python Wheels Layer (Changes quarterly)
-WORKDIR /build
-COPY requirements/wheels.txt .
-RUN pip install --no-cache-dir -r wheels.txt
-
-# Model Metadata and Application Code Layer (Changes daily)
-WORKDIR /app
-COPY src/ /app/src/
-USER 10001:10001
-ENTRYPOINT ["python3", "-m", "src.server"]
-```
-
-### 2. GPU Container Toolkit (NVIDIA Container Runtime) IPC Mechanics
-Containers cannot interact directly with PCI-e devices like GPUs without driver bridge pass-through. The `nvidia-container-toolkit` injects:
-- **`libcuda.so.1`:** User-space driver library matching the host kernel module.
-- **`nvidia-smi` and NVML:** GPU management and metrics interfaces.
-- **`/dev/nvidia*` device nodes:** Direct character device mappings into the container namespace.
-
-### 3. Model Weight Pre-Baking vs Ephemeral Volume Mounts
-- **Pre-baking Weights into Container Image:** Best for immutable production deployments where rapid cold-starts (sub-5 seconds) are critical. Increases image size to 10GB-20GB.
-- **Ephemeral Volume Mounts (S3/GCS with Caching):** Keeps image size under 500MB, but incurs a 30 to 90-second weight download penalty upon initial pod launch. Production systems use persistent local NVMe caches with daemonsets.
+One more result worth knowing, because it surprises people: editing `README.md` costs the full 76 seconds in the naive Dockerfile and zero in the ordered one. `COPY . .` reads the README as readily as the source. That is what `.dockerignore` is actually for — not tidiness, but keeping irrelevant files out of the thing that decides your cache.
 
 ## Implications: security, privacy, performance, scalability, and cost
 
-### 1. Zero Root Container Execution (Least Privilege)
-Never run production AI containers as UID 0 (`root`). Non-root execution blocks malicious prompt injection payloads from attempting kernel elevation via GPU memory mapping exploits.
+**Security.** Every layer is kept. `COPY .env .` followed by `RUN rm .env` produces an image where the secret is invisible in the final filesystem and fully recoverable with `docker save` and `tar`. This is the most common way credentials reach a public registry. Never copy the secret; use `.dockerignore`, a build secret, or a runtime variable.
 
-### 2. Read-Only Root Filesystem
-Mount the container root filesystem as read-only (`read_only_root_filesystem: true`) in Kubernetes security contexts, using temporary in-memory `tmpfs` mounts only for `/tmp` and cache directories.
+**Privilege.** Without `USER`, the process runs as uid 0 inside the container. Combined with a mounted host path or a kernel escape, root inside is a much worse starting point than an unprivileged uid. One line fixes it.
+
+**Reproducibility.** `FROM python:3.12-slim` is a moving target. Pin the tag, and pin the digest when a build must be reproducible months later.
+
+**Performance and cost.** Image size is pull time, multiplied by every node that pulls it. `--no-cache-dir` on pip and removing the apt lists in the *same* layer are the two cheapest wins available.
+
+**Scalability of the practice.** The cache rule is what makes CI affordable. A CI job with a cold cache pays the install on every commit; one with a warm cache and a correctly ordered Dockerfile pays it only when dependencies change.
 
 ## Alternatives: free, open source, and commercial
 
-| Tool / Framework | Type | Best Suited For | Key Capabilities |
-| :--- | :--- | :--- | :--- |
-| **NVIDIA Container Toolkit** | Open Source | Standard GPU Containerization | Seamless device injection, OCI hook |
-| **Docker Multi-Stage** | Open Source | Lean Image Construction | Discards build-time toolchains |
-| **BuildKit** | Open Source | High-Speed Concurrent Builds | Secret mounting, SSH forwarding, cache |
-| **Distroless (Google)** | Open Source | Minimal Attack Surface | Stripped OS with zero package manager |
+**Docker Engine** — Apache-2.0, the default, and the one every tutorial assumes. Docker Desktop is the commercial packaging and has licence conditions for larger companies; the engine itself does not.
+
+**Podman and Buildah** — Red Hat's daemonless, rootless alternatives. They read the same Dockerfiles and produce the same OCI images. `podman` is close enough to a drop-in that aliasing it usually works.
+
+**BuildKit** — now the default Docker builder. Parallel stages, build secrets that never enter a layer, and cache mounts that persist a package cache across builds without shipping it.
+
+**Nix and Bazel** — reproducible builds taken seriously, at the cost of a much steeper learning curve. Worth it when byte-identical rebuilds matter.
+
+**Buildpacks** — no Dockerfile at all; the platform detects your stack and builds an image. Convenient, and the trade is that you no longer control layer order — which, as today shows, is the thing that decides your build time.
+
+The honest default: a hand-written Dockerfile with BuildKit, ordered manifest-first.
 
 ## Comparison with related concepts
 
-```text
-+-----------------------+-----------------------+-----------------------+
-| Dimension             | Monolithic Dockerfile | Multi-Stage Runtime   |
-+-----------------------+-----------------------+-----------------------+
-| Image Size            | 15 GB - 25 GB         | 850 MB - 1.2 GB       |
-| Compiler Toolchains   | Lingers in final image| Discarded in Stage 1  |
-| Security Attack Vector| Broad (Shell, GCC)    | Minimal (Runtime only)|
-| Cluster Pull Speed    | 8 - 15 minutes        | 15 - 30 seconds       |
-+-----------------------+-----------------------+-----------------------+
-```
+**Container versus virtual machine.** A VM brings its own kernel and boots in seconds; a container shares the host kernel and starts in milliseconds. The VM boundary is stronger; the container boundary is cheaper.
+
+**Image versus container.** The image is the inert filesystem; the container is a process running against a writable layer on top of it. Deleting a container does not delete the image.
+
+**Layer cache versus dependency cache.** The layer cache reuses whole filesystem diffs. A pip or npm cache lives *inside* a layer. BuildKit cache mounts let you keep the second without shipping it in the image — a distinction worth knowing once builds get slow.
+
+**Tag versus digest.** A tag is a mutable pointer; a digest identifies exact bytes. `:3.12-slim` is a promise about compatibility, not identity.
 
 ## When to use it — and when not to
 
-### Implement Multi-Stage AI Containers for:
-- All production GPU inference workloads, microservice deployments, Kubernetes clusters, and cloud autoscaling groups.
+**Use a container when the target machine is not yours** — a colleague's laptop, CI, a cloud host. This is nearly always.
 
-### Do NOT require multi-stage CUDA builds for:
-- Pure CPU API gateways or static HTML frontends.
+**Use one to pin a stack you cannot install cleanly**, which is the usual case with CUDA and system libraries.
 
+**Do not reach for one to run a script on your own machine.** A virtual environment is smaller, faster and enough.
 
-### Production Checklist: GPU Containerization Hardening
-- [ ] Base image pinned to exact CUDA and cuDNN patch version (avoid `latest` tag).
-- [ ] Multi-stage build separates compiler toolchains (`gcc`, `nvcc`) from the minimal runtime image.
-- [ ] User ID explicitly set to non-root UID (`USER 10001:10001`) with read-only root filesystem.
-- [ ] Shared memory size (`shm-size`) configured to at least 16GB to prevent PyTorch DataLoader crashes.
-- [ ] Model weights cached on local SSD/NVMe volume with SHA-256 integrity verification on container boot.
+**Do not treat it as a security boundary against hostile code.** Shared kernel. For untrusted workloads you want a VM boundary — gVisor, Firecracker, or an actual VM.
+
+**Do not put the model weights in the image without thinking.** A 15 GB image is 15 GB pulled onto every node, every rollout. Weights usually belong in a volume or object storage, fetched at start.
 
 ## Knowledge check
 
-1. **How does a Multi-Stage Dockerfile reduce AI container image size by over 90%?** By compiling heavy C++ and CUDA wheels in Stage 1 and copying only the final compiled wheels into a lean runtime base in Stage 2, discarding build compilers and headers.
-2. **What is the responsibility of the NVIDIA Container Toolkit?** To mount host kernel GPU driver device nodes (`/dev/nvidia*`) and dynamic driver libraries into the container at runtime.
-3. **Why must AI containers run under a non-root user?** To prevent potential container escape vulnerabilities from obtaining root privileges over the host kernel and GPU hardware.
+1. Why does editing one Python file re-run `pip install` in a Dockerfile that begins `COPY . .`?
+2. A layer's own inputs are unchanged, but it still rebuilds. Why?
+3. Why do the two Dockerfiles in the lab take almost the same time on a *cold* build, and what does that tell you about the cost of adopting the better order?
+4. Why is a secret that you `COPY` and then `RUN rm` still readable in the image?
+5. Why does the linter report `runs-as-root` at line 0?
 
 ## Hands-on exercise
 
-In this lab, you will build a **Container Build Validator and GPU Health Probe Engine in Python**. Your implementation will:
-1. Simulate multi-stage build artifact separation, ensuring build tools are purged from the runner stage.
-2. Configure GPU device node detection and calculate allocated VRAM capacity.
-3. Implement Kubernetes readiness probes validating non-root security context and GPU device availability.
-4. Verify graceful error handling when GPU hardware is disconnected.
+You will build a Dockerfile parser, a model of the layer cache, and a linter — then measure what one edit costs under two instruction orders.
+
+Open `starter/layer_cache.py` in the lab directory and implement the stubbed functions, then run the tests. Docker is not required.
 
 ### Expected output
 
+Running `python3 examples/cache_demo.py` compares two Dockerfiles after one source edit:
+
 ```text
-============================= test session starts ==============================
-collected 5 items
-
-tests/test_container_validator.py .....                                  [100%]
-
-============================== 5 passed in 0.02s ===============================
-[CONTAINER BUILD] Stage 1 builder compiled 3 heavy C++ wheels.
-[STAGE 2 RUNNER] Lean runner image initialized with zero build tools.
-[GPU DETECTION] Configured 2 NVIDIA GPUs with 160GB total VRAM.
-[READINESS PROBE] HTTP 200 OK — Container verified ready for traffic.
+--- the cost of one edit ---
+  naive 76.0s vs ordered 1.0s
+  ordering the same instructions is 76x faster to rebuild
 ```
+
+Same base image, same packages, same application, different order.
 
 ### Validate your work
 
-Run the pytest test suite:
+Run `bash tests/run_tests.sh`. All twenty-eight tests must pass.
 
-```bash
-pytest tests/run_tests.sh
-```
+Then check three things by inspection. The two **cold** builds must be within a few seconds of each other — if reordering appears to speed up a first build, the model is skipping layers it should run. Editing `README.md` must cost nothing in the ordered Dockerfile and the full install in the naive one. And changing `requirements.txt` must re-run the install in **both**, because there the install genuinely does depend on what changed.
 
 ### Troubleshooting
 
-1. **Non-root validation:** Ensure `self.is_running_as_non_root` is set to `True` in the runner stage.
-2. **Readiness probe code:** Return HTTP 503 when no GPU devices are configured.
+**Everything after the first miss is still marked cached.** That is the rule the lab exists for — set a flag on the first miss and carry it down.
+
+**The two Dockerfiles rebuild identically.** Your path matcher does not treat `.` as covering every file, so `COPY . .` looks harmless.
+
+**A continuation becomes several instructions.** Accumulate while a line ends with a backslash; emit only when it does not.
+
+**`apt-cache-kept` fires on a Dockerfile that does clean up.** The cleanup must be in the same `RUN` — check the continuation was joined.
 
 ### Common mistakes
 
-- Leaving compiler packages (`build_tools`) in the runner stage dictionary.
+Numbering instructions rather than lines, so the linter sends you to the wrong place.
+
+Treating the last token of a `COPY` as a source; it is the destination.
+
+Using a substring test for path matching, so `src` matches `not-src/app.py`.
+
+Assuming reordering is a trade-off. It is not — the cold builds prove it is free.
 
 ## Practice assignment
 
-Add a **Liveness Probe Checker** that verifies GPU temperature and VRAM utilization thresholds.
+Add **`.dockerignore` support**. Give `plan_build` a set of ignore patterns and exclude matching files from what a broad `COPY` reads.
+
+Then measure how much of the naive Dockerfile's penalty it removes, and write a test pinning the answer. The result is instructive: ignoring `README.md`, `.git` and `__pycache__` helps, and the naive Dockerfile is still catastrophically slower than the ordered one, because the source files it must copy are exactly the files you edit. `.dockerignore` reduces accidental invalidation; only ordering removes the structural kind.
 
 ## Extension challenge
 
-Implement an automated **Docker Layer Size Profiler** that analyzes Dockerfile instructions and warns if any layer exceeds 500MB.
+Model **multi-stage builds**, then check your model against reality.
+
+Track stages by their `AS` name, and let `COPY --from=builder` depend on the builder stage's cache state rather than on the project files. Then answer with a test: if a source file changes, does the final stage rebuild when the builder stage did not?
+
+If you have Docker or Podman installed, do the second half. Build both Dockerfiles for real, `touch` one source file, rebuild, and time it. Compare the measured ratio with the 76x the model predicts.
+
+It will not match, and the ways it is wrong are the interesting part: BuildKit parallelises independent stages, your registry may already hold the layers, and the first `pip install` is dominated by network rather than CPU. A model you know the error bars on is worth considerably more than one you have never checked.
