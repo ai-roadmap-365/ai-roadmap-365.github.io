@@ -68,4 +68,13 @@ if (existsSync(dist)) {
   }
 }
 
+// A check that scans nothing must not report success. A failed or partial
+// build leaves dist/ empty or nearly so, and this gate would otherwise print
+// "0 built pages pass" and exit green — the exact shape of green-and-wrong.
+const MIN_PAGES = 100;
+if (pages < MIN_PAGES)
+  r.fail(
+    `only ${pages} built page(s) found in dist/ — expected at least ${MIN_PAGES}; the build is incomplete`,
+  );
+
 r.finish(`${pages} built pages pass structural accessibility checks.`);

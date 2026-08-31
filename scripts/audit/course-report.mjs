@@ -117,14 +117,36 @@ function analyseDay(day) {
   const longest = paras.reduce((m, p) => Math.max(m, p.words), 0);
   const heavy = paras.filter((p) => p.words > 120).length;
 
-  const starterFiles = fs.existsSync(path.join(l, 'starter'))
-    ? fs.readdirSync(path.join(l, 'starter'))
-    : [];
-  const identicalStarter = starterFiles.some((f) => {
-    const a = path.join(l, 'starter', f);
-    const b = path.join(l, 'examples', f);
-    return fs.existsSync(b) && fs.readFileSync(a, 'utf8') === fs.readFileSync(b, 'utf8');
+  // Starters are not always flat: the days that teach modules, project layout
+  // and packaging ship a real package directory. Walk them, comparing by path
+  // relative to starter/, or the whole check crashes on EISDIR and the course
+  // is never audited at all.
+  const walkFiles = (dir, base = dir) =>
+    fs.existsSync(dir)
+      ? fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) return walkFiles(full, base);
+          return e.isFile() ? [path.relative(base, full)] : [];
+        })
+      : [];
+
+  const starterFiles = walkFiles(path.join(l, 'starter'));
+  // The defect is a starter that IS the solution, not one that shares files
+  // with it. Sharing is normal and deliberate: data fixtures, the code under
+  // test, and a package whose metadata is the exercise are all legitimately
+  // identical. Flagging any identical file reported 10 false positives on
+  // Programming with Python, where every one of those starters fails its own
+  // suite. So: flag only when NOTHING the learner is given differs.
+  const paired = starterFiles.filter((rel) => {
+    const b = path.join(l, 'examples', rel);
+    return fs.existsSync(b) && fs.statSync(b).isFile();
   });
+  const differing = paired.filter(
+    (rel) =>
+      fs.readFileSync(path.join(l, 'starter', rel), 'utf8') !==
+      fs.readFileSync(path.join(l, 'examples', rel), 'utf8'),
+  );
+  const identicalStarter = paired.length > 0 && differing.length === 0;
 
   const socialDir = path.join(repoRoot, 'social-media', day.dayId);
   const videoDir = path.join(repoRoot, 'videos', 'sections', day.section, day.dayId);
