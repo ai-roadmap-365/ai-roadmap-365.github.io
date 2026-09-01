@@ -2,5 +2,5 @@
 
 ## Common Issues
 1. **DPO Loss divergence:**
-   - Cause: $eta$ parameter set too high ($> 1.0$).
-   - Fix: Keep $eta$ in range $[0.05, 0.20]$.
+   - Cause: $\beta$ parameter set too high ($> 1.0$).
+   - Fix: Keep $\beta$ in range $[0.05, 0.20]$.

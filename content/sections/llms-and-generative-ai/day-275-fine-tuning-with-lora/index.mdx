@@ -17,6 +17,8 @@ Understanding the mathematical mechanics of low-rank factorization, rank dimensi
 
 ## The idea in plain language
 
+![Diagram: how low-rank adaptation trains a small addition to a frozen model](./assets/lora-idea.svg)
+
 Imagine you buy a comprehensive 2,000-page encyclopedia on world history. If you want to customize this encyclopedia for a specialized university course on the maritime history of 18th-century Venice, full fine-tuning is equivalent to rewriting all 2,000 pages by hand from scratch. You risk introducing errors into previously accurate chapters on ancient Rome, and you must print an entirely new 2,000-page book.
 
 LoRA takes a completely different approach:
@@ -27,7 +29,7 @@ LoRA takes a completely different approach:
 4. If a different class needs a course on medieval metallurgy, you simply swap the 5-page overlay booklet for a metallurgy booklet in a fraction of a second, without touching the base encyclopedia.
 5. When you are ready to publish a permanent single edition, you can permanently print the transparent overlay annotations directly onto the base pages with zero future reading slowdown (**Weight Merging**).
 
-Mathematically, LoRA achieves this extreme compression by factoring a massive weight change matrix $Delta W$ into the product of two ultra-narrow matrices ($B 	imes A$).
+Mathematically, LoRA achieves this extreme compression by factoring a massive weight change matrix $Delta W$ into the product of two ultra-narrow matrices ($B \times A$).
 
 ## Historical background
 
@@ -43,6 +45,8 @@ By decomposing $Delta W$ into parallel low-rank matrices $B * A$, LoRA solved th
 In 2023, Tim Dettmers and the University of Washington extended this breakthrough with **QLoRA (Quantized LoRA)**, introducing 4-bit NormalFloat (NF4) base weight quantization and Double Quantization, enabling fine-tuning of 65B parameter models on a single 48GB GPU without performance degradation.
 
 ## What it is — and what it is not
+
+![Diagram: adapter fine-tuning compared with full-parameter fine-tuning](./assets/lora-vs-full.svg)
 
 To avoid architectural mistakes, let us define what LoRA is and what it is not:
 
@@ -78,6 +82,9 @@ LoRA addresses three massive engineering bottlenecks in enterprise AI deployment
 
 ### 1. The VRAM & Optimizer Memory Wall
 When training with 16-bit mixed precision and the AdamW optimizer:
+
+![Diagram: the four memory consumers that prevent full fine-tuning on one device](./assets/vram-wall.svg)
+
 - Weights: 2 bytes per parameter
 - Gradients: 2 bytes per parameter
 - AdamW Momentum: 4 bytes per parameter
@@ -90,7 +97,7 @@ For a 70B model, optimizer states alone consume over **1.1 Terabytes of VRAM**. 
 If an enterprise builds 50 specialized models for distinct internal workflows (e.g. invoice extraction, code review, customer support routing, HR policy Q&A), full fine-tuning produces fifty 14GB checkpoints (700GB total storage) and requires 50 dedicated GPU clusters to serve them. With LoRA, the enterprise stores one shared 14GB base model and fifty 40MB adapter checkpoints, dynamically loading adapters into GPU memory on demand.
 
 ### 3. The Inference Latency Penalty of Prior Adapters
-Sequential adapter architectures inserted extra layers between transformer blocks, adding 15–30% latency to every autoregressive generation step. LoRA's parallel additive structure (`W_0 x + Delta W x`) allows offline matrix folding (`W_(	ext(merged)) = W_0 + Delta W`), guaranteeing zero inference slowdown.
+Sequential adapter architectures inserted extra layers between transformer blocks, adding 15–30% latency to every autoregressive generation step. LoRA's parallel additive structure (`W_0 x + Delta W x`) allows offline matrix folding (`W_(\text(merged)) = W_0 + Delta W`), guaranteeing zero inference slowdown.
 
 ## How it works
 
@@ -107,7 +114,7 @@ Input Vector x (d_in)
 ```
 
 ### 1. Low-Rank Factorization Mathematics
-Given a pretrained linear projection layer with weight matrix `W_0 in R^(d_(	ext(out)) 	imes d_(	ext(in)))`, the forward computation for an input vector `x in R^(d_(	ext(in)))` is:
+Given a pretrained linear projection layer with weight matrix `W_0 in R^(d_(\text(out)) \times d_(\text(in)))`, the forward computation for an input vector `x in R^(d_(\text(in)))` is:
 ```text
 h = W_0 x
 ```
@@ -116,13 +123,19 @@ LoRA modifies this forward pass by constraining the weight update $Delta W$ to a
 h = W_0 x + Delta W x = W_0 x + (alpha / r) * (B * A) x
 ```
 Where:
-- `A in R^(r 	imes d_(	ext(in)))` is the down-projection matrix.
-- `B in R^(d_(	ext(out)) 	imes r)` is the up-projection matrix.
-- `r much less than min(d_(	ext(in)), d_(	ext(out)))` is the rank bottleneck dimension (typically `r in \(4, 8, 16, 32\)`).
-- `lpha in R^+` is a constant scaling hyperparameter.
+
+![Diagram: why the weight update needed for a task is low-rank](./assets/low-rank-math.svg)
+
+- `A in R^(r \times d_(\text(in)))` is the down-projection matrix.
+- `B in R^(d_(\text(out)) \times r)` is the up-projection matrix.
+- `r much less than min(d_(\text(in)), d_(\text(out)))` is the rank bottleneck dimension (typically `r in \(4, 8, 16, 32\)`).
+- `\alpha in R^+` is a constant scaling hyperparameter.
 
 ### 2. Initialization Dynamics
 At the beginning of training (step 0):
+
+![Diagram: how adapter initialisation keeps the model unchanged at the start of training](./assets/init-dynamics.svg)
+
 - Matrix $A$ is initialized from a zero-mean Gaussian distribution: $A \sim N(0, sigma^2)$.
 - Matrix $B$ is initialized entirely to zero: $B = 0$.
 
@@ -132,13 +145,16 @@ h = W_0 x + (alpha / r) * (0 * A) x = W_0 x
 ```
 This guarantees that the model begins training with its exact pretrained representations intact, preventing random gradient shocks at step 0.
 
-### 3. The Scaling Factor $lpha$ and Hyperparameter Selection
-The scaling factor `rac(lpha)(r)` stabilizes training dynamics when tuning rank `r`:
-- When rank $r$ is doubled from 8 to 16, the inner dimension doubles, which can scale the magnitude of activations. Setting $lpha = 2r$ or keeping $lpha = 16$ fixed ensures that gradient updates scale predictably without requiring retuning of the learning rate.
-- Common rule of thumb: set $lpha = 2r$ (e.g., $r=8, lpha=16$ or $r=16, lpha=32$).
+### 3. The Scaling Factor $\alpha$ and Hyperparameter Selection
+The scaling factor `\frac(\alpha)(r)` stabilizes training dynamics when tuning rank `r`:
+
+- When rank $r$ is doubled from 8 to 16, the inner dimension doubles, which can scale the magnitude of activations. Setting $\alpha = 2r$ or keeping $\alpha = 16$ fixed ensures that gradient updates scale predictably without requiring retuning of the learning rate.
+- Common rule of thumb: set $\alpha = 2r$ (e.g., $r=8, \alpha=16$ or $r=16, \alpha=32$).
 
 ### 4. Target Module Selection in Modern Transformers
 In modern decoder-only architectures (Llama 3, Mistral, Qwen), linear projections exist in both self-attention and feed-forward MLP blocks:
+
+![Diagram: which transformer modules adapters are attached to](./assets/target-modules.svg)
 
 1. **Self-Attention Projections:**
    - $W_q$ (Query projection)
@@ -146,9 +162,9 @@ In modern decoder-only architectures (Llama 3, Mistral, Qwen), linear projection
    - $W_v$ (Value projection)
    - $W_o$ (Output projection)
 2. **MLP / SwiGLU Projections:**
-   - `W_(	ext(gate))` (Gate projection)
-   - `W_(	ext(up))` (Up projection)
-   - `W_(	ext(down))` (Down projection)
+   - `W_(\text(gate))` (Gate projection)
+   - `W_(\text(up))` (Up projection)
+   - `W_(\text(down))` (Down projection)
 
 Targeting all linear projections (Attention + MLP) yields the highest empirical benchmark accuracy and catastrophic forgetting resistance.
 
@@ -157,13 +173,17 @@ Once training completes, the adapter matrices can be merged permanently into the
 ```text
 W_merged = W_0 + (alpha / r) * (B * A)
 ```
-The merged tensor `W_(	ext(merged))` has the exact same shape (`d_(	ext(out)) 	imes d_(	ext(in))`) as `W_0`, eliminating the runtime branching and dual matrix multiplications entirely.
+The merged tensor `W_(\text(merged))` has the exact same shape (`d_(\text(out)) \times d_(\text(in))`) as `W_0`, eliminating the runtime branching and dual matrix multiplications entirely.
+
+![Diagram: how a trained adapter is merged into the base weights for inference](./assets/merging.svg)
 
 ![LoRA Adapter Injection and Merging Flow demonstrating forward pass addition and permanent weight merging](./assets/lora-adapter-injection-and-merging-flow.svg)
 
 ## An everyday analogy
 
-Think of a high-resolution 4K digital photograph ($3840 	imes 2160$ pixels = 8.3 million pixels):
+![Diagram: repainting a surface compared with applying a removable overlay](./assets/stencil.svg)
+
+Think of a high-resolution 4K digital photograph ($3840 \times 2160$ pixels = 8.3 million pixels):
 
 - **Full Fine-Tuning** is like replacing all 8.3 million pixel values individually. Storing each modification requires a massive raw uncompressed TIFF file.
 - **LoRA** is like applying a low-rank Singular Value Decomposition (SVD) filter to the image. By capturing only the top 8 or 16 principal color gradients, you can store the entire visual adjustment in a tiny 50-kilobyte lookup table. When the image is displayed on screen, the display processor combines the base photograph with the lightweight color adjustment matrix seamlessly.
@@ -191,6 +211,9 @@ lora_config = LoraConfig(
 
 ### 2. Multi-Adapter Deployment on a Single Inference Pod
 A financial SaaS platform hosts a single Llama 3 70B base model on an 8-GPU Kubernetes pod. They maintain three separate LoRA adapters:
+
+![Diagram: how one loaded base model serves many task-specific adapters](./assets/multi-adapter.svg)
+
 - `adapter_sec_filings` (32MB)
 - `adapter_customer_sentiment` (32MB)
 - `adapter_sql_generator` (32MB)
@@ -199,8 +222,12 @@ When an incoming user request arrives at the vLLM serving gateway, the router in
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the access, storage, privacy and serving implications of adapter fine-tuning](./assets/lora-implications.svg)
+
 ### 1. Security & Adapter Provenance
 LoRA adapter checkpoints are compact binary tensors (`adapter_model.safetensors`). When loading community adapters from public repositories (such as Hugging Face Hub), always verify that checkpoints use the safe `safetensors` format rather than legacy Python `pickle` files, which are vulnerable to arbitrary remote code execution during deserialization.
+
+![Diagram: why the provenance of a downloaded adapter matters](./assets/adapter-provenance.svg)
 
 ### 2. Privacy & Data Isolation
 LoRA provides clean organizational multi-tenancy. An enterprise can train tenant-specific adapters on isolated customer datasets. Because base weights are frozen and adapter parameters are physically segregated into separate files, tenant data cannot bleed into the foundation model or cross-contaminate other customer adapters.
@@ -246,6 +273,8 @@ Monthly Serving (5 Adapters) 5x Dedicated GPU Pods ($25k) 1x Shared GPU Pod ($5k
 
 ## When to use it — and when not to
 
+![Diagram: when adapter fine-tuning is the right approach](./assets/lora-when.svg)
+
 ### Choose LoRA Fine-Tuning when:
 - You need to teach a model a specialized syntax, schema, tone, or task procedure.
 - You have between 500 and 20,000 verified demonstration examples.
@@ -257,10 +286,23 @@ Monthly Serving (5 Adapters) 5x Dedicated GPU Pods ($25k) 1x Shared GPU Pod ($5k
 - You have fewer than 100 examples — use few-shot prompting with prompt caching instead.
 - You need to fundamentally alter the underlying tokenizer vocabulary or pretrain a language model on a completely new human language from scratch.
 
+## The AI connection
+
+- **Low-rank adaptation made fine-tuning accessible** — a large model adapted on one device
+  rather than a cluster.
+- **The insight is that adaptation is low-rank**: the change a task needs is far smaller than
+  the model it changes.
+- **One backbone with many adapters** is a different serving architecture, not just a cheaper
+  training run.
+- **Adapters can be merged for zero inference overhead**, which removes the usual objection
+  to adapter-based methods.
+- **An adapter is executable-adjacent** — it changes model behaviour, so its provenance
+  matters as much as a dependency's.
+
 ## Knowledge check
 
-1. **Why does `B=0` initialization prevent gradient shocks at step zero?** Because `Delta W = rac(lpha)(r) B * A`. When `B=0`, `Delta W` is identically zero, ensuring the forward pass outputs exact base model activations prior to training updates.
-2. **What happens mathematically during weight merging?** The adapter product `Delta W = rac(lpha)(r) B * A` is computed and added directly to the base weight tensor `W_0`. The resulting tensor has the exact same dimensions as `W_0`, requiring zero adapter code at runtime.
+1. **Why does `B=0` initialization prevent gradient shocks at step zero?** Because `Delta W = \frac(\alpha)(r) B * A`. When `B=0`, `Delta W` is identically zero, ensuring the forward pass outputs exact base model activations prior to training updates.
+2. **What happens mathematically during weight merging?** The adapter product `Delta W = \frac(\alpha)(r) B * A` is computed and added directly to the base weight tensor `W_0`. The resulting tensor has the exact same dimensions as `W_0`, requiring zero adapter code at runtime.
 3. **What is the difference between LoRA and QLoRA?** LoRA stores base weights in 16-bit precision. QLoRA quantizes base weights into a specialized 4-bit NormalFloat (NF4) format with double quantization, while keeping the trainable LoRA adapter matrices in 16-bit Brain Floating Point (BF16), slashing base memory by 75%.
 
 ## Hands-on exercise
@@ -296,13 +338,13 @@ pytest tests/run_tests.sh
 
 ### Troubleshooting
 
-1. **Matrix multiplication dimension mismatch:** Ensure down-projection `A` has shape `(r, d_(	ext(in)))` and up-projection `B` has shape `(d_(	ext(out)), r)`.
+1. **Matrix multiplication dimension mismatch:** Ensure down-projection `A` has shape `(r, d_(\text(in)))` and up-projection `B` has shape `(d_(\text(out)), r)`.
 2. **Non-zero initialization output:** Verify that matrix $B$ is initialized with `np.zeros((d_out, r))`.
 
 ### Common mistakes
 
 - Transposing matrices incorrectly during forward pass: computing $x A B$ instead of $(x A^T) B^T$.
-- Forgetting the scaling factor `rac(lpha)(r)` during weight merging.
+- Forgetting the scaling factor `\frac(\alpha)(r)` during weight merging.
 
 ## Practice assignment
 

@@ -11,6 +11,8 @@ import { videoPath } from '../lib/links.mjs';
 import {
   FORBIDDEN_STRINGS,
   findForbidden,
+  findControlChars,
+  findUnbalancedFences,
   LESSON_HEADINGS,
   LESSON_HANDS_ON_HEADINGS,
   LESSON_FIELDS,
@@ -74,6 +76,14 @@ for (const d of authored) {
   // No fake-completion markers.
   for (const hit of findForbidden(mdx))
     r.fail(`${tag}: index.mdx contains forbidden marker "${hit}"`);
+
+  // No mangled backslash escapes. A shell heredoc that interprets `\a`, `\b`,
+  // `\f` and `\t` turns LaTeX into raw control characters, which look fine in
+  // a terminal and render as a broken formula on the site.
+  for (const hit of findControlChars(mdx)) r.fail(`${tag}: index.mdx ${hit}`);
+
+  // Code fences must pair at line starts, or every downstream tool mispairs.
+  for (const hit of findUnbalancedFences(mdx)) r.fail(`${tag}: index.mdx has ${hit}`);
 
   // Content files never hard-code repo or site URLs (central config only).
   if (/github\.com|localhost:\d+/i.test(mdx))
@@ -165,5 +175,5 @@ for (const d of authored) {
 }
 
 r.finish(
-  `${authored.length} authored lesson(s) pass the content contract (${FORBIDDEN_STRINGS.length} forbidden markers scanned, headings, sidecars, visuals).`,
+  `${authored.length} authored lesson(s) pass the content contract (${FORBIDDEN_STRINGS.length} forbidden markers scanned, headings, sidecars, visuals, control characters).`,
 );

@@ -80,7 +80,7 @@ rm -rf .pytest_cache __pycache__ .venv
 ```
 
 ## Troubleshooting
-Verify regex word extraction `re.findall(r'\w+', text.lower())` correctly captures clean tokens.
+Verify regex word extraction `re.findall(r'\b\w+\b', text.lower())` correctly captures clean tokens.
 
 ## Security notes
 Runs completely offline on local CPU. Zero network transmission.

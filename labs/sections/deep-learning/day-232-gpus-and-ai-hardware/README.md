@@ -66,8 +66,8 @@ Hardware Demo: FP16 Intensity = 170.67 FLOPs/Byte, Balance = 125.0
 ```
 
 ## Validation steps
-1. Verify `compute_gemm_intensity` calculates $2 	imes N^3$ FLOPs.
-2. Confirm FP16 yields $2	imes$ higher arithmetic intensity than FP32 for identical matrix dimensions.
+1. Verify `compute_gemm_intensity` calculates $2 \times N^3$ FLOPs.
+2. Confirm FP16 yields $2\times$ higher arithmetic intensity than FP32 for identical matrix dimensions.
 3. Confirm `calculate_machine_balance` correctly divides peak TFLOPs by peak bandwidth.
 4. Ensure all unit test assertions pass.
 

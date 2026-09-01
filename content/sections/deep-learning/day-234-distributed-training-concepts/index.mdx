@@ -14,6 +14,7 @@ A single modern GPU (such as an NVIDIA H100 with 80 GB VRAM) is an engineering m
 Yet, a 70-Billion parameter LLaMA model in mixed precision requires **over 1,120 GB of VRAM** just for static training states (weights, gradients, optimizer moments), completely blowing past the physical memory limit of any single chip on Earth.
 
 To train frontier models, we must distribute computation across **clusters of thousands of GPUs**:
+
 - How do 1,024 GPUs stay in perfect mathematical synchrony without spending `90\%` of their time waiting on network cables?
 - How does DeepSpeed **ZeRO / PyTorch FSDP** shatter the memory barrier by sharding weights across nodes?
 - How does **Megatron-LM Tensor Parallelism** slice a single matrix multiplication across 8 GPUs over 900 GB/s NVLink fabrics?
@@ -24,7 +25,10 @@ Today, you will master the principles of **Distributed Data Parallelism (DDP)**,
 
 ## The idea in plain language
 
+![Diagram: the four steps of synchronous data-parallel training](./assets/distributed-idea.svg)
+
 Think of constructing a 100-story skyscraper:
+
 - **Single GPU (One Solo Builder):** One person trying to pour concrete, install plumbing, and wire electrical panels alone. They run out of physical carrying capacity (**Out of Memory**) and the build takes 500 years.
 - **Data Parallelism (100 Duplicate Construction Teams):** 100 identical teams building 100 separate identical suburban homes simultaneously (**Sharded Data Batches**). At the end of each day, they meet on a radio channel to agree on the revised blueprints (**All-Reduce Gradients**).
 - **Tensor Parallelism (8 Specialists Lifting One Steel Beam):** 8 workers simultaneously lifting and welding a massive 10-ton steel girder that no individual worker could lift alone (**Slicing Matrix Projections on NVLink**).
@@ -33,6 +37,8 @@ Think of constructing a 100-story skyscraper:
 ---
 
 ## Historical background
+
+![Diagram: the historical progression of distributed deep learning strategies](./assets/distributed-history.svg)
 
 ![Taxonomy of 3D Parallelism showing Data Parallelism Tensor Parallelism and Pipeline Parallelism across multi-GPU clusters](./assets/distributed-training-3d-parallelism-taxonomy.svg)
 
@@ -57,6 +63,7 @@ Think of constructing a 100-story skyscraper:
 ## Why it was created and what problems it solves
 
 Distributed training solves two fundamental scaling barriers:
+
 1. **The Throughput Barrier (Dataset Scale):** Pretraining an LLM on 15 Trillion tokens on 1 GPU would take 150 years. With 1,024 GPUs in Data Parallelism, training completes in **50 days**.
 2. **The Memory Capacity Barrier (Model Size):** Storing a 405B parameter model requires 6.5 TB of VRAM. Distributed sharding (FSDP / Tensor Parallelism) splits the model across hundreds of chips.
 
@@ -70,9 +77,12 @@ Let us dissect collective communications, DDP mechanics, ZeRO stages, and 3D par
 
 ### 1. The Ring-AllReduce Algorithm (Baidu, 2017)
 
+![Diagram: centralised gradient averaging compared with ring-based averaging](./assets/ring-allreduce.svg)
+
 How do `P` GPUs compute the average of their gradient tensors of size `V` without a central master bottleneck?
 
 In **Ring-AllReduce**, the `P` GPUs are arranged in a logical unidirectional ring (`0 \rightarrow 1 \rightarrow 2 \rightarrow \dots \rightarrow P-1 \rightarrow 0`):
+
 1. **Step 1: Scatter-Reduce (`P - 1` steps):**
    - Each GPU divides its gradient tensor into `P` equal chunks.
    - At each step, GPU `i` sends chunk `k` to GPU `i+1` and receives chunk `k-1` from GPU `i-1`, summing received data into its local chunk.
@@ -85,13 +95,17 @@ In **Ring-AllReduce**, the `P` GPUs are arranged in a logical unidirectional rin
 ```
 \text{Total Data Transferred per GPU} = 2 \times \left(\frac{P - 1}{P}\right) \times V
 ```
+
 - As `P \rightarrow \infty`, data transferred per GPU is bounded by **`2V`** (independent of cluster size!), achieving near-linear scaling!
 
 ---
 
 ### 2. PyTorch DistributedDataParallel (DDP)
 
+![Diagram: how gradient communication overlaps with the backward pass](./assets/ddp-overlap.svg)
+
 In DDP:
+
 - Each GPU runs an identical model replica on a dedicated process.
 - **Gradient Bucketing & Overlapping:** DDP groups parameter gradients into contiguous memory buffers (**Buckets**, typically 25 MB).
 - As soon as a bucket fills during the backward pass, DDP immediately launches an asynchronous non-blocking `All-Reduce` collective over NCCL *while the GPU continues backpropagating earlier layers*!
@@ -99,6 +113,8 @@ In DDP:
 ---
 
 ### 3. ZeRO Memory Sharding & PyTorch FSDP
+
+![Diagram: full model replication compared with sharded parameters and optimiser state](./assets/ddp-vs-fsdp.svg)
 
 ![ZeRO memory sharding stages comparison showing Baseline DDP ZeRO 1 ZeRO 2 and ZeRO 3 Fully Sharded Data Parallel](./assets/zero-memory-sharding-stages-fsdp.svg)
 
@@ -127,6 +143,8 @@ In standard DDP, every GPU redundantly holds identical model parameters, gradien
 
 ### 4. 3D Parallelism: Megatron-LM Tensor & Pipeline Parallelism
 
+![Diagram: data, tensor and pipeline parallelism as three combined axes](./assets/three-d.svg)
+
 For models exceeding 100B parameters, combining DP, TP, and PP yields **3D Parallelism**:
 
 #### A. Tensor Parallelism (TP / Megatron-LM):
@@ -145,6 +163,7 @@ For models exceeding 100B parameters, combining DP, TP, and PP yields **3D Paral
 ### 5. Sequence Parallelism & DeepSpeed Ulysses (Korthikanti et al., 2022)
 
 In standard Tensor Parallelism, LayerNorm and Dropout activations are still duplicated across all TP ranks:
+
 - **Sequence Parallelism (SP):** Splits activations along the sequence length dimension (`L / P`) during LayerNorm and Dropout, eliminating duplicate activation memory.
 - **DeepSpeed Ulysses:** Utilizes an `All-to-All` collective communication primitive to transpose tokens from Sequence-sharded to Head-sharded before attention, enabling million-token context training with minimal communication overhead!
 
@@ -152,7 +171,10 @@ In standard Tensor Parallelism, LayerNorm and Dropout activations are still dupl
 
 ### 6. Context Parallelism & RingAttention (Liu et al., 2023)
 
+![Diagram: how attention is computed when the sequence is split across devices](./assets/context-parallel.svg)
+
 How do modern models process 1,000,000+ token context windows without crashing GPU VRAM?
+
 - **RingAttention:** Distributes the sequence across a ring of GPUs.
 - Each GPU holds a chunk of queries `Q_i`, and passes key-value blocks `K_j, V_j` around the ring in overlapping communication-computation cycles, computing exact global self-attention across arbitrary sequence lengths without ever storing the full `N \times N` attention matrix on any single device!
 
@@ -160,7 +182,10 @@ How do modern models process 1,000,000+ token context windows without crashing G
 
 ### 7. Expert Parallelism in Mixture-of-Experts (MoE / Lepikhin et al., GShard)
 
+![Diagram: how mixture-of-experts routing activates only part of the model per token](./assets/moe.svg)
+
 In sparse Mixture-of-Experts models (like Mixtral 8x7B or Grok-1):
+
 - **Expert Parallelism (EP):** Different GPUs host different Feed-Forward Expert networks.
 - A **Router / Gate Network** routes individual tokens to top-`k` experts across the cluster using `All-to-All` dispatch and combine collectives.
 - Allows scaling parameter capacity to hundreds of billions of parameters while keeping compute FLOPs per token constant!
@@ -170,6 +195,7 @@ In sparse Mixture-of-Experts models (like Mixtral 8x7B or Grok-1):
 ### 8. Production Cluster Orchestration: `torchrun` and NCCL Tuning
 
 To launch distributed jobs reliably on production clusters:
+
 - **`torchrun`:** The official PyTorch elastic launcher managing environment variables (`RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `MASTER_ADDR`, `MASTER_PORT`).
 - **NCCL Tuning Flags:**
   ```bash
@@ -178,13 +204,17 @@ To launch distributed jobs reliably on production clusters:
   export NCCL_NET_GDR_LEVEL=5       # Enable GPUDirect RDMA
   export TORCH_DISTRIBUTED_DEBUG=DETAIL
   ```
+
 - **PyTorch 2.x DeviceMesh:** A high-level abstraction defining 2D and 3D GPU grids for orchestrating hybrid parallel configurations (e.g., FSDP across nodes and Tensor Parallelism within nodes) cleanly and declaratively. This provides fine-grained control over multi-dimensional collective communication groups.
 
 ---
 
 ## An everyday analogy
 
+![Diagram: dividing work by chapter compared with dividing by task](./assets/translation.svg)
+
 Think of translating an encyclopedic 1,000-page book from English to Spanish:
+
 - **Data Parallelism:** 10 translators. Each translator gets 100 distinct chapters. They translate independently, and meet weekly to synchronize style and terminology (**Ring-AllReduce**).
 - **Tensor Parallelism:** 4 translators sitting at the same table working on the exact same complex sentence simultaneously, splitting idioms and grammar at high conversational speed (**NVLink Intra-Node**).
 - **Pipeline Parallelism:** An assembly line where Translator 1 translates draft `\rightarrow` Editor 2 polishes grammar `\rightarrow` Typesetter 3 formats pages (**1F1B Micro-Batches**).
@@ -236,6 +266,8 @@ def ring_allreduce_simulation(rank_tensors: List[np.ndarray]) -> List[np.ndarray
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the cost, failure, efficiency and complexity implications of distributed training](./assets/distributed-implications.svg)
+
 1. **Network Fault Tolerance & Stragglers:**
    - In synchronous DDP, if a single GPU among 1,024 throttles due to heat or a degraded optical cable, all 1,023 other GPUs stall on the All-Reduce barrier. Continuous telemetry (NCCL health checks) is essential.
 2. **Gradient Inversion & Differential Privacy:**
@@ -273,6 +305,8 @@ def ring_allreduce_simulation(rank_tensors: List[np.ndarray]) -> List[np.ndarray
 
 ## When to use it — and when not to
 
+![Diagram: when distributed training is warranted and when a single device is better](./assets/distributed-when.svg)
+
 ### When to Use Distributed Training:
 - Model parameters exceed single-GPU VRAM capacity, dataset size requires multi-GPU throughput, or training time must be compressed from months to days.
 
@@ -280,6 +314,19 @@ def ring_allreduce_simulation(rank_tensors: List[np.ndarray]) -> List[np.ndarray
 - Small models (&lt;1B parameters) on small datasets where network synchronization overhead exceeds computation time.
 
 ---
+
+## The AI connection
+
+- **Every frontier model is trained on a cluster**, so distribution is not an advanced
+  topic but the ordinary condition of large-scale training.
+- **Communication cost, not compute, limits scaling**, which is why the collective
+  algorithms matter as much as the accelerators.
+- **Sharding made trillion-parameter models trainable** by removing the requirement that
+  each device hold a full copy of everything.
+- **Parallelism is combined along several axes at once** — data, tensor, pipeline — and the
+  mapping to network topology is a first-order design decision.
+- **Sparse expert models scale capacity without scaling cost per token**, which changes the
+  economics of very large models.
 
 ## Knowledge check
 
@@ -335,4 +382,5 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement a **Toy FSDP Wrapper in PyTorch**:
+
 - Write a PyTorch `nn.Module` wrapper that shards parameters on initialization and performs `torch.distributed.all_gather` during `forward()`.

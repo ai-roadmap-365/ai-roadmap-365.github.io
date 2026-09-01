@@ -6,6 +6,7 @@ title: "GPU Serving and Inference Infrastructure"
 ## Why this matters
 
 Deploying deep learning and generative AI models at scale is fundamentally a **hardware and systems engineering challenge**:
+
 - **Inter-GPU Bandwidth Bottlenecks:** Running a 70B parameter model across 4 GPUs using standard PCIe slots caps communication at 64 GB/s, causing GPU compute tensor cores to stall waiting for activations.
 - **Microsecond Request Thrashing:** Processing single-item inference requests individually wastes 85% of GPU matrix multiply capacity on kernel launch overhead.
 - **Host-to-Device Memory Latency:** Unpinned standard memory allocations force synchronous CPU page locking, adding 15ms to 30ms of pure latency before computation even begins.
@@ -16,6 +17,8 @@ Mastering **GPU Serving and Inference Infrastructure** (NVIDIA Triton Inference 
 
 ## The idea in plain language
 
+![Diagram: the three hardware bottlenecks in GPU inference](./assets/three-bottlenecks.svg)
+
 Think of GPU serving infrastructure like **managing a high-speed Formula 1 racing pit crew and multi-lane highway system**:
 
 - **PCIe vs NVLink (Backcountry Road vs 16-Lane Autobahn):** Transferring data between GPUs over standard PCIe is like driving a race car through city traffic (**64 GB/s Bandwidth Limit**). NVLink is a dedicated 16-lane private superhighway directly connecting the engine blocks at 900 GB/s (**Zero Communication Lag**).
@@ -23,6 +26,8 @@ Think of GPU serving infrastructure like **managing a high-speed Formula 1 racin
 - **CUDA Streams (The Parallel Assembly Line):** While Engine Mechanic A installs the fresh tires (**Host-to-Device Copy**), Mechanic B tunes the engine block (**GPU Tensor Compute**) and Mechanic C polishes the windshield (**Device-to-Host Output**), all working concurrently at the same second.
 
 ## Historical background
+
+![Diagram: the progression from synchronous PyTorch serving to NVLink and TensorRT-LLM](./assets/gpu-serving-eras.svg)
 
 GPU inference infrastructure evolved across three major generational leaps:
 
@@ -48,6 +53,8 @@ Let us define the core architecture of production GPU inference systems:
 ### What GPU Serving Infrastructure Is Not:
 - Running single-threaded Python scripts that process one image or prompt at a time.
 - Transferring large uncompressed float tensors over standard HTTP networks between pipeline stages.
+
+![Diagram: GPU serving infrastructure compared with the prototyping habits it replaces](./assets/not-single-threaded.svg)
 
 ```text
 +-------------------------------------------------------------------------------+
@@ -112,6 +119,8 @@ Let us inspect the complete **Triton Dynamic Batching and Model Ensemble Lifecyc
 
 ### Why that scheme breaks for text generation
 
+![Diagram: static request-level batching compared with continuous token-level scheduling](./assets/static-or-continuous.svg)
+
 The pipeline above is correct for a model that produces its whole answer in one
 forward pass — a classifier, an embedding model, a vision backbone. Batch four
 requests, run once, return four answers.
@@ -133,6 +142,10 @@ twenty times for mixed-length workloads, which is why every serious LLM serving
 stack does it and why `max_batch_size` alone is the wrong dial.
 
 ### The KV cache is the thing you are actually managing
+
+![Diagram: how PagedAttention allocates the KV cache in fixed-size blocks](./assets/paged-attention.svg)
+
+![Diagram: why the KV cache rather than model size bounds concurrent requests](./assets/kv-cache-arithmetic.svg)
 
 Generating token *n* requires attending to every previous token. Recomputing
 those keys and values each step would make generation quadratic, so they are
@@ -164,6 +177,8 @@ The practical consequence is worth stating plainly: **on an LLM serving box,
 memory management is the performance work.** Tensor cores are rarely the limit.
 
 ## An everyday analogy
+
+![Diagram: an elevator carrying one passenger compared with one that waits to fill](./assets/elevator-analogy.svg)
 
 Think of GPU serving and dynamic batching like **a modern commercial elevator system in an 80-story skyscraper**:
 
@@ -298,6 +313,8 @@ ensemble_scheduling {
 
 ## Detailed Failure Mode Taxonomy: GPU Infrastructure Hazards
 
+![Diagram: the four failure modes of GPU serving infrastructure and their controls](./assets/gpu-hazards.svg)
+
 ```text
 +-------------------------------------------------------------------------------+
 |                      GPU INFRASTRUCTURE FAILURE TAXONOMY                      |
@@ -321,9 +338,12 @@ When deploying multiple small models on massive 80GB GPUs:
 
 ### 1. Multi-Instance GPU (MIG) Partitioning
 On NVIDIA A100 / H100 GPUs, running small models on a single shared GPU causes resource contention. MIG physically partitions the GPU into up to 7 isolated GPU instances:
+
 - **Dedicated Hardware Resources:** Each MIG slice has its own dedicated SM compute cores, memory controllers, and isolated VRAM partition.
 - **Hardware Fault Isolation:** If an embedding model in Slice 1 crashes with a CUDA error, Slice 2 through 7 continue serving traffic with zero interruption.
 - **Deterministic QoS:** High-priority latency-sensitive endpoints receive dedicated slices, preventing batch background jobs from stealing compute cycles.
+
+![Diagram: what hardware partitioning of a GPU provides](./assets/mig-partitioning.svg)
 
 ```text
 +-------------------------------------------------------------------------------+
@@ -342,6 +362,7 @@ On NVIDIA A100 / H100 GPUs, running small models on a single shared GPU causes r
 ### GPU Kernel Optimization: FlashAttention-3 and FP8 Tensor Cores
 
 To maximize throughput on NVIDIA Hopper (H100) and Blackwell architectures:
+
 - **FlashAttention-3 Asynchronous Tiling:** Overlaps softmax computation and matrix multiplication between Tensor Cores and TMA (Tensor Memory Accelerator) units, achieving over 75% of theoretical peak FP16 TFLOPs.
 - **FP8 Precision Quantization (E4M3 vs E5M2):** Reduces memory bandwidth pressure by 50% relative to 16-bit floats while maintaining mathematical accuracy within 0.2% of baseline perplexity.
 - **Kernel Fusion:** Fusing layer normalization, bias addition, and activation functions into single CUDA kernel launches eliminates intermediate VRAM roundtrips, speeding up token generation by 20%.
@@ -361,6 +382,7 @@ To maximize throughput on NVIDIA Hopper (H100) and Blackwell architectures:
 
 ### Multi-Worker Threading and IPC Shared Memory
 When serving multiple models across Python processes on a single node:
+
 - **POSIX Shared Memory (`/dev/shm`):** Triton passes large tensor buffers between tokenizer, neural network, and post-processor processes using memory-mapped POSIX shared memory, avoiding socket serialization overhead.
 - **Zero-Copy Serialization:** CUDA IPC (Inter-Process Communication) enables multiple separate processes to share direct GPU pointers without copying tensors through host CPU RAM.
 
@@ -369,10 +391,14 @@ When serving multiple models across Python processes on a single node:
 ### 1. Hardware MIG Security Sandboxing
 In multi-tenant SaaS environments, hardware MIG partitions guarantee complete memory isolation, preventing one tenant from probing physical memory channels belonging to another tenant.
 
+![Diagram: hardware-partitioned multi-tenancy compared with software sharing on one GPU](./assets/mig-tenancy.svg)
+
 ### 2. Microsecond Server-Side Batch Economics
 Dynamic server-side batching boosts serving capacity by 4x to 6x on identical hardware, cutting the number of required GPU server instances by 75%.
 
 ## Alternatives: free, open source, and commercial
+
+![Diagram: Triton Inference Server compared with the vLLM engine](./assets/triton-or-vllm.svg)
 
 | Tool / Framework | Type | Best Suited For | Key Capabilities |
 | :--- | :--- | :--- | :--- |
@@ -396,6 +422,8 @@ Dynamic server-side batching boosts serving capacity by 4x to 6x on identical ha
 
 ## When to use it — and when not to
 
+![Diagram: when GPU serving infrastructure is worth its complexity](./assets/gpu-serving-when.svg)
+
 ### Deploy Triton & GPU Serving Infrastructure for:
 - High-throughput multi-model AI platforms, embedding generation APIs, real-time computer vision pipelines, and multi-GPU LLM clusters.
 
@@ -410,6 +438,23 @@ Dynamic server-side batching boosts serving capacity by 4x to 6x on identical ha
 - [ ] MIG partitioning configured for multi-model sharing on large 80GB GPUs.
 - [ ] CUDA memory growth capped with strict VRAM allocation pools to prevent unexpected OOMs.
 
+## The AI connection
+
+- **Memory management is the performance work on an LLM box**, not FLOPs. The KV
+  cache, not the weights, is what bounds how many concurrent requests fit.
+
+- **Continuous batching schedules tokens, not requests** — the single largest
+  throughput change available, and the reason `max_batch_size` is the wrong dial.
+
+- **PagedAttention is Day 003's paging applied to attention state**, including
+  copy-on-write: two requests sharing a system prompt share physical blocks.
+
+- **Generation is autoregressive**, which breaks every batching scheme designed for
+  models that answer in one forward pass.
+
+- **The GPU is the expensive asset**, so utilisation is the economic metric: dynamic
+  batching turns 15% of a $30,000 card into 95% of it.
+
 ## Knowledge check
 
 1. **What is the bandwidth advantage of NVLink 4 over PCIe Gen 5?** NVLink provides up to 900 GB/s per GPU (14x faster than PCIe Gen 5's 64 GB/s), eliminating inter-GPU AllReduce bottlenecks.
@@ -419,6 +464,7 @@ Dynamic server-side batching boosts serving capacity by 4x to 6x on identical ha
 ## Hands-on exercise
 
 In this lab, you will build a **Multi-Model GPU Inference Infrastructure Simulator in Python**. Your implementation will:
+
 1. Manage GPU VRAM allocation pools and prevent Out-of-Memory (OOM) over-allocation.
 2. Enqueue incoming client requests with millisecond arrival timestamps.
 3. Aggregate requests dynamically based on `max_batch_size` or `max_queue_delay_ms` thresholds.

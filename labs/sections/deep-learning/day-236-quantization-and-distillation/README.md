@@ -69,7 +69,7 @@ Quantization Demo: Scale = 0.0200, Quantized = [-127, 0, 64, 127], KD Loss = 1.8
 ## Validation steps
 1. Verify `quantize_symmetric_int8` clamps outputs to $[-127, 127]$.
 2. Confirm `dequantize_symmetric_int8` reconstructs original values within rounding error bounds.
-3. Confirm `KnowledgeDistillationLoss` multiplies soft loss by $	au^2$.
+3. Confirm `KnowledgeDistillationLoss` multiplies soft loss by $\tau^2$.
 4. Ensure all unit test assertions pass.
 
 ## Tests

@@ -13,6 +13,7 @@ When users interact with an AI assistant or chat interface, waiting for the mode
 
 **Streaming transforms perceived latency.**
 By streaming tokens across a persistent **Server-Sent Events (SSE)** connection as they are autoregressively generated:
+
 - **Time-To-First-Token (TTFT)** drops from 5,000ms to **350ms**.
 - Users begin reading and absorbing the answer immediately while the model continues generating subsequent sentences in the background.
 - Interactive interfaces achieve the fluid, natural **"typewriter effect"** that defines modern AI user experiences.
@@ -25,7 +26,10 @@ Today, you will master the **Server-Sent Events (SSE) streaming protocol**, deco
 
 ## The idea in plain language
 
+![Diagram: a buffered response compared with a streamed one](./assets/streaming-idea.svg)
+
 Think of receiving a long multi-page letter:
+
 - **The Blocking Approach:** The mail carrier waits until the author has written all 20 pages, binds them into a hardcover book, and delivers it 3 weeks later. You sit in an empty room staring at the mailbox (**High Perceived Latency & Idle Frustration**).
 - **The Streaming Approach (Server-Sent Events):**
   - The author reads each sentence out loud over a live telephone line as soon as their pen finishes writing the word (**Streaming Token Deltas**).
@@ -35,6 +39,8 @@ Think of receiving a long multi-page letter:
 ---
 
 ## Historical background
+
+![Diagram: the historical progression of streamed response delivery](./assets/streaming-history.svg)
 
 ![Server-Sent Events SSE streaming pipeline architecture diagram](./assets/server-sent-events-streaming-pipeline.svg)
 
@@ -58,6 +64,7 @@ Think of receiving a long multi-page letter:
 ## Why it was created and what problems it solves
 
 Streaming solves 4 critical frontend and backend bottlenecks:
+
 1. **Perceived Latency Collapse:** Reduces user-perceived wait time by up to 90%, displaying text within milliseconds of dispatch.
 2. **Connection Timeout Prevention:** Large generation jobs that take 30+ seconds would trigger gateway timeouts (HTTP 504) on standard blocking HTTP endpoints; streaming keeps the TCP socket actively transmitting data.
 3. **Early Cancellation:** If the user sees that the model is going in the wrong direction on sentence 1, they can cancel the stream immediately, saving token costs and GPU cycles.
@@ -72,6 +79,8 @@ Let us dissect the SSE wire format, client iterator mechanics, and latency metri
 ---
 
 ### 1. The Server-Sent Events (SSE) Wire Format
+
+![Diagram: how streamed model output is delivered over a long-lived connection](./assets/sse.svg)
 
 When `stream=True` is requested, the HTTP server responds with headers:
 ```http
@@ -144,16 +153,20 @@ print("Total output tokens:", final_message.usage.output_tokens)
 
 ### 4. Latency Telemetry: TTFT vs. ITL
 
+![Diagram: time to first token compared with time between tokens](./assets/ttft-itl.svg)
+
 ![Latency timeline comparison between blocking and streaming generation diagram](./assets/latency-metrics-ttft-vs-itl-timeline.svg)
 
 Production observability pipelines track two essential streaming metrics:
 
 1. **Time-To-First-Token (TTFT):**
    `TTFT = t_first_chunk - t_request_dispatched`
+
    - Measures the prompt prefill phase: prompt tokenization, KV cache pre-computation, and initial forward pass execution.
    - Target for conversational apps: less than 500ms.
 2. **Inter-Token Latency (ITL):**
    `ITL = (t_stream_finished - t_first_chunk) / (N_tokens - 1)`
+
    - Measures the autoregressive generation loop: single-token decoding, KV cache updates, and network packet dispatch.
    - Target for smooth readability: 20ms to 40ms per token (25 to 50 tokens/sec).
 - In addition, monitoring the variance of Inter-Token Latency (known as **Jitter**) helps infrastructure engineers detect GPU resource contention, memory bandwidth saturation, or network packet retransmission spikes before they cause visible stuttering in client applications.
@@ -180,6 +193,7 @@ async def stream_to_client(prompt: str):
         if content:
             yield content
 ```
+
 - By using asynchronous streams, a single web server worker process can maintain thousands of concurrent in-flight token streams simultaneously without exhausting operating system thread pools or blocking the primary event loop.
 - Furthermore, wrapping asynchronous iterators inside `contextlib.aclosing` ensures that underlying HTTP response connections and socket file descriptors are cleanly closed even when clients abruptly disconnect.
 
@@ -187,7 +201,10 @@ async def stream_to_client(prompt: str):
 
 ### 6. Streaming Structured Tool Calls & Partial JSON Deserialization
 
+![Diagram: how partial structured output is handled during streaming](./assets/partial-json.svg)
+
 When models invoke external functions during streaming:
+
 - The streaming response does not emit clean complete JSON objects all at once. Instead, `delta.tool_calls[0].function.arguments` arrives as disjointed character fragments (e.g. `{"ci`, `ty":`, `"San`, ` Franc`, `isco"}`).
 - **Client Argument Buffering:** The client must accumulate these partial string fragments into a dedicated in-memory dictionary keyed by `tool_call.index`.
 - **Partial JSON Parsing:** Using streaming parsers (such as `jiter` or `partial-json-parser`), applications can parse intermediate JSON structures in real time, rendering preview parameter cards in the UI before the model finishes emitting the complete closing brace.
@@ -197,7 +214,10 @@ When models invoke external functions during streaming:
 
 ### 7. Mid-Stream Disconnections, Reconnection Protocols, and State Recovery
 
+![Diagram: the four failure modes of a streamed response and their handling](./assets/stream-errors.svg)
+
 What happens when network connectivity drops midway through a 1,000-token stream?
+
 - **Socket Disruption Detection:** The client TCP layer encounters an abrupt reset (`ECONNRESET` or `ChunkedEncodingError`).
 - **Server State:** High-performance serving engines (such as vLLM and TensorRT-LLM) detect client disconnects via socket polling and immediately abort the active autoregressive decoding loop, freeing GPU KV cache memory.
 - **Client Recovery Strategy:** Rather than forcing the user to regenerate the entire prompt from scratch, resilient AI client gateways preserve the partially accumulated text in memory.
@@ -211,6 +231,7 @@ What happens when network connectivity drops midway through a 1,000-token stream
 ### 8. Backpressure Flow Control & Client Rendering Synchronization
 
 When streaming from ultra-fast hardware accelerators (e.g. Groq LPUs or local vLLM instances generating `300+` to `500+` tokens per second):
+
 - **The UI Bottleneck:** Firing a React state update or DOM redraw for every single incoming token at 500Hz completely overwhelms the browser main thread, causing severe UI freezes, stuttering animations, and dropped frames.
 - **Micro-Batching Buffer:** Client applications decouple network packet ingestion from screen rendering using an internal queue:
   - Incoming tokens append immediately to an in-memory string buffer.
@@ -222,6 +243,7 @@ When streaming from ultra-fast hardware accelerators (e.g. Groq LPUs or local vL
 ### 9. Real-Time Token Cost & Rate-Limit Accounting in Streaming
 
 Historically, consuming a streaming response meant losing visibility into exact token usage counts until full billing logs settled:
+
 - **`stream_options: {"include_usage": true}`:** In the modern OpenAI and vLLM specification, passing this configuration flag ensures that the final chunk emitted prior to `[DONE]` includes the exact `usage` metadata (`prompt_tokens`, `completion_tokens`, and `total_tokens`).
 - **Anthropic Stream Finalization:** In the Anthropic Python SDK, calling `stream.get_final_message()` or `stream.get_final_text()` automatically aggregates usage statistics, cache reads, and stop reasons from the underlying event stream.
 - Embedding real-time token counters directly into the streaming aggregator enables enterprise gateways to update live cost dashboards and decrement user balance meters on the fly.
@@ -230,7 +252,10 @@ Historically, consuming a streaming response meant losing visibility into exact 
 
 ### 10. Extended Thinking & Reasoning Token Streams
 
+![Diagram: how reasoning tokens are streamed separately from the answer](./assets/thinking-stream.svg)
+
 In late 2024 and early 2025, reasoning models (OpenAI o1, DeepSeek-R1, and Claude 3.7 Sonnet) introduced **Dedicated Thought Streaming**:
+
 - In addition to standard content deltas, the stream delivers internal Chain-of-Thought reasoning deltas inside a distinct `<thinking>` or `reasoning_content` block.
 - Client applications can render these reasoning tokens inside a collapsible, animated *"Thinking..."* accordion, allowing users to watch the model diagnose sub-problems, verify intermediate calculations, and self-correct in real time before the final answer begins streaming.
 - In addition, providing real-time streaming feedback mechanisms allows users to steer complex generation workflows iteratively, fostering high user trust and delightful application engagement.
@@ -241,7 +266,10 @@ In late 2024 and early 2025, reasoning models (OpenAI o1, DeepSeek-R1, and Claud
 
 ## An everyday analogy
 
+![Diagram: a live broadcast compared with a recorded and edited one](./assets/live-broadcast.svg)
+
 Think of a water pipeline versus a water delivery truck:
+
 - **Blocking Delivery:** A truck fills a 5,000-gallon water tank at the reservoir, drives 20 miles through traffic, and dumps the water into your bucket all at once (**Long Initial Delay**).
 - **Streaming Pipeline:** A turn of the valve allows water to flow through the pipe immediately (**Sub-second TTFT**). You drink from the faucet while water continues flowing at a steady, reliable pressure (**Smooth Inter-Token Flow**).
 
@@ -299,6 +327,8 @@ def simulate_mock_stream() -> Generator[str, None, None]:
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the experience, complexity, moderation and connection implications of streaming](./assets/stream-implications.svg)
+
 1. **Gateway Timeout Resilience:**
    - Streaming prevents HTTP reverse proxies (Nginx, Cloudflare, AWS ALB) from killing long-running generation requests after 30-second standard gateway timeouts.
 2. **Early Abort Cost Savings:**
@@ -336,6 +366,8 @@ def simulate_mock_stream() -> Generator[str, None, None]:
 
 ## When to use it — and when not to
 
+![Diagram: when streaming is the right delivery mode](./assets/streaming-when.svg)
+
 ### When to Use Streaming:
 - Interactive user interfaces, command-line chat assistants, voice synthesis inputs, real-time code generation, and long-form document drafting.
 
@@ -343,6 +375,19 @@ def simulate_mock_stream() -> Generator[str, None, None]:
 - Background batch processing jobs, offline ETL data transformation pipelines, or structured database inserts where the complete JSON payload must be validated before downstream processing begins.
 
 ---
+
+## The AI connection
+
+- **Streaming is what makes generation feel usable** — the same total time reads as fast or
+  slow depending entirely on when the first token arrives.
+- **Time to first token and time between tokens are separate measurements**, and they are
+  optimised by different things.
+- **Streaming changes error handling fundamentally**, because a failure can arrive after
+  half the answer has already been shown to the user.
+- **Validation cannot happen mid-stream**, so anything requiring a complete, checked result
+  should not be streamed to the user.
+- **Reasoning tokens stream separately from the answer**, which lets a product show progress
+  without showing the working.
 
 ## Knowledge check
 
@@ -396,4 +441,5 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement a **Resilient Reconnecting Stream Client**:
+
 - Build a Python client that detects mid-stream network drops, inspects the last received token position, and dispatches a continuation prompt (`"Continue precisely from: ...'`) to seamlessly resume generation without restarting from scratch.

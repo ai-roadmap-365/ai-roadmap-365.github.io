@@ -12,6 +12,7 @@ week: 35
 When an LLM outputs text on your screen, it is not generating complete sentences in a single flash of computation.
 
 It is running a tight, highly optimized, sequential mathematical loop:
+
 1. It ingests the prompt tokens.
 2. It projects queries, keys, and values through 80 Transformer layers.
 3. It stores Key and Value tensors in GPU VRAM (**The KV Cache**).
@@ -28,7 +29,10 @@ Today, you will master the mathematics of probabilistic sampling, calculate exac
 
 ## The idea in plain language
 
+![Diagram: how text is split into tokens for a language model](./assets/tokens-idea.svg)
+
 Think of an author improvising a story in front of a live audience:
+
 - **The Context Window & Memory (The KV Cache):** A whiteboard behind the author recording every character, plot point, and spoken dialogue from the beginning of the book. If the whiteboard runs out of space (**Context Limit**), the author suffers amnesia and forgets earlier plotlines.
 - **Greedy Decoding ($T=0$):** The author always picks the single most statistically predictable word. Highly reliable for a math proof, but boring and robotic for creative fiction.
 - **High Temperature ($T=1.5$):** The author drinks 4 shots of espresso. They pick wild, unexpected, bizarre adjectives and metaphors (**High Entropy**).
@@ -37,6 +41,8 @@ Think of an author improvising a story in front of a live audience:
 ---
 
 ## Historical background
+
+![Diagram: the historical progression of text tokenisation methods](./assets/tokeniser-history.svg)
 
 ![Visual comparison of LLM sampling strategies comparing Greedy, Temperature, Top-k, and Nucleus Top-p sampling](./assets/llm-probabilistic-sampling-strategies.svg)
 
@@ -60,6 +66,7 @@ Think of an author improvising a story in front of a live audience:
 ## Why it was created and what problems it solves
 
 Decoding strategies solve critical generation failure modes:
+
 1. **Degenerative Repetition Loops:** Prevents models from repeating the same sentence indefinitely when stuck in high-probability loops.
 2. **Hallucination Suppression in Deterministic Tasks:** Ensures code, JSON, and math extraction select the exact optimal tokens without stochastic noise ($T=0$).
 3. **VRAM Exhaustion Management:** Allows infrastructure engineers to budget precise GPU memory for concurrent user sessions based on sequence length.
@@ -73,6 +80,8 @@ Let us dissect the mathematical formulation of probabilistic sampling, repetitio
 ---
 
 ### 1. The Probabilistic Sampling Pipeline
+
+![Diagram: how raw model outputs become a single sampled token](./assets/sampling-pipeline.svg)
 
 Given raw output logits $z = [z_1, z_2, ..., z_V]$ from the final Linear classification head over vocabulary $V$:
 
@@ -96,12 +105,14 @@ Given raw output logits $z = [z_1, z_2, ..., z_V]$ from the final Linear classif
   ```
   P(w_i) = \frac{\exp(z_i / T)}{\sum_{j=1}^V \exp(z_j / T)}
   ```
+
   - As $T \to 0$: $P(w_[max]) \to 1.0$ (Greedy argmax).
   - As $T \to \infty$: $P(w_i) \to 1/V$ (Uniform random noise).
 - **Top-$p$ (Nucleus) Condition:** Find the smallest index set $S \subset \(1, ..., V\)$ such that:
   ```
   \sum_{i \in S} P(w_i) \ge p \quad \text{and} \quad \forall i \in S, j \notin S: P(w_i) \ge P(w_j)
   ```
+
 - **Frequency & Presence Penalties (OpenAI formulation):**
   ```
   z_i^{\text{penalized}} = z_i - (c_i \times \text{penalty}_{\text{freq}}) - (\mathbb{I}(c_i > 0) \times \text{penalty}_{\text{pres}})
@@ -111,6 +122,8 @@ Given raw output logits $z = [z_1, z_2, ..., z_V]$ from the final Linear classif
 ---
 
 ### 2. KV Cache Mechanics & Memory Footprint
+
+![Diagram: how attention cache memory grows with context length and concurrency](./assets/kv-memory.svg)
 
 ![KV cache memory scaling and generation dynamics diagram showing prefill vs token-by-token autoregressive decoding](./assets/kv-cache-memory-scaling-and-generation-dynamics.svg)
 
@@ -131,15 +144,19 @@ For a model with $L$ layers, $H_[KV]$ key-value attention heads, head dimension 
   ```
   \text{KV per token} = 2 \times 80 \times (8 \times 128) \times 2 = 327,680\text{ bytes} \approx 320\text{ KB per token}
   ```
+
 - **For an 8,192 Context Sequence (Batch = 1):**
   ```
   320\text{ KB} \times 8,192 = 2.62\text{ GB of VRAM per active request!}
   ```
+
 - **For Batch Size = 32 at 8k Context:** The KV cache alone consumes **$83.8 GB of GPU VRAM$**—exceeding the memory of an entire NVIDIA A100 GPU!
 
 ---
 
 ### 3. Prefill vs. Generation: The Hardware Chasm
+
+![Diagram: prompt processing compared with token generation by hardware behaviour](./assets/prefill-decode.svg)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -160,6 +177,7 @@ For a model with $L$ layers, $H_[KV]$ key-value attention heads, head dimension 
 ### 4. Speculative Decoding: Beating the Memory-Bandwidth Wall
 
 Because autoregressive decoding is memory-bandwidth bound ($1$ token per forward pass), how can we accelerate generation without modifying the target model weights?
+
 - **The Speculative Protocol (Leviathan et al., 2023):**
   1. A small, fast "draft model" (e.g. LLaMA-3-8B) speculatively generates $K = 5$ tokens autoregressively.
   2. The massive "target model" (e.g. LLaMA-3-70B) evaluates all $5$ candidate tokens simultaneously in **a single parallel forward pass (GEMM)**!
@@ -167,6 +185,7 @@ Because autoregressive decoding is memory-bandwidth bound ($1$ token per forward
      ```
      \alpha = \min\left(1, \frac{P_{\text{target}}(x_{t+k})}{P_{\text{draft}}(x_{t+k})}\right)
      ```
+
   4. If a token is rejected, generation branches and continues from the target model's corrected token.
 - **Speedup:** Achieves **$2\times$ to $3\times$ lower latency** with **zero degradation in output distribution**!
 
@@ -174,7 +193,10 @@ Because autoregressive decoding is memory-bandwidth bound ($1$ token per forward
 
 ### 5. Grouped-Query Attention (GQA) & KV-Cache Compression
 
+![Diagram: how grouped-query attention reduces cached attention state](./assets/gqa.svg)
+
 In standard Multi-Head Attention (MHA), every query head has its own Key and Value head ($H_Q = H_K = H_V = 64$).
+
 - **The GQA Innovation (Ainslie et al., 2023):** Multiple query heads share a single Key and Value head ($H_Q = 64, H_[KV] = 8$).
 - **The Impact:** Slashes the KV-cache memory footprint by an exact factor of **$8\times$**, enabling massive context lengths (128k tokens) on commodity GPU memory with less than $0.5\%$ loss in benchmark accuracy!
 
@@ -183,6 +205,7 @@ In standard Multi-Head Attention (MHA), every query head has its own Key and Val
 ### 6. Tokenizer Mechanics & Language Fertility Ratios
 
 Why does tokenization quality determine latency, cost, and cross-lingual performance?
+
 - **Byte Pair Encoding (BPE):** Merges frequent subword byte sequences into vocabulary tokens (vocabulary sizes typically $128k$ in modern models).
 - **The Fertility Ratio:** The average number of tokens generated per word.
   - In English, 1,000 words $\approx 1,300$ tokens (fertility $\approx 1.3$).
@@ -192,7 +215,10 @@ Why does tokenization quality determine latency, cost, and cross-lingual perform
 
 ## An everyday analogy
 
+![Diagram: speaking without revision compared with writing with revision](./assets/improv-writer.svg)
+
 Think of a chef cooking a 10-course banquet:
+
 - **Prompt Prefill Phase (The Prep Kitchen):** Chopping 50 pounds of vegetables, preparing broths, and marinating meats all at once with full staff efficiency (**High Parallelism / Compute Bound**).
 - **Token Decoding Phase (Plating Courses One by One):** Delivering Course 1, waiting for the guest to take a bite, carrying the plate back, delivering Course 2... No matter how fast the chef is, they must walk back and forth for every single forkful (**Memory-Bandwidth Bound / Latency Bound**).
 
@@ -257,6 +283,8 @@ class LLMSampler:
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the reproducibility, cost, safety and testing implications of probabilistic sampling](./assets/sampling-implications.svg)
+
 1. **Greedy Determinism vs. Non-Deterministic GPU Atomic Addition:**
    - Even with $T=0$, multi-GPU distributed serving (vLLM Tensor Parallelism) can produce non-deterministic token variations across runs due to floating-point non-associativity in parallel reduction operations (`cublasGemm`).
 2. **Context Window Degradation ("Lost in the Middle"):**
@@ -277,6 +305,8 @@ class LLMSampler:
 
 ## Comparison with related concepts
 
+![Diagram: probabilistic sampling compared with beam search](./assets/sampling-vs-search.svg)
+
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                   SAMPLING PARAMETER CHEAT SHEET                       │
@@ -294,6 +324,8 @@ class LLMSampler:
 
 ## When to use it — and when not to
 
+![Diagram: when varied sampling is appropriate and when deterministic output is required](./assets/sampling-when.svg)
+
 ### When to Use Temperature & Top-p Tuning:
 - Every production LLM application! Correct sampling parameter selection is mandatory to ensure code generators are deterministic while chat assistants sound engaging.
 
@@ -301,6 +333,19 @@ class LLMSampler:
 - Do not apply high temperature ($T &gt; 0.5$) or heavy repetition penalties to JSON or structured database queries, as repetition penalties will penalize closing brackets (`)`) and quotes (`"`), causing malformed JSON syntax errors!
 
 ---
+
+## The AI connection
+
+- **Tokens are the unit of both cost and capability**, so understanding them explains
+  pricing, context limits and several odd model behaviours at once.
+- **Sampling parameters change output character more than most prompt edits do**, which
+  makes them a first-class product setting rather than a tuning detail.
+- **The attention cache is what bounds concurrency**, so serving capacity is a memory
+  question rather than a compute one.
+- **Tokenisation is unequal across languages**, which means identical content costs several
+  times more in some languages than in English.
+- **Generation is memory-bandwidth bound**, which is why batching and speculative methods
+  work and why raw arithmetic throughput does not help.
 
 ## Knowledge check
 
@@ -355,4 +400,5 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement a **Toy Speculative Decoding Engine**:
+
 - Build a Python simulator where a 1B draft model generates 4 speculative candidate tokens, and a 70B target model evaluates all 4 tokens in a single parallel forward pass using rejection sampling.

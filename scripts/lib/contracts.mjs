@@ -37,6 +37,62 @@ export function findForbidden(text) {
   return hits;
 }
 
+/**
+ * Raw C0 control characters, which no lesson legitimately contains. They get
+ * in when authored text passes through a shell heredoc that interprets
+ * backslash escapes: `\alpha` becomes BEL + "lpha", `\beta` becomes BS +
+ * "eta", `\frac` becomes FF + "rac", `\text` becomes TAB + "ext". The
+ * damage is invisible in a terminal and renders as a mangled formula on the
+ * site, so it survived until a reader would have hit it.
+ *
+ * TAB is excluded here because tool-output tables use it legitimately; the
+ * `\t` case is caught by the LaTeX-command check below instead.
+ */
+// Matching control characters is the entire purpose of this check.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+
+/** A tab immediately followed by the tail of a LaTeX command is a mangled `\t`. */
+const MANGLED_TAB = /\t(?=ext[A-Za-z{( ]|imes\b|heta\b|au\b|op\b)/g;
+
+/**
+ * Returns a list of human-readable findings, empty when the text is clean.
+ * Reported per occurrence with the surrounding text so the fix is obvious.
+ */
+export function findControlChars(text) {
+  const hits = [];
+  for (const [re, label] of [
+    [CONTROL_CHARS, 'control character'],
+    [MANGLED_TAB, 'tab from a mangled LaTeX command'],
+  ]) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const line = text.slice(0, m.index).split('\n').length;
+      const near = text.slice(Math.max(0, m.index - 20), m.index + 20).replace(/\s+/g, ' ');
+      const code = `U+${text.charCodeAt(m.index).toString(16).toUpperCase().padStart(4, '0')}`;
+      hits.push(`line ${line}: ${label} ${code} near "${near.trim()}"`);
+      if (hits.length >= 10) return hits;
+    }
+  }
+  return hits;
+}
+
+/**
+ * An odd number of line-anchored code fences means a block was never closed on
+ * its own line -- usually a closing ``` appended to the end of a content line.
+ * Markdown may still render it, but every tool that pairs fences by line then
+ * mispairs the rest of the file, and program output starts counting as prose.
+ */
+export function findUnbalancedFences(text) {
+  const fences = text.match(/^```/gm) ?? [];
+  return fences.length % 2 === 0
+    ? []
+    : [
+        `${fences.length} line-anchored code fences -- one block is unclosed, or a closing fence shares a line with content`,
+      ];
+}
+
 /** Exact H2 headings every lesson index.mdx must contain, in order. */
 export const LESSON_HEADINGS = [
   '## Why this matters',

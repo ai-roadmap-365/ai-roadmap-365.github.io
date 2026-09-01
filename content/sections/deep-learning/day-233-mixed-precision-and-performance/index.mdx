@@ -12,6 +12,7 @@ week: 34
 For decades, scientific computing relied exclusively on **IEEE 754 32-bit Single Precision (FP32)** and 64-bit Double Precision (FP64).
 
 However, deep neural networks possess an astonishing mathematical property: **Robust Graceful Precision Tolerance**:
+
 - A neural network does not need 23 bits of decimal precision to recognize a cat or generate Python code.
 - By switching from FP32 (4 bytes per number) to **16-bit Half Precision (FP16/BF16)**:
   1. Memory traffic across High Bandwidth Memory is cut by **`50\%`**.
@@ -26,7 +27,10 @@ Today, you will master the bit-level anatomy of floating-point representations, 
 
 ## The idea in plain language
 
+![Diagram: how mixed-precision training combines low and full precision](./assets/precision-idea.svg)
+
 Think of writing notes during a fast-paced university lecture:
+
 - **FP32 Full Precision:** You write every word in pristine Oxford English with a calligraphy fountain pen on thick parchment paper (**Slow, bulky, maximum precision**). Your hand cramps, and your notebook fills up in 20 minutes.
 - **Mixed Precision (FP16 / BF16):** You write rapid shorthand abbreviations on a lightweight legal pad (**`3\times` faster, half the paper**).
 - **Master Weights (The Final Clean Transcript):** At the end of the day, you transfer your shorthand notes into a clean, permanent leather-bound binder in full detail (**FP32 Master Copy**).
@@ -36,6 +40,8 @@ You get `100\%` of the lecture content recorded in real-time with zero loss in f
 ---
 
 ## Historical background
+
+![Diagram: the historical progression of numerical formats in deep learning training](./assets/precision-history.svg)
 
 ![Floating point number formats comparison showing sign exponent and mantissa bits for FP32 FP16 BF16 and FP8](./assets/floating-point-formats-fp32-fp16-bf16-fp8.svg)
 
@@ -60,6 +66,7 @@ You get `100\%` of the lecture content recorded in real-time with zero loss in f
 ## Why it was created and what problems it solves
 
 Mixed Precision solved the twin bottlenecks of AI scaling:
+
 1. **Memory Bandwidth Saturation:** Halving byte size instantly doubles effective memory bandwidth across the bus.
 2. **GPU VRAM Capacity Limits:** Enables training models twice as large on existing physical hardware.
 3. **Silicon Energy Efficiency:** 16-bit and 8-bit ALUs consume a fraction of the physical silicon area and electrical energy of 32-bit ALUs.
@@ -73,6 +80,8 @@ Let us dissect floating-point numerical structures, loss scaling algorithms, and
 ---
 
 ### 1. Anatomy of Floating-Point Representations
+
+![Diagram: two sixteen-bit floating point formats compared by range and precision](./assets/fp16-bf16.svg)
 
 A floating point number represents a real value via:
 ```
@@ -101,6 +110,8 @@ A floating point number represents a real value via:
 
 ### 2. Automatic Mixed Precision (AMP) Workflow & GradScaler
 
+![Diagram: how dynamic loss scaling prevents gradient underflow in low precision](./assets/loss-scaling.svg)
+
 ![Automatic Mixed Precision training loop flow showing FP16 forward pass loss scaling backpropagation and FP32 optimizer update](./assets/automatic-mixed-precision-training-flow.svg)
 
 When using FP16, the **`GradScaler`** manages dynamic loss scaling:
@@ -110,11 +121,13 @@ When using FP16, the **`GradScaler`** manages dynamic loss scaling:
    ```
    \mathcal{L}_{\text{scaled}} = \mathcal{L} \times S
    ```
+
 3. **Backward Pass:** Computes scaled gradients `g_{\text{scaled}} = g \times S` in FP16 (shifted away from zero underflow).
 4. **Unscaling & Inf/NaN Checking:**
    ```
    g = \frac{g_{\text{scaled}}}{S}
    ```
+
    - If any gradient contains `Inf` or `NaN` (overflow detected), the optimizer step is **skipped**, and the scaler shrinks `S \leftarrow S / 2`.
    - If `N` consecutive steps succeed without overflow (e.g. `N=2000`), the scaler grows `S \leftarrow S \times 2`.
 5. **Master Weight Update:** Applies `g` to the **FP32 Master Weights**, and copies updated parameters back to FP16 for the next forward pass.
@@ -122,6 +135,8 @@ When using FP16, the **`GradScaler`** manages dynamic loss scaling:
 ---
 
 ### 3. Exact GPU VRAM Breakdown for Mixed-Precision AdamW
+
+![Diagram: the four consumers of training memory per parameter](./assets/vram-budget.svg)
 
 When training an `N`-parameter model in mixed-precision AdamW:
 
@@ -140,23 +155,28 @@ When training an `N`-parameter model in mixed-precision AdamW:
 │ TOTAL STATIC STATE │          │ 16 Bytes     │ 112 GB                  │
 └────────────────────┴──────────┴──────────────┴─────────────────────────┘
 ```
+
 - **Rule of Thumb:** A model requires **`16 \times N` Bytes** of static VRAM just for weights, gradients, and optimizer states, *plus* dynamic activation memory!
 
 ---
 
 ### 4. Kernel Fusion with `torch.compile` (PyTorch 2.0)
 
+![Diagram: separate elementwise kernels compared with one fused kernel](./assets/kernel-fusion.svg)
+
 In uncompiled PyTorch, executing:
 ```python
 y = F.gelu(x @ W + b) + residual
 ```
 launches 4 separate GPU kernels:
+
 1. Matrix multiplication: Reads `x, W \rightarrow` writes temp1 to HBM.
 2. Bias addition: Reads temp1, `b \rightarrow` writes temp2 to HBM.
 3. GELU activation: Reads temp2 `\rightarrow` writes temp3 to HBM.
 4. Residual addition: Reads temp3, residual `\rightarrow` writes `y` to HBM.
 
 **`torch.compile(model)` with TorchInductor:**
+
 - Fuses all four steps into a **single Triton kernel**.
 - Intermediate results stay in **SRAM Shared Memory / Registers**, cutting memory traffic by **`75\%`** and speeding up execution by **`30\%` to `50\%`**!
 
@@ -165,6 +185,7 @@ launches 4 separate GPU kernels:
 ### 5. Microscaling Formats (MXFP8, MXFP6, MXFP4 / OCP Standard)
 
 As models scale past 100 billion parameters, standard FP8 encounters precision degradation in outlier activations:
+
 - **Microscaling (MX) Formats:** Developed by AMD, Arm, Intel, Meta, NVIDIA, and Qualcomm via the Open Compute Project.
 - **Shared Block-Level Scaling:** Rather than assigning a single scale factor to an entire tensor, MX groups **32 consecutive elements** into a micro-block, sharing a single 8-bit scale factor (E8M0).
 - **Result:** Delivers sub-8-bit quantization (FP6 and FP4) during pretraining with mathematical fidelity matching full FP16 baselines!
@@ -174,18 +195,23 @@ As models scale past 100 billion parameters, standard FP8 encounters precision d
 ### 6. Activation Checkpointing (Gradient Checkpointing / Chen et al., 2016)
 
 While weights and optimizer states are static, **Intermediate Forward Activations** grow linearly with sequence length `L` and batch size `B`:
+
 - **The Activation Dilemma:** In standard backpropagation, every intermediate tensor computed during the forward pass must be retained in VRAM until its corresponding layer's backward pass. For long sequences (`L \ge 8,192`), activations consume `80\%+` of total VRAM!
 - **Gradient Checkpointing:** Only stores activations at the boundaries of Transformer blocks (e.g. 1 per layer). During the backward pass, it re-executes the forward pass of that single block on-the-fly:
   ```
   \text{Memory Complexity: } O(N) \longrightarrow O(\sqrt{N})
   ```
+
 - **Trade-off:** Saves up to **`70\%` of dynamic VRAM**, allowing `4\times` longer context windows at the cost of only `25\%` to `33\%` extra compute.
 
 ---
 
 ### 7. 8-Bit Optimizers: 8-bit Adam (Dettmers et al., 2021)
 
+![Diagram: how quantised optimiser state reduces training memory](./assets/eight-bit-optim.svg)
+
 Standard mixed-precision AdamW maintains 8 bytes per parameter for momentum and variance in FP32:
+
 - **8-Bit Adam (bitsandbytes):** Non-linearly quantizes the first and second moments into block-wise 8-bit representations.
 - **VRAM Savings:** Slashes optimizer memory from **`8 \times N` Bytes `\rightarrow 2 \times N` Bytes** (a `75\%` reduction in optimizer state size) with zero loss in training convergence or final perplexity!
 
@@ -194,6 +220,7 @@ Standard mixed-precision AdamW maintains 8 bytes per parameter for momentum and 
 ### 8. Custom Autocast Layer Registration
 
 When implementing custom CUDA or C++ extensions in PyTorch, standard autocasting does not know how to handle your functions:
+
 - Use `@torch.amp.custom_fwd(cast_inputs=torch.float16)` and `@torch.amp.custom_bwd` decorators.
 - Ensures forward arguments are automatically downcast to FP16/BF16 while backward gradients are safely processed in FP32.
 - **NVIDIA Transformer Engine:** Uses delayed scaling to predict optimal FP8 exponent biases across consecutive training iterations without stalling GPU execution pipes. This ensures zero-overhead automatic FP8 quantization.
@@ -202,7 +229,10 @@ When implementing custom CUDA or C++ extensions in PyTorch, standard autocasting
 
 ## An everyday analogy
 
+![Diagram: verbatim transcription compared with abbreviated note-taking](./assets/lecture-notes.svg)
+
 Think of a commercial cargo airplane fleet:
+
 - **FP32 Training:** Packing cargo in heavy cast-iron crates (**4 kg per item**). The airplane can only carry 1,000 crates before hitting maximum payload weight (**Out of Memory**).
 - **Mixed Precision Training:** Packing the same cargo in ultra-light aerospace carbon-fiber containers (**2 kg per item**).
   - The plane now carries 2,000 containers per flight (**`2\times` Larger Batch Size**).
@@ -280,6 +310,8 @@ def run_mixed_precision_benchmark(batch_size: int = 64, dim: int = 2048,
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the throughput, memory, reproducibility and debugging implications of mixed precision](./assets/precision-implications.svg)
+
 1. **Numerical Stability & NaN Cascades:**
    - In FP16, a single activation exceeding `65,504` produces `Inf`. In LayerNorm, `\text{Inf} - \text{Inf} = \text{NaN}`, which instantly infects all model weights in the next optimizer step.
    - **Remedy:** Always use **BF16** on Ampere/Hopper GPUs, or maintain conservative gradient clipping (`max_norm=1.0`) in FP16.
@@ -318,6 +350,8 @@ def run_mixed_precision_benchmark(batch_size: int = 64, dim: int = 2048,
 
 ## When to use it — and when not to
 
+![Diagram: when mixed precision is appropriate and when full precision is required](./assets/precision-when.svg)
+
 ### When to USE Mixed Precision (BF16/FP16):
 - Every production neural network training run, LLM pretraining, fine-tuning, and high-throughput inference serving.
 
@@ -325,6 +359,19 @@ def run_mixed_precision_benchmark(batch_size: int = 64, dim: int = 2048,
 - Highly sensitive scientific simulations (e.g. quantum chemistry, astronomical orbit integration) where 23+ bits of fractional precision are strictly required.
 
 ---
+
+## The AI connection
+
+- **Mixed precision roughly doubled effective training capacity** without any change to the
+  model, which is why nearly every modern run uses it.
+- **The format that won was chosen for range, not precision** — matching the exponent of
+  full precision mattered more than matching the mantissa.
+- **Numerical stability is a real engineering discipline in AI**, not a footnote: the wrong
+  format silently produces zeros rather than an error.
+- **Memory, not compute, usually sets the largest trainable model**, so optimiser state and
+  activation strategies decide what is feasible.
+- **Compilation and kernel fusion have become standard**, moving performance work from
+  hand-written kernels to the framework.
 
 ## Knowledge check
 
@@ -379,5 +426,6 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement **FP8 Simulated Quantization in PyTorch**:
+
 - Implement E4M3 scale-factor clamping and simulate FP8 matrix multiplication.
 - Compare output relative error against FP16 baseline.

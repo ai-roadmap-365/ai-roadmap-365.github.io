@@ -19,6 +19,8 @@ Understanding high-throughput serving engines (vLLM, TGI, SGLang), continuous ba
 
 ## The idea in plain language
 
+![Diagram: the four capabilities that distinguish a serving engine from naive inference](./assets/serving-idea.svg)
+
 Imagine a busy downtown parking garage with 100 parking spaces:
 
 - **Static Batching (Legacy Serving):** When a customer enters the garage, the parking manager does not know if they drive a compact Mini Cooper or a 60-foot articulated tour bus. So, the manager reserves **5 consecutive parking spaces for every single car**, just in case. If 20 compact cars enter, the garage is declared "Full" (Out of Memory), even though 80% of the asphalt is completely empty. Furthermore, if 19 cars want to leave after 5 minutes, they are forbidden from leaving until the slowest 20th car finishes parking (**Static Batch Lockstep**).
@@ -29,6 +31,8 @@ Imagine a busy downtown parking garage with 100 parking spaces:
 By eliminating reserved waste and allowing cars to enter and exit dynamically on every second, the garage easily parks 120 cars simultaneously without expanding physical space.
 
 ## Historical background
+
+![Diagram: the historical progression of open model serving infrastructure](./assets/serving-history.svg)
 
 The evolution of generative LLM serving progressed through three distinct architectural generations:
 
@@ -80,8 +84,12 @@ In standard attention, Key and Value vectors for all past tokens must be stored 
 ### 2. The Slowest-Request Head-of-Line Blocking (Solved by Continuous Batching)
 In static request batching, if Request A needs 10 tokens and Request B needs 1,000 tokens, Request A finishes in 100ms but cannot return its response or free its memory until Request B finishes 10 seconds later. Continuous batching operates at the token step level, evicting Request A immediately after token 10 and inserting Request C from the waiting queue on the very next forward pass.
 
+![Diagram: static request batching compared with continuous batching](./assets/continuous-batching.svg)
+
 ### 3. Redundant System Prompt Processing (Solved by Automatic Prefix Caching)
 When thousands of users interact with an enterprise assistant that carries a 2,000-token system prompt, standard engines re-evaluate the full 2,000-token attention prefill on every single turn. **Prefix Caching** hashes the prompt prefix and points new requests to existing pre-computed KV cache blocks, reducing Time-To-First-Token (TTFT) from 800ms to 20ms and cutting compute load by 90%.
+
+![Diagram: how a serving engine detects and reuses shared prompt prefixes](./assets/prefix-cache.svg)
 
 ## How it works
 
@@ -113,6 +121,8 @@ Let us inspect the internal architectural components of a modern vLLM serving no
 ### 1. The Two Phases of LLM Inference
 Every LLM request consists of two fundamentally distinct computational phases:
 
+![Diagram: the prompt processing phase compared with the token generation phase](./assets/two-phases.svg)
+
 1. **The Prefill Phase (Compute-Bound):**
    - The engine processes the entire input prompt simultaneously.
    - Computes Key and Value attention projections for all prompt tokens in parallel using high-performance matrix multiplication (GEMM).
@@ -126,6 +136,9 @@ Continuous batching co-schedules prefill requests with active decode requests, p
 
 ### 2. PagedAttention Block Allocation Mechanics
 PagedAttention organizes KV cache storage analogously to virtual memory pages:
+
+![Diagram: contiguous attention cache allocation compared with paged block allocation](./assets/paged-blocks.svg)
+
 - Physical KV memory is partitioned into a fixed array of **Physical Blocks** (e.g. each block holds Keys and Values for 16 tokens).
 - Each active request maintains a **Logical Block Table** that maps logical token positions to arbitrary physical block IDs.
 - When a sequence generates its 17th token, the scheduler allocates a new physical block from the free list and updates the request's block table.
@@ -142,6 +155,9 @@ During attention computation, the custom PagedAttention CUDA kernel fetches keys
 
 ### 3. Multi-GPU Sharding: Tensor Parallelism (TP)
 When a model is too large for a single GPU (e.g. Llama 3 70B in 16-bit requires 140GB VRAM, exceeding a single 80GB A100), the model is sharded across multiple GPUs using **Tensor Parallelism**:
+
+![Diagram: how a model too large for one device is split across several](./assets/tensor-parallel.svg)
+
 - **Attention Projections ($W_q, W_k, W_v$):** Column-parallel sharded across GPUs. Each GPU computes its local attention heads independently.
 - **Attention Output ($W_o$):** Row-parallel sharded. An All-Reduce communication collective sums the outputs across GPUs over the high-speed NVLink bus.
 - **MLP Layers:** Gate/Up projections are column-sharded; Down projections are row-sharded with an All-Reduce sum.
@@ -151,6 +167,8 @@ Because NVLink provides 900 GB/s inter-GPU bandwidth, Tensor Parallelism achieve
 ![Continuous Batching Request Lifecycle showing scheduling queue, PagedAttention worker, and SSE streaming](./assets/continuous-batching-request-lifecycle.svg)
 
 ## An everyday analogy
+
+![Diagram: seating guests in fixed waves compared with seating them as tables free](./assets/restaurant-service.svg)
 
 Think of a bustling Italian restaurant kitchen during dinner rush:
 
@@ -197,6 +215,8 @@ for chunk in response:
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the throughput, cost, isolation and complexity implications of a serving engine](./assets/serving-implications.svg)
+
 ### 1. Security & Multi-Tenant Isolation
 In shared multi-tenant serving clusters, ensure that memory page pools are strictly scrubbed or zeroed between tenant allocations to prevent residual KV attention states from leaking across customer sessions.
 
@@ -206,6 +226,8 @@ Deploying vLLM inside private enterprise VPCs guarantees that zero telemetry, cu
 ### 3. Latency Metrics: TTFT vs Inter-Token Latency (ITL)
 - **Time-To-First-Token (TTFT):** Governed by prompt prefill length and queue wait time. Optimizing prefix caching reduces TTFT by 90%.
 - **Inter-Token Latency (ITL):** The time required per output token (e.g. 15ms per token = 66 tokens/sec). Governed by model size, quantization level, and memory bandwidth.
+
+![Diagram: time to first token compared with inter-token latency as serving targets](./assets/ttft-itl-serving.svg)
 
 ### 4. Financial Economics
 ```text
@@ -242,6 +264,8 @@ vLLM (PagedAttention + TP)  120 - 200 concurrent requests $0.0012 / 1k requests
 
 ## When to use it — and when not to
 
+![Diagram: when a production serving engine is warranted](./assets/serving-when.svg)
+
 ### Choose Production Serving Engines (vLLM / TGI) when:
 - You are hosting models in the cloud or on private server hardware serving multiple concurrent users or background agent workers.
 - You need high throughput (hundreds of queries per second) and low operational cost per token.
@@ -253,6 +277,19 @@ vLLM (PagedAttention + TP)  120 - 200 concurrent requests $0.0012 / 1k requests
 - You are executing one-off offline batch evaluation scripts over a small CSV file.
 - You have minimal hardware (e.g. single 4GB GPU without CUDA support).
 
+## The AI connection
+
+- **Serving efficiency, not model quality, decides whether self-hosting is affordable** —
+  the gap between naive and optimised serving is several-fold.
+- **Paged attention memory is operating-system design applied to inference**, and it is the
+  clearest case of an old idea transferring cleanly.
+- **Continuous batching removes head-of-line blocking**, which is what turns a demonstration
+  server into a production one.
+- **Prefix caching makes long system prompts affordable**, which changes what a prompt can
+  contain rather than merely what it costs.
+- **The two latency numbers are optimised by different things**, so a serving target has to
+  name which one it means.
+
 ## Knowledge check
 
 1. **Why does static batching waste memory?** Because it pre-allocates maximum-length contiguous memory blocks for every request regardless of actual prompt or response lengths.
@@ -262,6 +299,7 @@ vLLM (PagedAttention + TP)  120 - 200 concurrent requests $0.0012 / 1k requests
 ## Hands-on exercise
 
 In this lab, you will implement a **PagedAttention Block Allocator and Continuous Batching Scheduler Simulator in Python**. Your system will:
+
 1. Manage a pool of fixed-size physical memory blocks (e.g. 16 tokens per block).
 2. Allocate, expand, and free logical block tables dynamically as sequences generate tokens.
 3. Simulate continuous iteration-level batching over variable-length requests.
@@ -308,4 +346,4 @@ Extend the `PagedAttentionSimulator` to implement **Shared Prefix Caching**: whe
 
 ## Extension challenge
 
-Implement a **Tensor Parallel Matrix Multiplication Simulator** in Python that shards a $2048 	imes 2048$ linear projection across 4 simulated GPU workers, performs row/column parallel matrix multiplications, and executes an All-Reduce sum reduction.
+Implement a **Tensor Parallel Matrix Multiplication Simulator** in Python that shards a $2048 \times 2048$ linear projection across 4 simulated GPU workers, performs row/column parallel matrix multiplications, and executes an All-Reduce sum reduction.

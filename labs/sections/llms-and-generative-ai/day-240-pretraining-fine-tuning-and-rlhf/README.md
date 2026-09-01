@@ -12,7 +12,7 @@ Build and test a complete preference alignment module in PyTorch. Implement the 
 - Implement the Bradley-Terry pairwise preference probability formulation.
 - Build the Direct Preference Optimization (DPO) implicit reward loss function.
 - Compute implicit reward margins between chosen and rejected responses.
-- Understand the role of the KL-divergence parameter $eta$ in policy stability.
+- Understand the role of the KL-divergence parameter $\beta$ in policy stability.
 
 ## Prerequisites
 - Day 239 (How Large Language Models Are Trained).
@@ -67,7 +67,7 @@ Alignment Demo: BT Prob = 0.973, DPO Loss = 0.4741, Mean Margin = 0.4000
 
 ## Validation steps
 1. Verify `compute_bradley_terry_probability` returns $0.5$ when rewards are equal.
-2. Confirm `compute_dpo_loss` yields $pprox \ln(2) pprox 0.6931$ when policy equals reference.
+2. Confirm `compute_dpo_loss` yields $\approx \ln(2) \approx 0.6931$ when policy equals reference.
 3. Confirm implicit reward margins increase as policy likelihood on chosen tokens improves.
 4. Ensure all unit test assertions pass.
 

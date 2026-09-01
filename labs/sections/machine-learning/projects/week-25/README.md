@@ -55,9 +55,9 @@ Document the metric progression (e.g. $R^2$ or ROC-AUC) across 5 sequential engi
 Produce a markdown report table detailing:
 - Stage Name and Description of added features.
 - Total Feature Count ($D$).
-- 5-Fold Cross-Validation Score ($\pm 	ext{std}$).
+- 5-Fold Cross-Validation Score ($\pm \text{std}$).
 - Holdout Test Score.
-- Marginal Metric Delta ($\Delta 	ext{Score}$).
+- Marginal Metric Delta ($\Delta \text{Score}$).
 
 ---
 

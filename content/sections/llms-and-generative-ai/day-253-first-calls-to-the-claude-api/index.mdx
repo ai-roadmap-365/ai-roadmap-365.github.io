@@ -12,6 +12,7 @@ week: 37
 Until now, you have studied the mechanics of language model architectures, prompt engineering patterns, and output formatting. Now, you transition from prompt design into **production API engineering**.
 
 Connecting applications to foundation models requires programmatic integration over REST APIs and language SDKs. The **Anthropic Messages API** represents a gold standard in modern foundation model interfaces:
+
 - **Strict Role Separation:** Clean architectural decoupling between top-level system instructions and conversation turns (`user` vs `assistant`).
 - **Typed Content Blocks:** Multi-modal inputs and structured tool-calling payloads parsed into strongly typed data models.
 - **Robust Error Semantics:** Distinguishing transient load spikes (`429 RateLimitError`, `529 OverloadedError`) from fatal application errors (`401 AuthenticationError`, `400 BadRequestError`).
@@ -25,6 +26,7 @@ Today, you will master the **Anthropic Python SDK and Messages API**, understand
 ## The idea in plain language
 
 Think of sending a courier to deliver instructions to a specialized consultant in a high-security office:
+
 - **The Amateur Approach:** You write your secret company password on a postcard, hand it to a bicycle messenger, and tell them: *"If the consultant is busy on the phone, immediately throw the document in the trash and scream that the company failed."* (**Hardcoded Credentials & Fatal Crash on First Retry**).
 - **The Enterprise Courier Protocol (The Robust API Client):**
   - **Secure Credentials:** The courier holds a cryptographic badge stored in a secure lockbox (**`ANTHROPIC_API_KEY` Environment Variable**).
@@ -36,6 +38,8 @@ The consultation succeeds reliably without leaks or downtime.
 ---
 
 ## Historical background
+
+![Diagram: the historical progression of language model API design](./assets/api-history.svg)
 
 ![Anthropic Messages API request and response architecture diagram](./assets/anthropic-messages-api-request-response-lifecycle.svg)
 
@@ -59,6 +63,7 @@ The consultation succeeds reliably without leaks or downtime.
 ## Why it was created and what problems it solves
 
 The Messages API architecture solves 4 major limitations of legacy LLM endpoints:
+
 1. **System Prompt Bleed:** Separates `system` instructions into a dedicated top-level argument, preventing users from spoofing system roles inside chat turns.
 2. **Infinite Generation Runaway:** Mandates `max_tokens` on every call to enforce hard boundaries against runaway compute costs.
 3. **Multi-Modal Fragmentation:** Unifies text, images, and tool execution blocks within a consistent `content: [ContentBlock]` array.
@@ -73,6 +78,8 @@ Let us dissect the Messages API request schema, stop reasons, and the mathematic
 ---
 
 ### 1. The Anatomy of a Messages API Request
+
+![Diagram: the five components of a language model API request](./assets/request-anatomy.svg)
 
 ```python
 import anthropic
@@ -91,6 +98,7 @@ response = client.messages.create(
 ```
 
 Key Architectural Invariants:
+
 - **`model`:** Specifies the exact checkpoint snapshot string (e.g. `claude-3-5-sonnet-20241022`).
 - **`system`:** Top-level string specifying behavioral rules and guardrails.
 - **`messages`:** Array of alternating `user` and `assistant` turns.
@@ -100,6 +108,8 @@ Key Architectural Invariants:
 ---
 
 ### 2. Understanding Stop Reasons & Response Anatomy
+
+![Diagram: the four reasons a model response terminates](./assets/stop-reasons.svg)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -122,6 +132,8 @@ Key Architectural Invariants:
 
 ### 3. Error Taxonomy: Transient vs. Fatal Failures
 
+![Diagram: transient API failures compared with fatal ones](./assets/error-taxonomy.svg)
+
 ![Anthropic API exponential backoff error handling state machine diagram](./assets/anthropic-error-handling-exponential-backoff-state-machine.svg)
 
 Production clients must classify HTTP errors into two strict pipelines:
@@ -139,11 +151,15 @@ Production clients must classify HTTP errors into two strict pipelines:
 
 ### 4. Exponential Backoff with Full Jitter
 
+![Diagram: the four properties of a correct retry strategy](./assets/backoff.svg)
+
 When servers experience peak traffic, retrying at fixed intervals (e.g. every 1.0s) causes **Thundering Herd** collisions where thousands of clients hit the server in synchronized waves.
 
 **Full Jitter Algorithm (AWS / Brooker):**
+
 1. Compute the exponential ceiling for attempt `i`:
    `t_cap = min(t_max, t_0 * 2^i)`
+
 2. Sample the actual sleep interval uniformly from `[0, t_cap]`:
    `t_sleep = uniform(0, t_cap)`
 
@@ -153,7 +169,10 @@ This mathematically disperses retry arrivals across the timeline, maximizing rec
 
 ### 5. Prompt Caching & Ephemeral KV State Retention
 
+![Diagram: an uncached request compared with one that reuses a cached prefix](./assets/caching-api.svg)
+
 In late 2024, Anthropic revolutionized LLM serving economics by introducing **Prompt Caching (`cache_control`)**:
+
 - **The Mechanism:** Developers insert a `{"type": "ephemeral"}` breakpoint tag at the end of large static context blocks (e.g. system prompts, large codebases, or reference documentation with `10,000+` tokens).
 - **Inference Acceleration:** On subsequent requests with matching prefix tokens, the API reuses pre-computed KV attention states from GPU memory, slashing Time-To-First-Token (TTFT) by up to 80% and reducing prompt token costs by up to 90%!
 - **TTL Cache Lifespan:** Cached prompt states remain active in cache for 5 minutes, refreshing their TTL automatically on every cache hit.
@@ -163,6 +182,7 @@ In late 2024, Anthropic revolutionized LLM serving economics by introducing **Pr
 ### 6. Async Client Orchestration with AsyncAnthropic & Semaphores
 
 When building high-throughput batch processing pipelines or web backends:
+
 - **Asynchronous Execution:** Use `anthropic.AsyncAnthropic()` with Python's native `asyncio` event loop.
 - **Concurrency Rate Limiting:** Prevent API rate limit spikes by wrapping calls inside an `asyncio.Semaphore`:
   ```python
@@ -186,6 +206,7 @@ When building high-throughput batch processing pipelines or web backends:
 ### 7. Multi-Turn Conversation Buffering & Context Window Budgeting
 
 Because the Messages API is completely stateless, maintaining a multi-turn chat assistant requires sending the full conversation history on every turn:
+
 - **The Context Growth Challenge:** In a 30-turn conversation, total prompt tokens grow quadratically (`\mathcal{O}(N^2)` token billing).
 - **Sliding Window & Summarization:**
   - Maintain a maximum window size (e.g. last 10 turns).
@@ -195,7 +216,10 @@ Because the Messages API is completely stateless, maintaining a multi-turn chat 
 
 ### 8. Rate Limit Token Buckets (RPM, TPM, TPD) & Client-Side Token Leaky Buckets
 
+![Diagram: the four ways an application stays within provider rate limits](./assets/rate-limits.svg)
+
 Enterprise API tiers enforce 3 distinct rate boundaries:
+
 - **Requests Per Minute (RPM):** Maximum HTTP POST calls allowed per 60-second window.
 - **Tokens Per Minute (TPM):** Maximum combined input + output tokens processed per minute.
 - **Tokens Per Day (TPD):** 24-hour volumetric quota.
@@ -206,6 +230,7 @@ Enterprise API tiers enforce 3 distinct rate boundaries:
 ### 9. Custom Stop Sequences & Stream Termination
 
 When generating code, structured tables, or multi-step agent actions:
+
 - **`stop_sequences` Parameter:** Pass a list of string delimiters (e.g. `["</thought>", "```"]`).
 - When the model emits any specified sequence, generation immediately halts, and the API returns `stop_reason: "stop_sequence"`.
 
@@ -214,6 +239,7 @@ When generating code, structured tables, or multi-step agent actions:
 ### 10. Production Observability & OpenInference Tracing
 
 Connecting Claude API calls to enterprise Application Performance Monitoring (APM):
+
 - Attach OpenInference standard spans recording `gen_ai.request.model`, `gen_ai.response.input_tokens`, `gen_ai.response.output_tokens`, and `gen_ai.response.latency_ms`.
 - Correlate latency spikes with specific token lengths and model versions in production dashboards.
 - In addition, tracking token caching efficiency metrics provides engineering leaders with concrete data to optimize prompt template structures and reduce monthly cloud inference budgets.
@@ -224,7 +250,10 @@ Connecting Claude API calls to enterprise Application Performance Monitoring (AP
 
 ## An everyday analogy
 
+![Diagram: a stateful conversation compared with independent stateless requests](./assets/phone-call.svg)
+
 Think of calling a busy restaurant to reserve a table:
+
 - **Naive Calling (Thundering Herd):** 100 people set an alarm to redial at exactly 7:00:00 PM, 7:00:05 PM, and 7:00:10 PM. The restaurant phone line jams continuously (**Cascading 429 Failure**).
 - **Full Jitter Calling:** Caller 1 waits 1.2s, Caller 2 waits 0.4s, Caller 3 waits 2.8s. The calls arrive smoothly spaced across the minute, allowing the receptionist to answer each caller without crashing the phone system (**Successful Connection**).
 
@@ -292,6 +321,8 @@ class FatalApiException(Exception): pass
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the cost, dependency, privacy and latency implications of a hosted model API](./assets/api-implications.svg)
+
 1. **Secure Secret Management:**
    - Never commit `.env` files or API keys into Git repositories. Use `.gitignore` and load keys exclusively via `os.environ`.
 2. **Token Accounting & Observability:**
@@ -329,6 +360,8 @@ class FatalApiException(Exception): pass
 
 ## When to use it — and when not to
 
+![Diagram: when to call a provider API directly and when to use an abstraction layer](./assets/api-when.svg)
+
 ### When to Use Anthropic API Directly:
 - High-reasoning enterprise tasks, automated architectural code reviews, long-form document extraction, and systems requiring nuanced safety and tool compliance.
 
@@ -336,6 +369,19 @@ class FatalApiException(Exception): pass
 - Ultra-low-latency real-time embedded devices where network latency (`> 200ms`) is prohibitive and local quantized models (e.g. edge ONNX) must run on-device.
 
 ---
+
+## The AI connection
+
+- **The API call is the unit of everything built on hosted models**, so its details decide
+  cost, latency and reliability.
+- **Retry behaviour is part of correctness**, because transient failures are routine at any
+  meaningful volume.
+- **Rate limits are a design constraint**, not an error condition, and they shape how work
+  is scheduled rather than just how it fails.
+- **Prompt caching is applied at the request level**, which makes request construction a
+  cost decision.
+- **Observability has to be built in from the first call**, since an untraced model
+  application cannot be debugged after the fact.
 
 ## Knowledge check
 
@@ -390,4 +436,5 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement a **Multi-Provider Fallback Gateway**:
+
 - Build a Python API router that dispatches requests to Claude 3.5 Sonnet, catches unrecoverable 529 overload errors after 3 retries, and automatically fails over to an OpenAI or local vLLM backup model without dropping the user request.

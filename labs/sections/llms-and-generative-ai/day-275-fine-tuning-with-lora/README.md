@@ -14,9 +14,9 @@ Build a custom Low-Rank Adaptation (LoRA) linear layer from scratch in Python an
 
 ## Learning objectives
 - Implement low-rank decomposition matrices ($A$ and $B$) with Gaussian and zero initializations.
-- Compute scaling factors ($lpha / r$) and forward pass activations.
+- Compute scaling factors ($\alpha / r$) and forward pass activations.
 - Verify zero delta updates at step zero.
-- Implement offline weight merging ($W_{	ext{merged}} = W_0 + \Delta W$) and verify bit-exact output parity.
+- Implement offline weight merging ($W_{\text{merged}} = W_0 + \Delta W$) and verify bit-exact output parity.
 
 ## Prerequisites
 - Python 3.10+ installed
@@ -81,7 +81,7 @@ rm -rf .pytest_cache __pycache__ .venv
 ```
 
 ## Troubleshooting
-If matrix multiplication fails, check tensor shapes: $A$ is $(r, d_{	ext{in}})$, $B$ is $(d_{	ext{out}}, r)$.
+If matrix multiplication fails, check tensor shapes: $A$ is $(r, d_{\text{in}})$, $B$ is $(d_{\text{out}}, r)$.
 
 ## Security notes
 Runs entirely offline on local CPU using standard NumPy tensors.

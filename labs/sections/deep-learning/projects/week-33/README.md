@@ -29,7 +29,7 @@ Dense Classification Head -> Softmax -> Predictions (Accuracy & F1)
 1. **Data Ingestion & Cleaning:** Load dataset splits (train, validation, test) and inspect label balance.
 2. **Tokenization Pipeline:** Map texts through the tokenizer with truncation and max length bounds.
 3. **Model Initialization:** Instantiate `AutoModelForSequenceClassification` with the appropriate number of target class labels.
-4. **Trainer Configuration:** Set learning rate ($2	imes 10^{-5}$ to $5	imes 10^{-5}$), batch size, warmup steps, and evaluation strategy.
+4. **Trainer Configuration:** Set learning rate ($2\times 10^{-5}$ to $5\times 10^{-5}$), batch size, warmup steps, and evaluation strategy.
 5. **Training Execution:** Execute `trainer.train()`, monitor evaluation loss, and track early stopping.
 6. **Evaluation & Reporting:** Compute final test metrics and analyze false positive / false negative failure modes.
 

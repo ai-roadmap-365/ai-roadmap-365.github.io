@@ -10,6 +10,7 @@ week: 38
 ## Why this matters
 
 When your AI application grows from a prototype with 1,000 markdown notes to an enterprise knowledge engine with **10,000,000 documents, multi-tenant security partitions, and 500 concurrent queries per second**, flat linear scans fail:
+
 - A linear scan across 10 million vectors takes **over 250 milliseconds per query**, causing severe API timeout failures.
 - Storing uncompressed vectors in memory consumes **over 60 gigabytes of expensive cloud RAM**.
 - Managing concurrent writes, updates, deletions, and metadata filters in pure NumPy scripts leads to thread deadlocks and data corruption.
@@ -23,7 +24,10 @@ Today, you will master the internal architecture of **Hierarchical Navigable Sma
 
 ## The idea in plain language
 
+![Diagram: the four capabilities a vector database provides beyond raw similarity search](./assets/vectordb-idea.svg)
+
 Think of searching for a specific friend in a massive international airport containing 100,000 travelers:
+
 - **Flat Linear Scan:** You walk up to every single person in the entire airport, check their face, and ask their name one by one (**Exhaustive, Linear `O(N)` Time**).
 - **HNSW Graph Navigation:**
   - **Top Layer (Express Highway):** You take a monorail to the correct International Terminal (`Terminal B`).
@@ -35,6 +39,8 @@ By organizing vectors into multi-layer geometric graphs, vector databases skip 9
 ---
 
 ## Historical background
+
+![Diagram: the historical progression of vector search infrastructure](./assets/vectordb-history.svg)
 
 ![HNSW graph layered navigation architecture diagram](./assets/hnsw-graph-layered-navigation-architecture.svg)
 
@@ -58,6 +64,7 @@ By organizing vectors into multi-layer geometric graphs, vector databases skip 9
 ## Why it was created and what problems it solves
 
 Vector databases address 4 critical production bottlenecks:
+
 1. **Logarithmic Retrieval Speed:** Scales to billions of items with sub-10ms latency using `O(\log N)` graph traversals.
 2. **Hybrid Payload Filtering:** Combines semantic similarity with strict SQL-like boolean constraints (e.g. `tenant_id == 'corp_42' AND created_at >= 2024-01-01`).
 3. **Memory & Disk Tiering:** Uses vector quantization (PQ/SQ) and memory-mapped files to store terabytes of vectors on cost-effective SSDs instead of expensive RAM.
@@ -73,8 +80,11 @@ Let us dissect HNSW graph indexing, IVF-PQ quantization, and engine architecture
 
 ### 1. HNSW Graph Architecture & Hyperparameters
 
+![Diagram: how a layered proximity graph finds nearest neighbours without scanning everything](./assets/hnsw.svg)
+
 - **Layer Selection:** Nodes are assigned to layers probabilistically using a decaying exponential distribution:
   `\text{level} = \lfloor -\ln(\text{uniform}(0, 1)) \cdot m_L \rfloor`
+
 - This probabilistic multi-layer distribution ensures that upper layers maintain sparse, long-range highway connections while the base layer contains the full, dense dataset.
 - **Key Hyperparameters:**
   - **`M` (16 to 64):** Maximum number of bidirectional outgoing connections per node. Higher `M` improves recall on complex datasets at the cost of index build time and RAM.
@@ -101,6 +111,7 @@ Let us dissect HNSW graph indexing, IVF-PQ quantization, and engine architecture
 ![IVF-PQ vector quantization clustering diagram](./assets/ivf-pq-vector-quantization-clustering.svg)
 
 For massive collections (100M+ vectors) where RAM is constrained:
+
 1. **IVF (Inverted File Partitioning):** K-Means clusters the space into `C` Voronoi cells (e.g. 4,096 centroids).
    - During search, the engine checks only the `nprobe` closest centroids (e.g. `nprobe = 16`), ignoring 99.6% of the dataset.
 2. **Product Quantization (PQ):** Decomposes a 1536d vector into `m = 96` sub-vectors of 16 dimensions each.
@@ -110,6 +121,8 @@ For massive collections (100M+ vectors) where RAM is constrained:
 ---
 
 ### 3. Dedicated Vector DBs vs. Relational Extensions (`pgvector`)
+
+![Diagram: a dedicated vector database compared with a vector extension to an existing database](./assets/dedicated-pgvector.svg)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -130,7 +143,10 @@ For massive collections (100M+ vectors) where RAM is constrained:
 
 ### 4. Payload Filtering Strategies: Pre-Filter vs. Single-Stage Filter
 
+![Diagram: how metadata filtering interacts with approximate nearest neighbour search](./assets/filtering.svg)
+
 When filtering by metadata:
+
 - **Naive Post-Filtering:** Runs HNSW vector search to get Top-100, then filters by tag. (Fails if the filter is selective, returning 0 results).
 - **Single-Stage Filtered HNSW (Qdrant/Milvus):** Graph traversal only visits nodes that satisfy the boolean filter payload, guaranteeing that exactly `K` matching items are returned.
 - This unified approach prevents empty retrieval failures by dynamically routing graph edges around ineligible nodes during the beam search phase.
@@ -140,6 +156,7 @@ When filtering by metadata:
 ### 5. Memory-Mapped Disk Storage (MMap) & NVMe SSDs
 
 To avoid storing billion-vector graphs entirely in RAM:
+
 - Vector engines use `mmap()` to map graph index files directly to virtual memory.
 - The operating system caches frequently accessed upper graph layers in RAM, while streaming lower layer vector data on-demand from ultra-fast NVMe SSDs (sub-50 microsecond read latency).
 - This memory-mapped architecture drastically lowers operational hosting costs while preserving sub-millisecond graph query responsiveness.
@@ -148,7 +165,10 @@ To avoid storing billion-vector graphs entirely in RAM:
 
 ### 6. Tuning Recall vs. QPS on Production Clusters
 
+![Diagram: high-recall index settings compared with high-throughput settings](./assets/recall-qps.svg)
+
 When operating HNSW in production:
+
 - Measuring the **Pareto Efficiency Frontier** between **Recall@10** and **Queries Per Second (QPS)**:
   - Setting `efSearch = 32`: 95.2% Recall @ 1,450 QPS.
   - Setting `efSearch = 64`: 98.4% Recall @ 920 QPS.
@@ -160,6 +180,7 @@ When operating HNSW in production:
 ### 7. Sharding, Replication, and Raft Consensus
 
 High-availability vector databases (such as Qdrant and Milvus) utilize the **Raft consensus algorithm**:
+
 - Vector collections are sharded across multiple worker nodes based on document ID hashes.
 - Read replicas handle concurrent query traffic, while leader nodes sequence vector insertions and segment merging.
 
@@ -167,7 +188,10 @@ High-availability vector databases (such as Qdrant and Milvus) utilize the **Raf
 
 ### 8. Dynamic Upserts, Deletions, and Soft Tombstoning
 
+![Diagram: how deletions are handled in an approximate nearest neighbour index](./assets/deletion.svg)
+
 In dynamic applications, knowledge documents are continuously updated and deleted:
+
 - Deleting nodes from an HNSW graph directly breaks connectivity paths.
 - Engines apply **soft tombstoning**: marking the vector as deleted in a bitset, skipping it during search, and periodically rebuilding sub-graphs in background consolidation threads.
 
@@ -176,6 +200,7 @@ In dynamic applications, knowledge documents are continuously updated and delete
 ### 9. Multi-Tenancy Architecture: Namespace Isolation vs. Metadata Partitions
 
 When building multi-tenant SaaS applications:
+
 - **Metadata Partitioning:** All tenants share a single large HNSW index, filtered by `tenant_id`. (Cost-effective for millions of small tenants).
 - **Namespace / Collection Isolation:** Dedicated distinct HNSW graph per enterprise customer. (Strict data isolation and predictable performance for large enterprise clients).
 
@@ -191,7 +216,10 @@ When building multi-tenant SaaS applications:
 
 ## An everyday analogy
 
+![Diagram: searching every shelf compared with using an organised catalogue](./assets/library-shelving.svg)
+
 Think of finding a book in the world's largest library:
+
 - **Exact Flat Scan:** You walk down every single aisle of all 10 floors, checking every spine from book #1 to book #10,000,000.
 - **Vector Database (HNSW Index):** You look at the floor directory, take the elevator straight to the `Philosophy & Science` floor, walk to the `Artificial Intelligence` aisle, and grab the book from the shelf in under 30 seconds (**Hierarchical Navigation**).
 
@@ -272,6 +300,8 @@ class SimpleNSWIndex:
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the cost, tuning, access-control and drift implications of a vector database](./assets/vectordb-implications.svg)
+
 1. **Multi-Tenant Security:**
    - Always enforce strict namespace or metadata filter checks at the database query boundary to ensure tenant A cannot retrieve embedding vectors belonging to tenant B.
 2. **Cost Optimization:**
@@ -310,6 +340,8 @@ class SimpleNSWIndex:
 
 ## When to use it — and when not to
 
+![Diagram: when a dedicated vector database is warranted](./assets/vectordb-when.svg)
+
 ### When to Use a Vector Database:
 - Collections exceeding 100,000 documents, multi-tenant production architectures, high-concurrency real-time search APIs, and enterprise RAG systems.
 
@@ -317,6 +349,19 @@ class SimpleNSWIndex:
 - Simple local scripts with fewer than 10,000 items where in-memory NumPy exact search is simpler and faster with zero infrastructure overhead.
 
 ---
+
+## The AI connection
+
+- **Vector databases are the storage layer of the retrieval era**, and they became ordinary
+  infrastructure within about three years.
+- **Approximate search trades recall for speed**, which is a tuning decision with a
+  measurable quality cost rather than a free optimisation.
+- **Filtering interacts badly with approximate indexes**, which is the source of most
+  surprising empty result sets.
+- **An existing relational database is often enough**, and adding a specialised system is a
+  decision that should be earned.
+- **Deletion and update are harder than insertion** in these indexes, which shapes how a
+  corpus can be kept current.
 
 ## Knowledge check
 
@@ -371,4 +416,5 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement a **Single-Stage Filtered NSW Search Engine**:
+
 - Modify the greedy graph search algorithm so that during graph traversal, candidate nodes that fail metadata filter predicates are never added to the best results queue, ensuring 100% of returned items satisfy tenant security policies.

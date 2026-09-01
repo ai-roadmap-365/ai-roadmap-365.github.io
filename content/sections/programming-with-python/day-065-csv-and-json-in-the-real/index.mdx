@@ -7,7 +7,9 @@ title: 'CSV and JSON in the Real World'
 
 Yesterday you learned to move bytes in and out of files safely. Today you learn what to put in them, and the honest answer is that you almost never get to choose. Data arrives from somewhere else — a bank's export, a colleague's spreadsheet, a survey tool, a public dataset, an API — and it arrives in one of two formats: CSV or JSON. Your job is not to invent a format. It is to read what you were given without silently corrupting it, and to write what others must read without silently corrupting them.
 
-This is where the road to AI runs straight through data plumbing. Almost every dataset you will fine-tune on ships as CSV or as JSON Lines. Every chat completion, every tool call, every structured output from a model is JSON. Every evaluation harness you will write reads a file of examples and writes a file of results. And the failures here are the quiet kind again — the kind Day 64 warned you about, one layer up. A CSV field containing a comma, split naively, shifts every column after it by one, so your "price" column now holds shipping notes and your model trains on that. A quoted newline turns one record into two, one of them nonsense. A byte-order mark at the front of a spreadsheet export makes your first column name unmatchable, so the lookup that should find `order_id` finds nothing and your code takes the "missing" branch for every single row.
+This is where the road to AI runs straight through data plumbing. Almost every dataset you will fine-tune on ships as CSV or as JSON Lines. Every chat completion, every tool call, every structured output from a model is JSON. Every evaluation harness you will write reads a file of examples and writes a file of results. And the failures here are the quiet kind again — the kind Day 64 warned you about, one layer up.
+
+A CSV field containing a comma, split naively, shifts every column after it by one, so your "price" column now holds shipping notes and your model trains on that. A quoted newline turns one record into two, one of them nonsense. A byte-order mark at the front of a spreadsheet export makes your first column name unmatchable, so the lookup that should find `order_id` finds nothing and your code takes the "missing" branch for every single row.
 
 The concrete consequences are correctness and money. A parsing bug does not crash; it produces a file that loads, has a plausible row count, and is wrong in a way no test you thought to write will catch. Cleaning it up means finding the original data, re-running the pipeline, and re-training whatever learned from the damage. The fix is small and mechanical: never split on commas yourself, always name the encoding, and know the handful of places where JSON's data model does not match Python's. Today's habits cost minutes and save datasets.
 
@@ -25,13 +27,19 @@ The skill today is knowing which agreement you are working under, using the modu
 
 ## Historical background
 
-CSV is older than the personal computer and was never really designed. Comma-separated data appears in IBM Fortran compilers from 1972, and the convention spread because it was the least anyone could agree on. That is the key historical fact: CSV grew as a folk format, so for decades every program's version differed slightly — in the delimiter, in how quotes were escaped, in whether a header row existed. It was only in October 2005, more than thirty years in, that Yakov Shafranovich wrote **RFC 4180** to describe what most implementations actually did. RFC 4180 is explicitly *informational*, not a standard everyone must obey, which is exactly why real files still violate it. Its core rules are worth knowing precisely: fields may be enclosed in double quotes; fields containing a comma, a quote, or a line break **must** be quoted; and a literal double quote inside a quoted field is written as two double quotes.
+![Diagram: the historical progression of data interchange formats](./assets/format-history.svg)
+
+CSV is older than the personal computer and was never really designed. Comma-separated data appears in IBM Fortran compilers from 1972, and the convention spread because it was the least anyone could agree on. That is the key historical fact: CSV grew as a folk format, so for decades every program's version differed slightly — in the delimiter, in how quotes were escaped, in whether a header row existed. It was only in October 2005, more than thirty years in, that Yakov Shafranovich wrote **RFC 4180** to describe what most implementations actually did.
+
+RFC 4180 is explicitly *informational*, not a standard everyone must obey, which is exactly why real files still violate it. Its core rules are worth knowing precisely: fields may be enclosed in double quotes; fields containing a comma, a quote, or a line break **must** be quoted; and a literal double quote inside a quoted field is written as two double quotes.
 
 JSON's history is much shorter and much more deliberate. Douglas Crockford specified and popularised it in the early 2000s, drawing the syntax from JavaScript object literals, and the design goal was minimalism — a format small enough to describe on a business card. It was standardised as ECMA-404 in 2013 and as RFC 8259. Crockford's most consequential decision was leaving things *out*: no comments (he removed them deliberately, having seen them abused to carry parsing directives), no date type, no trailing commas. Every one of those omissions is something you will work around, and each was a choice rather than an oversight.
 
 Python's support tracks both. The `csv` module arrived in Python 2.3 through PEP 305 in 2003, written precisely because everyone was getting hand-rolled comma splitting wrong. The `json` module joined the standard library in Python 2.6 in 2008. JSON Lines has no standards body at all — it is a convention that emerged from log processing and data pipelines, which is fitting for a format whose whole appeal is practicality.
 
 ## What it is — and what it is not
+
+![Diagram: comma-separated data compared with JSON](./assets/csv-json.svg)
 
 Working with CSV and JSON means: choosing the format that matches the shape of your data, reading it with a parser that implements the real rules, understanding exactly which types survive the round trip, and writing output that the next program can read without special-casing.
 
@@ -70,6 +78,8 @@ The architecture diagram shows the same four stages for all three formats. At th
 
 ### The CSV rules that actually matter
 
+![Diagram: the four rules that make comma-separated data non-trivial](./assets/csv-rules.svg)
+
 Four rules from RFC 4180 cover almost every real file:
 
 1. Records are separated by line breaks; fields within a record by commas.
@@ -92,6 +102,8 @@ Ring the bell twice.",12.00
 Six lines, but only six records if you count wrongly — line 3 and line 4 are one record, because the `notes` field for order 1002 contains a line break inside quotes. Order 1001 has a comma inside `items`. Order 1003 has doubled quotes that mean one literal quote each. Order 1004 has an empty field. Order 1005 is **ragged** — it stops after three fields. And the file begins with a byte-order mark that you cannot see here.
 
 ### Why splitting on commas fails
+
+![Diagram: why splitting a line on commas produces wrong fields](./assets/split-fails.svg)
 
 Run the naive approach over that file and count the fields per line:
 
@@ -144,6 +156,8 @@ with open("out/orders-clean.csv", "w", encoding="utf-8", newline="") as handle:
 
 ### The JSON data model, precisely
 
+![Diagram: the four facts about the JSON data model](./assets/json-model.svg)
+
 JSON has six types, and the mapping to Python is where the surprises live:
 
 | JSON | Python on load | Python on dump | Note |
@@ -173,6 +187,8 @@ json.dumps(data, allow_nan=False)   # raise instead of emitting invalid NaN/Infi
 `ensure_ascii=True` is the default and it is safe but ugly — it escapes every non-ASCII character to a `\uXXXX` sequence. Since you are already writing UTF-8 explicitly, `ensure_ascii=False` gives you a file humans can read. And `allow_nan=False` is the one to reach for when the output must be read by something that is not Python, because Python's default of emitting bare `NaN` produces a file that most other JSON parsers reject.
 
 ### JSON Lines, and why training data uses it
+
+![Diagram: the four properties that make line-delimited JSON suited to large datasets](./assets/jsonl.svg)
 
 ```python
 def write_jsonl(path, records):
@@ -251,6 +267,8 @@ Every hard case is handled: the comma inside `widget, large`, the newline inside
 
 ## An everyday analogy
 
+![Diagram: a flat form compared with a folder of nested documents](./assets/forms-envelopes.svg)
+
 Think of shipping goods between two warehouses that will never speak to each other.
 
 **CSV is a pallet with a packing list.** Everything is laid out in a grid: fixed columns, one row per item, and a header telling you what each column holds. It is wonderfully universal — every warehouse in the world can read a packing list — but it assumes everything is flat and rectangular. The **delimiter** is the painted line between columns on the pallet, and the trouble starts the moment an item's description *contains* a painted line: is that a boundary or part of the description? **Quoting** is the shrink-wrap you put around such an item to say "everything in here is one thing, painted lines included". And doubling a quote is the awkward but necessary convention for shipping shrink-wrap itself.
@@ -325,6 +343,8 @@ with open("out/orders.jsonl", "r", encoding="utf-8") as handle:
 Peak memory is one record. This exact loop — with `record["text"]` instead of `record["total"]` — is how you will walk a training corpus later in the course.
 
 ## Implications: security, privacy, performance, scalability, and cost
+
+![Diagram: the parsing, size, precision and security implications of data format choice](./assets/format-implications.svg)
 
 **Security.** Never evaluate data. The single worst way to read a data file is `eval()` on its contents, because that executes whatever the file contains as Python; `json.loads` parses without executing and is the correct tool. Be aware of **CSV injection** (also called formula injection): a field beginning with `=`, `+`, `-`, or `@` is interpreted as a formula when the file is opened in a spreadsheet, so a value like `=HYPERLINK(...)` written into a CSV your colleague opens is an attack on them, not on you. If your CSV may be opened in a spreadsheet, prefix such values with a single quote or reject them. And treat deeply nested JSON from untrusted sources with care — a pathologically nested document can exhaust the parser's stack.
 
@@ -424,6 +444,8 @@ It handles the quoting rules correctly, so it is a legitimate alternative to the
 
 ## When to use it — and when not to
 
+![Diagram: choosing a data format by shape and scale](./assets/format-when.svg)
+
 Use **CSV** when the data is genuinely a table, when a human may open it in a spreadsheet, and when compactness matters — and read and write it with the `csv` module, always with an explicit encoding, `newline=""`, and a check for short rows. Use **JSON** when the data nests, for configuration and API payloads, and when the file is small enough to hold whole. Use **JSON Lines** by default for anything that is append-only or that may outgrow memory — training data, evaluation results, logs, event streams — which in practice means most of what you will produce in the second half of this course.
 
 Do not use CSV for nested data; flattening a structure into columns produces names like `items.0.price` and a format that only your code understands. Do not use a single JSON array for a file that will grow, because you are choosing a ceiling. Do not invent your own delimiter-separated format because your data "has commas in it" — that is the problem quoting already solves, and your format will have no parser but yours. And when you need to query, index, or update records in place, stop reaching for files and use `sqlite3`.
@@ -431,6 +453,14 @@ Do not use CSV for nested data; flattening a structure into columns produces nam
 The through-line from yesterday is exact. Day 64 gave you bytes in and out of files safely; today gives those bytes an agreed structure. Tomorrow, Day 66, handles the errors that both days generate — because a real pipeline meets a ragged row, an undecodable byte, and a malformed JSON document on the same afternoon, and how it responds to them is a design decision rather than an accident.
 
 And this is the thread to your AI goal. The training set you fine-tune on will be JSONL, and every line of it will have been produced by code like today's. The evaluation harness you write will read examples from a file and append results to another. Every tool call a model makes and every structured output it returns is JSON, parsed with `json.loads` and validated by you. The most common data bug in machine learning is not exotic — it is a column shifted by one, a field truncated at a comma, or a `None` from a ragged row that became a zero in someone's average. You now know how each of those happens and how to make it impossible.
+
+## The AI connection
+
+- **Real files are messier than examples**, and handling the mess is most of the work.
+- **Delimiters, quoting and encoding** are where tabular loading actually fails.
+- **JSON is the format every API and model config uses**, so its edge cases matter daily.
+- **A parser that fails loudly beats one that guesses**, because a silent misparse propagates.
+- **Training data pipelines are largely this**, applied at scale and with validation.
 
 ## Knowledge check
 

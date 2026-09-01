@@ -14,6 +14,7 @@ The largest frontier AI models contain hundreds of billions of parameters.
 Serving a 70-Billion parameter LLM in FP16 requires **over 140 GB of VRAM**—requiring two $30,000 NVIDIA H100 GPUs just to answer a single user question.
 
 To deploy AI to edge devices (iPhones, MacBooks, self-driving cars, embedded robotics) and slash datacenter inference costs by `80\%`, we must compress models without destroying their intelligence:
+
 - **Quantization:** Squeezing 16-bit floating-point weights down to **8-bit, 4-bit, or even 2-bit integers**, shrinking a 140 GB model down to **35 GB** so it runs locally on a consumer laptop.
 - **Knowledge Distillation:** Training a nimble 66-million parameter student model (like DistilBERT) to capture `97\%` of the performance of a 355-million parameter teacher model at `2\times` the speed.
 
@@ -23,7 +24,10 @@ Today, you will master linear quantization mathematics, modern 4-bit LLM algorit
 
 ## The idea in plain language
 
+![Diagram: the three families of model compression](./assets/compression-idea.svg)
+
 Think of compressing audio files:
+
 - **Uncompressed Studio WAV (FP32 / FP16):** 50 MB per song. Crystal-clear audiophile dynamic range, but takes up massive storage and bandwidth.
 - **MP3 Compression (Quantization):** Removes frequencies that the human ear cannot perceive. The file size drops `10\times` to 5 MB (**4-Bit Quantization**), but sounds virtually identical to `99\%` of listeners!
 - **Master Apprenticeship (Knowledge Distillation):** A world-renowned Master Chef (**The 70B Teacher**) spends 30 years mastering culinary intuition. An ambitious Apprentice (**The Small Student**) watches the Master cook for 1 year, learning not just the final recipe, but *how the chef adjusts seasoning and heat based on subtle smells* (**The Soft Probabilities**).
@@ -33,6 +37,8 @@ The apprentice becomes a master chef in `1/10\text{th}` the time!
 ---
 
 ## Historical background
+
+![Diagram: the historical progression of neural network compression techniques](./assets/compression-history.svg)
 
 ![Quantization mapping diagram showing continuous FP32 range mapped to discrete INT8 scale and zero point](./assets/quantization-symmetric-asymmetric-mapping.svg)
 
@@ -57,6 +63,7 @@ The apprentice becomes a master chef in `1/10\text{th}` the time!
 ## Why it was created and what problems it solves
 
 Model compression solves three prohibitive barriers to AI deployment:
+
 1. **Memory Bandwidth Bottleneck:** Autoregressive LLM generation is memory-bound; 4-bit quantization reduces memory traffic by `75\%`, increasing token generation speed by up to **`3\times`**.
 2. **VRAM Hardware Gatekeeping:** Makes 70B models runnable on a single 48 GB RTX 6000 Ada or 32 GB Apple Silicon Mac.
 3. **Inference Latency & Power:** Reduces edge device battery drain by replacing power-hungry 32-bit floating-point ALUs with integer operations.
@@ -70,6 +77,8 @@ Let us dissect the mathematical mechanics of linear quantization, advanced LLM a
 ---
 
 ### 1. Linear Integer Quantization Mathematics
+
+![Diagram: how floating point weights are mapped to integers and back](./assets/quant-math.svg)
 
 Linear quantization maps a continuous floating-point value `x \in [\alpha, \beta]` to a discrete `b`-bit integer `q \in [q_{\min}, q_{\max}]`:
 
@@ -89,10 +98,12 @@ where `\lfloor \cdot \rceil` denotes rounding to the nearest integer.
   ```
   S = \frac{\beta - \alpha}{q_{\max} - q_{\min}}
   ```
+
 - **Zero Point (`Z`):** The integer value mapping exactly to real float `0.0`:
   ```
   Z = \text{round}\left(-\frac{\alpha}{S}\right) + q_{\min}
   ```
+
 - **Symmetric vs. Asymmetric:**
   - **Symmetric (`Z = 0`):** Constrains dynamic range to `[-\alpha, +\alpha]`. Ideal for weights centered around zero (simplifies matrix multiplication ALUs).
   - **Asymmetric (`Z \ne 0`):** Maps arbitrary `[x_{\min}, x_{\max}]`. Ideal for skewed, non-negative activations (such as post-ReLU/GELU tensors).
@@ -100,6 +111,8 @@ where `\lfloor \cdot \rceil` denotes rounding to the nearest integer.
 ---
 
 ### 2. Post-Training Quantization (PTQ) vs. Quantization-Aware Training (QAT)
+
+![Diagram: post-training quantisation compared with quantisation-aware training](./assets/ptq-qat.svg)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -147,6 +160,7 @@ Raw logits `z_i` are scaled by temperature `\tau \ge 1`:
 ```
 p_i(\tau) = \frac{\exp(z_i / \tau)}{\sum_j \exp(z_j / \tau)}
 ```
+
 - At `\tau = 1`, standard Softmax yields a spiky one-hot distribution (e.g. `[0.999, 0.0005, 0.0005]`).
 - At `\tau = 5`, the distribution is smoothed into soft probabilities (e.g. `[0.70, 0.20, 0.10]`), revealing the **"Dark Knowledge"** of relative class similarities!
 
@@ -154,6 +168,7 @@ p_i(\tau) = \frac{\exp(z_i / \tau)}{\sum_j \exp(z_j / \tau)}
 ```
 \mathcal{L}_{\text{total}} = \alpha \cdot \tau^2 \cdot D_{\text{KL}}\left(p_{\text{teacher}}(\tau) \;\parallel\; q_{\text{student}}(\tau)\right) + (1 - \alpha) \cdot \mathcal{L}_{\text{CE}}\left(y_{\text{true}}, q_{\text{student}}(1)\right)
 ```
+
 - **`D_{\text{KL}}` (Kullback-Leibler Divergence):** Measures the relative entropy between teacher and student softened probability distributions.
 - **`\tau^2` Multiplier:** Compensates for the gradient magnitude attenuation caused by dividing logits by `\tau`.
 - **`\alpha \in [0, 1]`:** Balances soft imitation against hard ground-truth supervision (typically `\alpha = 0.5` to `0.7`).
@@ -163,6 +178,7 @@ p_i(\tau) = \frac{\exp(z_i / \tau)}{\sum_j \exp(z_j / \tau)}
 ### 5. Speculative Decoding (Leviathan et al. & Chen et al., 2023)
 
 In autoregressive generation, large models are severely memory-bandwidth bound when producing tokens one-by-one:
+
 - **The Core Idea:** A small, fast distilled student model (e.g. 1B draft model) speculatively drafts `K = 5` tokens in rapid sequence.
 - **Single-Pass Parallel Verification:** The massive teacher model (e.g. 70B target model) evaluates all `K` draft tokens simultaneously in a **single forward pass** (which is compute-bound and takes virtually the exact same latency as evaluating 1 token!).
 - **Guaranteed Output Distribution:** If the teacher accepts `M \le K` tokens via rejection sampling, generation speed increases by **`2\times` to `3\times`** with mathematically identical probability distribution to running the teacher alone!
@@ -171,19 +187,26 @@ In autoregressive generation, large models are severely memory-bandwidth bound w
 
 ### 6. SmoothQuant: Taming Activation Outliers (Xiao et al., 2022)
 
+![Diagram: how activation outliers degrade quantisation and how scaling mitigates them](./assets/outliers.svg)
+
 In LLMs exceeding 6.7B parameters, activation tensors exhibit extreme systemic **outlier channels** (magnitudes up to `100\times` larger than normal values), destroying standard INT8 activation quantization:
+
 - **The SmoothQuant Insight:** Weights are easy to quantize; activations are hard.
 - **Mathematical Equivalence:** SmoothQuant multiplies activations by a smoothing scale factor `s^{-1}` while pre-multiplying weights by `s`:
   ```
   Y = X W = (X \cdot \text{diag}(s)^{-1}) \cdot (\text{diag}(s) \cdot W) = \hat{X} \hat{W}
   ```
+
 - Migrates the dynamic range difficulty out of activations and into the static weights, enabling **W8A8 (8-bit Weights + 8-bit Activations)** matrix multiplication with zero accuracy degradation!
 
 ---
 
 ### 7. QLoRA: 4-bit NormalFloat & Double Quantization (Dettmers et al., 2023)
 
+![Diagram: how adapters are trained on top of a four-bit frozen base model](./assets/qlora.svg)
+
 How do you fine-tune a 65B model on a single 48 GB GPU?
+
 - **NF4 (NormalFloat4):** An information-theoretically optimal 4-bit data type designed specifically for zero-mean, unit-variance normally distributed neural network weights.
 - **Double Quantization:** Quantizes the quantization constant scale factors themselves from FP32 to FP8, saving an additional 0.37 bits per parameter.
 - **Paged Optimizers:** Uses CUDA Unified Memory to automatically page optimizer states to CPU RAM during activation memory spikes, preventing Out-Of-Memory crashes.
@@ -193,6 +216,7 @@ How do you fine-tune a 65B model on a single 48 GB GPU?
 ### 8. Structured Sparsity: NVIDIA 2:4 Sparse Tensor Cores
 
 Beyond quantization, **Pruning** sets redundant weight parameters to zero:
+
 - **Unstructured Sparsity:** Setting random weights to zero requires sparse coordinate indexing matrices, which run slower than dense GEMMs on GPUs.
 - **NVIDIA 2:4 Structured Sparsity:** Constrains pruning so that **exactly 2 out of every 4 consecutive weights are zero**.
 - **Hardware Acceleration:** NVIDIA Ampere/Hopper Tensor Cores physically skip the zeroed weights, delivering an automatic **`2\times` throughput speedup** at hardware wire speed!
@@ -201,7 +225,10 @@ Beyond quantization, **Pruning** sets redundant weight parameters to zero:
 
 ## An everyday analogy
 
+![Diagram: lossless storage compared with perceptually lossy compression](./assets/photo-compression.svg)
+
 Think of compression and education:
+
 - **Quantization:** Packaging a 500-page medical encyclopedia into a pocket-sized emergency first-aid handbook using clean iconography and color-coded tabs (**INT4 Quantization**). It takes up `1/10\text{th}` the space in your backpack, but contains the exact critical information needed to save a life.
 - **Knowledge Distillation:** A master grandmaster chess player (**The 70B Teacher**) explaining their thought process to a young chess prodigy (**The Small Student**):
   - Instead of just telling the student *"Move Knight to F3"* (**Hard Label**),
@@ -263,6 +290,8 @@ class KnowledgeDistillationLoss(nn.Module):
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the cost, reach, accuracy and safety implications of model compression](./assets/compression-implications.svg)
+
 1. **Quantization Drift & Corner-Case Vulnerability:**
    - Aggressive 4-bit or 3-bit quantization can create blind spots where adversarial perturbations or rare edge cases produce catastrophic errors not seen in full-precision models.
 2. **Side-Channel Timing Attacks on Edge Devices:**
@@ -283,6 +312,8 @@ class KnowledgeDistillationLoss(nn.Module):
 
 ## Comparison with related concepts
 
+![Diagram: quantisation compared with distillation as compression strategies](./assets/quant-vs-distill.svg)
+
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                   MODEL COMPRESSION COMPARISON                         │
@@ -300,6 +331,8 @@ class KnowledgeDistillationLoss(nn.Module):
 
 ## When to use it — and when not to
 
+![Diagram: when model compression is worthwhile and when it is premature](./assets/compression-when.svg)
+
 ### When to Use Quantization & Distillation:
 - Deploying LLMs to edge devices, minimizing cloud serving latency and VRAM costs, and scaling high-concurrency API backends.
 
@@ -307,6 +340,19 @@ class KnowledgeDistillationLoss(nn.Module):
 - Pretraining new architectures from scratch or high-precision financial modeling where rounding errors propagate into compounding financial drift.
 
 ---
+
+## The AI connection
+
+- **Compression is what puts models on ordinary hardware** — a phone, a browser, a
+  low-cost server rather than an accelerator.
+- **Four-bit weights turned out to be enough**, which is a statement about how much
+  redundancy trained networks carry.
+- **Distillation moves capability from large models to small ones**, and is how most fast
+  production models are actually built.
+- **Serving cost is dominated by memory traffic**, so smaller weights buy latency as well
+  as capacity.
+- **Every compression method trades accuracy for cost**, and the only honest way to choose
+  is to measure the loss on your own task.
 
 ## Knowledge check
 
@@ -361,4 +407,5 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement **Simulated 4-bit Weight Quantization with Straight-Through Estimator**:
+
 - Build a custom PyTorch autograd function that quantizes weights to 4-bit integers on forward and passes gradients straight through on backward.

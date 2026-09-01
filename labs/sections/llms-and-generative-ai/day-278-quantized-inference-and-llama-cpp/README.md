@@ -14,7 +14,7 @@ Build an INT8 symmetric tensor quantizer, dequantizer, and binary GGUF header pa
 
 ## Learning objectives
 - Parse binary GGUF header structs (magic bytes, version, tensor counts).
-- Implement symmetric linear INT8 quantization ($q = 	ext{round}(x / s)$).
+- Implement symmetric linear INT8 quantization ($q = \text{round}(x / s)$).
 - Calculate Mean Squared Error (MSE) reconstruction distortion.
 - Compute memory reduction and compression ratios.
 

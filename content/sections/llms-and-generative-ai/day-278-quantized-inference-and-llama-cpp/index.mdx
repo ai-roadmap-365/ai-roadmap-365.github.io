@@ -31,6 +31,8 @@ Quantization quadruples generation speed while enabling a 70B model to fit into 
 
 ## The idea in plain language
 
+![Diagram: how quantisation reduces the size of model weights](./assets/quant-idea.svg)
+
 Imagine you are an architect drafting a massive 1:1 scale blueprint of a skyscraper. 
 
 In **FP16 precision**, you record the exact millimeter coordinate of every single bolt and wire using 16 decimal places of precision. The blueprint requires 500 massive paper scrolls. Carrying all 500 scrolls from the archive room to your desk takes two hours every time a client asks a simple question.
@@ -43,7 +45,9 @@ The entire blueprint now fits onto 25 portable sheets of paper. You can carry al
 
 ## Historical background
 
-The mathematics of neural network quantization emerged in the late 2010s for computer vision models (MobileNet, ResNet). However, applying quantization to multi-billion parameter autoregressive transformers posed unique challenges: early post-training quantization (PTQ) techniques destroyed LLM reasoning capabilities due to the emergence of extreme **activation outliers**—a tiny fraction of hidden dimension features ($`<0.1`\%$) that carry massive numerical magnitudes ($100	imes$ larger than normal features).
+![Diagram: the historical progression of model quantisation for local inference](./assets/quant-history.svg)
+
+The mathematics of neural network quantization emerged in the late 2010s for computer vision models (MobileNet, ResNet). However, applying quantization to multi-billion parameter autoregressive transformers posed unique challenges: early post-training quantization (PTQ) techniques destroyed LLM reasoning capabilities due to the emergence of extreme **activation outliers**—a tiny fraction of hidden dimension features ($`<0.1`\%$) that carry massive numerical magnitudes ($100\times$ larger than normal features).
 
 In 2022, **Tim Dettmers et al.** published **LLM.int8()**, identifying that isolating outlier dimensions in 16-bit precision while quantizing the remaining 99.9% of weights to 8-bit preserved full model performance with zero perplexity loss.
 
@@ -90,6 +94,8 @@ Consumer GPUs (NVIDIA RTX 3080/4080) carry 10GB to 16GB of VRAM. An FP16 8B mode
 ### 2. The Autoregressive Memory Bus Saturation
 As derived above, single-user token generation is bound by memory bus bandwidth ($GB/s$). Reducing weight precision from 16 bits to 4 bits cuts the bytes transferred per token by 75%, directly increasing token generation speed by **3.5x to 4x**.
 
+![Diagram: memory-bandwidth-bound generation compared with compute-bound processing](./assets/bandwidth-bound.svg)
+
 ### 3. Unified Cross-Platform Model Packaging (Solved by GGUF)
 Distributing PyTorch checkpoints requires packaging dozens of unquantized `safetensors` files, custom tokenizer JSON files, and configuration dictionaries. GGUF encapsulates all model weights, quantization scaling tables, tokenizer vocabularies, and hyperparameter metadata into a single self-contained `.gguf` file.
 
@@ -116,31 +122,42 @@ Let us derive the exact mathematics of linear quantization.
 ### 1. Symmetric Linear Quantization Mathematics
 In symmetric quantization, the continuous floating-point interval $[-M, M]$ is mapped symmetrically to the integer range $[-128, 127]$ (for signed INT8):
 
+![Diagram: how a block of floating point weights is mapped to integers and back](./assets/symmetric-quant.svg)
+
 1. **Dynamic Range Calculation:**
    $$M = max |x_i|$$
+
 2. **Scale Factor ($s$):**
-   $`s = rac(M)(127)`$
+   $`s = \frac(M)(127)`$
+
 3. **Quantization Formula:**
-   $$q = 	ext(clamp)( 	ext(round)( rac(x)(s) 
+   $$q = \text(clamp)( \text(round)( \frac(x)(s) 
 ight), -128, 127 
 ight)$$
+
 4. **Dequantization Formula:**
    $`	ilde(x) = q * s`$
 
 Because the mapping is symmetric around zero, the zero point integer is exactly zero ($z = 0$), eliminating addition operations during hardware matrix multiplication.
 
 ### 2. Block-Wise Quantization
-If an entire $4096 	imes 4096$ matrix shares a single scale factor $s$, a single large outlier weight will inflate $M$, causing all smaller weights to round to zero (extreme quantization error). 
+If an entire $4096 \times 4096$ matrix shares a single scale factor $s$, a single large outlier weight will inflate $M$, causing all smaller weights to round to zero (extreme quantization error). 
+
+![Diagram: how block-wise scaling limits the damage from weight outliers](./assets/block-quant.svg)
 
 To solve this, `llama.cpp` applies **Block-Wise Quantization**:
+
 - Tensors are divided into contiguous blocks of 32 or 256 weights.
-- Each 32-weight block receives its own independent scale factor `s_(	ext(block))`.
+- Each 32-weight block receives its own independent scale factor `s_(\text(block))`.
 - Storing a 16-bit float scale factor for every 32 4-bit integers adds only 0.5 bits per parameter, while reducing Mean Squared Error (MSE) distortion by over 80%.
 
 ### 3. K-Quant Super-Block Mixed Precision (`Q4_K_M`)
 In modern GGUF models, the `Q4_K_M` designation signifies a **Medium K-Quant**:
+
+![Diagram: how mixed-precision quantisation allocates bits by layer importance](./assets/k-quant.svg)
+
 - Attention Query ($W_q$), Key ($W_k$), and Value ($W_v$) projections use 4-bit K-quants.
-- Critical Feed-Forward Gate (`W_(	ext(gate))`) and Up (`W_(	ext(up))`) layers use 5-bit or 6-bit quantization.
+- Critical Feed-Forward Gate (`W_(\text(gate))`) and Up (`W_(\text(up))`) layers use 5-bit or 6-bit quantization.
 - Less sensitive Down-projections use 4-bit quantization.
 
 This mixed-precision strategy preserves the sensitive attention heads while aggressively compressing large MLP matrices, achieving near-FP16 perplexity at 4.5 bits/weight.
@@ -149,6 +166,8 @@ This mixed-precision strategy preserves the sensitive attention heads while aggr
 
 ### 4. Anatomy of a GGUF Binary File
 A `.gguf` file is structured into three linear sections:
+
+![Diagram: the four properties of a self-contained quantised model file](./assets/gguf.svg)
 
 ```text
 +---------------------------------------------------------------+
@@ -175,6 +194,8 @@ A `.gguf` file is structured into three linear sections:
 ```
 
 ## An everyday analogy
+
+![Diagram: uncompressed audio compared with perceptually compressed audio](./assets/compression-photo.svg)
 
 Think of audio recording:
 
@@ -214,6 +235,8 @@ def read_gguf_header(filepath: str):
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the access, speed, quality and verification implications of quantisation](./assets/quant-implications.svg)
+
 ### 1. Security & Binary Verification
 GGUF files are static binary tensors and metadata descriptors. Unlike Python `pickle` files, GGUF files contain **zero executable code** and cannot trigger arbitrary code execution during loading. This makes GGUF the safest format for sharing models across organizations.
 
@@ -225,6 +248,7 @@ Dequantizing INT4 weights back to FP16 in registers requires a few integer-to-fl
 
 ### 4. Financial Economics
 Quantization reduces hardware acquisition costs by **80% to 90%**:
+
 - Serving a 70B model in FP16 requires an $8,000+ server with dual 80GB GPUs.
 - Serving a 70B model in Q4_K_M runs on a single $2,500 workstation or high-end MacBook.
 
@@ -254,6 +278,8 @@ Quantization reduces hardware acquisition costs by **80% to 90%**:
 
 ## When to use it — and when not to
 
+![Diagram: choosing a quantisation level by use case](./assets/quant-when.svg)
+
 ### Choose GGUF / llama.cpp Quantization when:
 - You are deploying models to consumer hardware (MacBooks, PCs, edge servers, mobile devices).
 - You want single-file deployment with embedded metadata and tokenizer configurations.
@@ -265,6 +291,19 @@ Quantization reduces hardware acquisition costs by **80% to 90%**:
 - You are actively training or backpropagating gradients through the base weights (use BitsAndBytes QLoRA).
 - You are working in extreme medical/scientific domains where a 0.02 perplexity loss is legally impermissible.
 
+## The AI connection
+
+- **Quantisation is what puts large models on ordinary hardware**, and it is the single
+  technique most responsible for local inference being viable.
+- **Generation is memory-bandwidth bound**, so smaller weights buy speed as well as capacity
+  — the saving is not only in what fits.
+- **Block-wise scaling is what makes low-bit quantisation work**, because a single scale
+  across a tensor is destroyed by its outliers.
+- **A model file is untrusted input**, so a format that cannot execute code on load is a
+  security property rather than a convenience.
+- **Every quantisation level is a measured trade**, and the right one depends on your task
+  rather than on a general recommendation.
+
 ## Knowledge check
 
 1. **Why does reducing bit precision increase token generation speed?** Because single-batch token generation is memory-bandwidth bound. Halving the model weight size halves the number of bytes that must be streamed across the memory bus per token, doubling generation speed.
@@ -274,6 +313,7 @@ Quantization reduces hardware acquisition costs by **80% to 90%**:
 ## Hands-on exercise
 
 In this lab, you will implement an **INT8 Symmetric Tensor Quantizer, Dequantizer, and GGUF Header Parser from scratch in Python and NumPy**. Your implementation will:
+
 1. Parse raw binary GGUF headers to validate magic bytes, version numbers, and metadata counts.
 2. Implement vectorized block-wise symmetric INT8 linear quantization.
 3. Dequantize integer tensors and compute Mean Squared Error (MSE) reconstruction loss.

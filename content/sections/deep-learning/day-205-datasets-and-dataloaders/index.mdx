@@ -21,7 +21,10 @@ By decoupling sample-level data access (`Dataset`) from multi-threaded batching,
 
 ## The idea in plain language
 
+![Diagram: the dataset and dataloader abstractions compared](./assets/two-tier.svg)
+
 Think of a high-end restaurant kitchen:
+
 - **The Dataset (`Dataset`)** is the pantry shelf. Its only job is to know two things:
   1. How many total ingredients are on the shelf (`__len__`).
   2. How to grab one specific jar when given its label number (`__getitem__(idx)`), peeling and chopping it into a clean culinary portion.
@@ -56,7 +59,10 @@ The head chef (**Model Training Loop**) never waits for onions to be peeled; a f
 
 ## Why it was created and what problems it solves
 
+![Diagram: the four data pipeline pathologies a dataset abstraction prevents](./assets/loader-pathologies.svg)
+
 Without a disciplined data pipeline abstraction, deep learning projects suffer from four common pathologies:
+
 1. **GPU Starvation (I/O Bottleneck):** Training runs at 10% GPU utilization because the GPU spends 90% of its time waiting for single-threaded disk reads.
 2. **Out-of-Memory (OOM) Crashes:** Attempting to load a 100 GB image folder directly into a single array exhausts system RAM.
 3. **Ragged Batch Errors:** Variable-length audio or text sentences cannot be stacked into rectangular matrices without dynamic padding.
@@ -75,6 +81,8 @@ Let us dissect the architecture of custom Map-Style Datasets, Multi-Process Data
 ---
 
 ### 1. The Map-Style Dataset Contract
+
+![Diagram: the two rules governing sample loading in a dataset](./assets/getitem-rules.svg)
 
 A **Map-Style Dataset** represents a key-value mapping from integer indices `0, 1, ..., N-1` to data samples.
 To build a custom Map-Style Dataset, subclass `torch.utils.data.Dataset` and implement two essential methods:
@@ -106,6 +114,8 @@ class TabularDataset(Dataset):
 
 ### 2. The DataLoader Engine and Performance Parameters
 
+![Diagram: the five DataLoader parameters that determine throughput and correctness](./assets/loader-params.svg)
+
 The `DataLoader` takes a `Dataset` instance and manages batching, shuffling, and worker scheduling:
 
 ```python
@@ -131,6 +141,8 @@ dataloader = DataLoader(
 ---
 
 ### 3. Custom `collate_fn`: Dynamic Sequence Padding
+
+![Diagram: default collation compared with padded collation for variable-length sequences](./assets/collate.svg)
 
 ![Custom collate function showing variable length sequences padded with padding tokens to uniform batch tensor dimensions](./assets/custom-collate-padding-architecture.svg)
 
@@ -168,7 +180,10 @@ def pad_collate_fn(batch):
 
 ### 4. Streaming Big Data with `IterableDataset`
 
+![Diagram: map-style datasets compared with iterable streaming datasets](./assets/map-or-iterable.svg)
+
 For web-scale datasets that cannot be indexed by integer indices:
+
 - Subclass `torch.utils.data.IterableDataset`.
 - Implement `__iter__(self)`: Yields samples one by one from a generator, file stream, or socket.
 - When using `num_workers > 0` with `IterableDataset`, you must call `torch.utils.data.get_worker_info()` inside `__iter__` to shard the stream so each worker reads a disjoint partition of the data.
@@ -177,15 +192,19 @@ For web-scale datasets that cannot be indexed by integer indices:
 
 ### 5. Advanced Sampling Strategies and Worker Memory Management
 
+![Diagram: uniform, weighted and distributed sampling compared](./assets/sampling-strategies.svg)
+
 To master production-grade data pipelines, deep learning engineers leverage two additional architectural capabilities:
 
 #### A. Custom Index Samplers (`WeightedRandomSampler` and `DistributedSampler`):
 By default, `DataLoader(shuffle=True)` applies uniform random sampling. However, real-world tasks often demand specialized sampling schemes:
+
 - **`WeightedRandomSampler` for Imbalanced Data:** Assigns each class a sampling probability inverse to its dataset frequency. Rare classes are drawn with higher probability per batch, balancing gradient updates without manual data synthesis.
 - **`DistributedSampler` for Multi-GPU Clusters:** In PyTorch Distributed Data Parallel (DDP), `DistributedSampler` splits dataset indices evenly across `world_size` GPUs so each worker node processes a unique subset of data without redundant overlaps.
 
 #### B. Worker Subprocess Lifecycle and Memory Leak Prevention:
 When `num_workers > 0`, PyTorch spawns worker subprocesses using `fork` or `spawn`:
+
 - If your `Dataset` holds complex Python objects with circular references or unmanaged NumPy array pointers, worker processes can experience severe memory leaks across epochs.
 - Best Practice: Store large tabular data in C-contiguous memory arrays (`torch.from_numpy` or memory-mapped files via `np.memmap`) and pass `persistent_workers=True` to keep worker processes alive across training epochs, eliminating process respawn overhead.
 
@@ -193,7 +212,10 @@ When `num_workers > 0`, PyTorch spawns worker subprocesses using `fork` or `spaw
 
 ## An everyday analogy
 
+![Diagram: serial preparation compared with prep running in parallel with service](./assets/kitchen-pipeline.svg)
+
 Think of a modern airport baggage handling system:
+
 - **Individual Bags (`Dataset.__getitem__`):** Passenger suitcases arrive in different sizes, shapes, and weights at check-in counters.
 - **Conveyor Belt Workers (`num_workers`):** Multiple baggage handlers tag and scan suitcases across multiple terminals in parallel.
 - **Cargo Containers (`collate_fn`):** Suitcases destined for the same flight are packed into standardized aluminum cargo containers (mini-batches). If some bags are short, luggage dividers (**Padding**) stabilize the container so nothing shifts.
@@ -275,6 +297,8 @@ for step, batch in enumerate(loader):
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the throughput, memory, determinism and debugging implications of data loaders](./assets/loader-implications.svg)
+
 1. **Multiprocessing Fork Safety & RNG Synchronization:**
    - In Unix systems using `fork`, worker subprocesses inherit identical random number generator seeds by default. Always pass a `worker_init_fn` to `DataLoader` to set unique seeds per worker (`seed + worker_id`) when applying stochastic data augmentations.
 2. **Shared Memory (`/dev/shm`) Limits in Docker Containers:**
@@ -313,6 +337,8 @@ for step, batch in enumerate(loader):
 
 ## When to use it — and when not to
 
+![Diagram: when to use dataset and dataloader abstractions](./assets/loader-when.svg)
+
 ### When to USE `Dataset` and `DataLoader`:
 - Any deep learning project where training data exceeds a few megabytes.
 - When applying asynchronous image/audio/text augmentations.
@@ -322,6 +348,19 @@ for step, batch in enumerate(loader):
 - Simple scikit-learn models on small static tabular data (use raw NumPy arrays or Pandas DataFrames).
 
 ---
+
+## The AI connection
+
+- **Data loading is the most common hidden bottleneck.** A GPU at 30% utilisation is
+  almost always a loader that cannot keep up, not a slow model.
+- **Augmentation belongs inside `__getitem__`** so every epoch sees different randomness,
+  which is what makes augmentation a regulariser rather than a fixed preprocessing step.
+- **Variable-length sequences need a custom collate**, which is why language work meets
+  this abstraction immediately and vision work often does not.
+- **Pinned memory and asynchronous transfer overlap I/O with compute**, which is the
+  difference between a fed accelerator and a starved one.
+- **Sampling is a modelling decision.** Weighted sampling on imbalanced data changes what
+  the model optimises, before any loss function is chosen.
 
 ## Knowledge check
 
@@ -377,6 +416,7 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement an **Out-of-Core `IterableDataset` with Multi-Worker Sharding**:
+
 - Stream records from a CSV/JSON file line-by-line using a generator.
 - Use `torch.utils.data.get_worker_info()` to partition the line offsets evenly across `num_workers=4` without duplicate reads or missing samples.
 - Benchmark throughput against the standard map-style reader.

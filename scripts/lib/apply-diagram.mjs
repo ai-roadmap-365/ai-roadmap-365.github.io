@@ -23,22 +23,46 @@ const dayDir = (day) => {
 
 for (const spec of specs) {
   const dir = dayDir(spec.day);
-  const svg = gen[spec.kind](spec);
   const file = `assets/${spec.id}.svg`;
-  writeFileSync(path.join(dir, file), svg);
 
   const vpath = path.join(dir, 'visuals.yml');
   const v = readFileSync(vpath, 'utf8').replace(/\s*$/, '');
-  if (!v.includes(`id: ${spec.id}`)) {
+  // Whole-id match. A substring test skips the append when an existing id
+  // merely starts with this one — `rag-triad` inside `rag-triad-evaluation-
+  // topology` — leaving the SVG written and embedded but undeclared.
+  const declared = new RegExp(
+    `^[ \\t]*-?[ \\t]*id:[ \\t]*${spec.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*$`,
+    'm',
+  ).test(v);
+  // A colliding id is a real hazard, and the check has to come before the SVG
+  // is written: reusing an id silently overwrote a hand-authored diagram and
+  // embedded a second copy of it under a different alt, which only
+  // validate:lessons noticed. Refuse before anything on disk changes.
+  if (declared && !v.includes(`alt: '${spec.alt.replace(/'/g, "''")}'`)) {
+    throw new Error(
+      `day ${spec.day}: id "${spec.id}" is already declared with a different alt - choose another id`,
+    );
+  }
+
+  writeFileSync(path.join(dir, file), gen[spec.kind](spec));
+
+  if (!declared) {
+    // Match the file's existing sequence indentation. Sections differ: most
+    // indent items two spaces under `visuals:`, and capstone puts them at
+    // column zero. Both are valid YAML; mixing them in one file is not, and
+    // the parse error names a line far from the append.
+    const first = v.match(/^([ \t]*)- id:/m);
+    const dash = first ? first[1] : '  ';
+    const key = `${dash}  `;
     writeFileSync(
       vpath,
       `${v}
-  - id: ${spec.id}
-    file: ${file}
-    type: diagram
-    title: '${spec.title.replace(/'/g, "''")}'
-    alt: '${spec.alt.replace(/'/g, "''")}'
-    description: '${spec.description.replace(/'/g, "''")}'
+${dash}- id: ${spec.id}
+${key}file: ${file}
+${key}type: diagram
+${key}title: '${spec.title.replace(/'/g, "''")}'
+${key}alt: '${spec.alt.replace(/'/g, "''")}'
+${key}description: '${spec.description.replace(/'/g, "''")}'
 `,
     );
   }

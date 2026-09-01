@@ -13,6 +13,7 @@ Once you have generated dense vector embeddings for your knowledge base, you fac
 Given a user query vector `q in \mathbb{R}^d`, how do you find the **Top-K most semantically relevant documents** from a collection of millions of candidate vectors `V = \{v_1, v_2, ..., v_N\}` with sub-10ms latency?
 
 Calculating similarity is not just a theoretical formula—it dictates the operational latency, throughput, and hardware memory consumption of your entire AI architecture:
+
 - Choosing the wrong distance metric causes subtle relevance degradation where short sentences dominate over informative paragraphs.
 - Relying on naive Python loops results in 500ms query latency, bottlenecking your RAG pipeline.
 - Utilizing hardware-accelerated BLAS matrix operations with bounded min-heaps achieves **sub-2ms exact search across 100,000 documents on standard commodity CPUs**.
@@ -24,6 +25,7 @@ Today, you will master the geometric properties of **Cosine Similarity, Dot Prod
 ## The idea in plain language
 
 Imagine you are standing in an open desert at night with a flashlight, looking for the 5 closest lighthouses:
+
 - **Exact k-NN (Exhaustive Scan):** You measure the exact laser distance to every single lighthouse on the horizon one by one, write down all 100,000 numbers on a notepad, and sort them to find the top 5 closest (**100% Accuracy, Linear Work**).
 - **Metric Comparison:**
   - **Euclidean Distance (L2):** Measures the physical straight-line wire connecting your location to the lighthouse.
@@ -33,6 +35,8 @@ Imagine you are standing in an open desert at night with a flashlight, looking f
 ---
 
 ## Historical background
+
+![Diagram: the historical progression of information retrieval methods](./assets/search-history.svg)
 
 ![Vector distance metrics geometric comparison diagram](./assets/vector-distance-metrics-geometric-comparison.svg)
 
@@ -44,6 +48,8 @@ Imagine you are standing in an open desert at night with a flashlight, looking f
 ---
 
 ## What it is — and what it is not
+
+![Diagram: exact nearest-neighbour search compared with approximate search](./assets/exact-approximate.svg)
 
 ### What Semantic Similarity Search IS:
 - **Geometric Proximity Ranking:** Ranking documents based on mathematical distance between dense vector representations in latent space.
@@ -57,6 +63,7 @@ Imagine you are standing in an open desert at night with a flashlight, looking f
 ## Why it was created and what problems it solves
 
 Exact semantic similarity search provides 4 indispensable capabilities:
+
 1. **100% Search Recall:** Guaranteed to find the true global top-K nearest items with zero approximation error or lost matches.
 2. **Instant Dynamic Updates:** Requires zero index rebuild time; you can append 1,000 new vectors to your NumPy array in 0ms and search immediately.
 3. **Hardware Vectorization (SIMD):** Executes via multi-threaded AVX-512 and Apple Accelerate BLAS kernels, computing billions of floating-point operations per second.
@@ -71,6 +78,8 @@ Let us dissect the mathematical formulation of similarity metrics, normalized id
 ---
 
 ### 1. The Minkowski Distance Family & Metrics
+
+![Diagram: three distance metrics for comparing embedding vectors](./assets/similarity-metrics.svg)
 
 Given two vectors `u, v in \mathbb{R}^d`:
 
@@ -106,12 +115,15 @@ Rearranging:
 `u \cdot v = 1 - \frac{1}{2} \|u - v\|_2^2`
 
 **Crucial Engineering Conclusion:**
+
 - Maximizing Cosine Similarity (`u \cdot v`) is **strictly mathematically equivalent** to minimizing Squared Euclidean Distance (`\|u - v\|^2`).
 - Pre-normalizing vectors allows the search engine to replace expensive square roots and norms with a **single fast matrix-vector dot product (`np.dot`)**!
 
 ---
 
 ### 3. Vectorized Batch Search with BLAS
+
+![Diagram: how similarity search is expressed as a single matrix operation](./assets/batch-search.svg)
 
 ![Exact KNN vs Approximate Nearest Neighbor search diagram](./assets/exact-knn-vs-ann-search-traversal.svg)
 
@@ -130,7 +142,10 @@ Under the hood, NumPy invokes optimized C/Fortran libraries (OpenBLAS, Intel MKL
 
 ### 4. Top-K Extraction: Argsort vs. Bounded Min-Heap
 
+![Diagram: how the nearest neighbours are extracted from a similarity computation](./assets/topk.svg)
+
 Once you have computed similarity scores for all `N` documents:
+
 - **Naive Full Sort (`np.argsort`):**
   - Sorts all `N` elements in `O(N \log N)` time.
   - Slower when `N` is large (e.g. 500,000 items) and wastes memory copying index arrays.
@@ -159,9 +174,13 @@ Empirical latency of vectorized exact k-NN search (`d = 1536`, `float32`) on an 
 
 ### 6. Score Calibration and Normalization Curves
 
+![Diagram: why raw similarity scores cannot be used as absolute thresholds](./assets/score-calibration.svg)
+
 Raw cosine similarity scores often range from `0.60` to `0.95`:
+
 - To present human-interpretable confidence percentages, apply **min-max score calibration**:
   `\text{Score}_{\text{calibrated}} = \frac{\text{sim} - \text{sim}_{\text{min}}}{\text{sim}_{\text{max}} - \text{sim}_{\text{min}}}`
+
 - Or apply a sigmoid transformation centered on the empirical domain mean `\mu = 0.75`:
   `P(\text{Relevant}) = \frac{1}{1 + e^{-k(\text{sim} - \mu)}}`
 
@@ -170,6 +189,7 @@ Raw cosine similarity scores often range from `0.60` to `0.95`:
 ### 7. Asymmetric Dual-Encoder Indexing
 
 When indexing documentation:
+
 - Normalize and store all passage embeddings in matrix `D in \mathbb{R}^{N \times d}`.
 - When a user query arrives, prepend the task prefix (`"query: "`), encode the query into `q in \mathbb{R}^d`, L2-normalize `q`, and execute `np.dot(D, q)`.
 - This ensures high directional alignment between queries and documents.
@@ -179,9 +199,11 @@ When indexing documentation:
 ### 8. Batch Query Vectorization
 
 When processing multiple user queries simultaneously (e.g. in a web server handling 50 concurrent requests):
+
 - Stack queries into a query matrix `Q in \mathbb{R}^{B \times d}`.
 - Compute the similarity matrix in a single GEMM (General Matrix Multiply) call:
   `S = Q \cdot D^T \quad \text{shape: } (B, N)`
+
 - This maximizes GPU/CPU tensor core occupancy and achieves 5x higher throughput than sequential single-query lookups.
 
 - Stacking multiple query lookups into unified GEMM calls amortizes memory bandwidth overhead, delivering predictable sub-millisecond response times even during high-concurrency traffic spikes.
@@ -191,6 +213,7 @@ When processing multiple user queries simultaneously (e.g. in a web server handl
 ### 9. Handling Missing or Dynamic Metadata Filters
 
 In real-world search, users frequently combine vector search with structured filters (e.g. `category == 'engineering' AND year >= 2024`):
+
 - **Pre-Filtering:** Filter document IDs first, slice the database sub-matrix, and run k-NN over the filtered subset.
 - **Post-Filtering:** Retrieve Top-100 nearest neighbors via k-NN, then discard items that fail metadata checks (risk: may return fewer than K results if filter is strict).
 - Choosing between pre-filtering and post-filtering depends on filter selectivity: when filters match less than 10% of items, pre-filtering avoids wasted vector compute.
@@ -207,7 +230,10 @@ In real-world search, users frequently combine vector search with structured fil
 
 ## An everyday analogy
 
+![Diagram: catalogue lookup compared with a librarian who understands the question](./assets/library-search.svg)
+
 Think of tuning a radio:
+
 - **Keyword Search:** You only hear sound if the frequency matches the exact integer dial (e.g. exactly 101.0 MHz). If you dial 100.9 MHz, you get total static.
 - **Semantic Similarity Search:** The radio detects harmonic resonance. Even if you are slightly off-frequency, it measures how close your signal is to the broadcast frequency and plays the broadcast clearly (**Continuous Proximity Tuning**).
 
@@ -266,6 +292,8 @@ class ExactKNNSearchEngine:
 
 ## Implications: security, privacy, performance, scalability, and cost
 
+![Diagram: the recall, cost, latency and quality-ceiling implications of similarity search](./assets/search-implications.svg)
+
 1. **Memory Bounds:** Storing 500,000 vectors of dimension 1536 in `float32` requires `500,000 * 1536 * 4 = 3.07 GB` of RAM, fitting comfortably on any modern laptop or micro-server instance.
 2. **Deterministic Reproducibility:** Flat k-NN is 100% deterministic with zero approximation randomness, making it ideal for safety-critical medical, legal, and financial search pipelines.
 
@@ -300,6 +328,8 @@ class ExactKNNSearchEngine:
 
 ## When to use it — and when not to
 
+![Diagram: when exact similarity search suffices and when an index is required](./assets/search-when.svg)
+
 ### When to Use Exact Flat k-NN:
 - Document collections under 100,000 items, rapid prototyping, unit test assertions, real-time dynamic document ingestion, and establishing gold-standard evaluation baselines.
 
@@ -307,6 +337,19 @@ class ExactKNNSearchEngine:
 - Multi-million to billion-scale datasets where logarithmic ANN (HNSW / IVF-PQ) is mandatory to stay within sub-10ms response budgets.
 
 ---
+
+## The AI connection
+
+- **Similarity search is the retrieval step of every RAG system**, so its behaviour decides
+  what the model gets to see.
+- **The distance metric must match how the vectors were trained**, and a mismatch degrades
+  results silently rather than failing.
+- **Exact search is fine far longer than people expect**, which means a vector database is
+  often premature.
+- **Scores are not probabilities** — a similarity of 0.8 means nothing absolute, and
+  thresholds have to be calibrated per model.
+- **Retrieval quality caps answer quality**, because no amount of prompting recovers a
+  passage that was never retrieved.
 
 ## Knowledge check
 
@@ -360,4 +403,5 @@ Run the automated test runner:
 ## Extension challenge
 
 Implement a **Sharded Parallel Exact k-NN Searcher** using Python's `multiprocessing` or `concurrent.futures`:
+
 - Partition 500,000 vectors across 4 CPU worker threads, perform parallel sub-matrix dot products, merge the 4 partial Top-K candidate heaps using `heapq.merge`, and plot the **Speedup Factor vs. Worker Thread Count**.

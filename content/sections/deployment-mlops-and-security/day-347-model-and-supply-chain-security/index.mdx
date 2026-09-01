@@ -6,6 +6,7 @@ title: "Model and Supply Chain Security"
 ## Why this matters
 
 Machine learning models are executable software artifacts that introduce critical supply chain vulnerabilities (OWASP LLM05):
+
 - **Remote Code Execution (RCE) via Pickle Poisoning:** Over 40% of open-source PyTorch model checkpoints historically used Python `pickle` serialization. Attackers embed arbitrary shell commands inside `model.pt` files that execute the instant a developer runs `torch.load()`.
 - **Training Data and Weight Backdoors:** Malicious contributors poison foundational model weights or fine-tuning datasets, causing models to output biased recommendations or trigger backdoor execution when specific trigger tokens appear.
 - **Untracked Dependency Lineage:** Without an AI Software Bill of Materials (AIBOM), organizations cannot audit which training datasets, base models, or vulnerable tokenizers are running in their production clusters.
@@ -16,6 +17,10 @@ Securing the AI supply chain requires **transitioning to SafeTensors, performing
 
 ## The idea in plain language
 
+![Diagram: pickle deserialisation compared with SafeTensors memory mapping](./assets/pickle-or-safetensors.svg)
+
+![Diagram: the four controls of an AI model supply chain](./assets/supply-chain-controls.svg)
+
 Think of AI model supply chain security like **importing food ingredients into a commercial kitchen**:
 
 - **The Dangerous Canned Good (Pickle Checkpoint):** A supplier delivers a metal can labeled *"Secret Truffle Sauce"*. Inside is a spring-loaded explosive trap that detonates the moment the can opener touches the lid (**Arbitrary Pickle Deserialization RCE**).
@@ -23,6 +28,8 @@ Think of AI model supply chain security like **importing food ingredients into a
 - **The Food Safety Certificate & Tamper Seal (Sigstore & AIBOM):** Every jar carries a verifiable cryptographic tamper seal showing exactly which certified farm produced the batch and certifying that no contaminants were added during transport (**Cryptographic Model Provenance**).
 
 ## Historical background
+
+![Diagram: the progression from naive pickle checkpoints to signed SafeTensors](./assets/supply-chain-eras.svg)
 
 Model supply chain security evolved across three distinct eras:
 
@@ -48,6 +55,8 @@ Let us define the core operational controls of model supply chain security:
 ### What Model Supply Chain Security Is Not:
 - Assuming that running `torch.load(..., map_location='cpu')` prevents arbitrary code execution (it does not; pickle executes during CPU deserialization).
 - Relying on basic MD5 checksums that can be forged by collision attacks instead of SHA256/Sigstore signatures.
+
+![Diagram: real supply chain controls compared with two ineffective substitutes](./assets/not-md5-not-maplocation.svg)
 
 ```text
 +-------------------------------------------------------------------------------+
@@ -78,38 +87,20 @@ When a specific base model or tokenizer version is reported to contain a vulnera
 
 ## How it works
 
+![Diagram: the pipeline from a trained artefact to an admitted model in production](./assets/provenance-pipeline.svg)
+
 Let us trace the complete **Model Supply Chain Security Pipeline**:
 
-```text
-[1. Model Build & Training Pipeline]
-  - Train model weights on authenticated compute cluster
-  - Export weights exclusively to `.safetensors` format
-                    │
-                    ▼
-[2. Static AST & Artifact Security Scan]
-  - Run ModelScan across all repository files
-  - Verify zero malicious `__reduce__` or `GLOBAL` opcodes in auxiliary files
-  - Validate `config.json` and `tokenizer.json` against strict JSON schemas
-                    │
-                    ▼
-[3. Cryptographic Signing & AIBOM Generation]
-  - Calculate SHA256 checksums across all weight shards
-  - Sign artifact digest using Cosign private key / OIDC identity
-  - Record public signature on immutable Rekor transparency ledger
-  - Generate CycloneDX AIBOM JSON manifest
-                    │
-                    ▼
-[4. Kubernetes Admission Gate (Production Deployment)]
-  - CI/CD submits deployment manifest to Kubernetes cluster
-  - Kyverno / OPA Admission Controller intercepts Pod creation
-  - Verifies Cosign cryptographic signature against trusted public key
-  - Validates AIBOM hash matching container image and weight volume
-  - Admits Pod into production GPU inference cluster
+```text [1. Model Build & Training Pipeline] - Train model weights on authenticated compute cluster - Export weights exclusively to `.safetensors` format │ ▼ [2. Static AST & Artifact Security Scan] - Run ModelScan across all repository files - Verify zero malicious `__reduce__` or `GLOBAL` opcodes in auxiliary files - Validate `config.json` and `tokenizer.json` against strict JSON schemas │ ▼ [3. Cryptographic Signing & AIBOM Generation] - Calculate SHA256 checksums across all weight shards - Sign artifact digest using Cosign private key / OIDC identity - Record public signature on immutable Rekor transparency ledger - Generate CycloneDX AIBOM JSON manifest │ ▼ [4.
+
+Kubernetes Admission Gate (Production Deployment)] - CI/CD submits deployment manifest to Kubernetes cluster - Kyverno / OPA Admission Controller intercepts Pod creation - Verifies Cosign cryptographic signature against trusted public key - Validates AIBOM hash matching container image and weight volume - Admits Pod into production GPU inference cluster
 ```
 
 ![End-to-End Model Supply Chain Provenance Pipeline showing Training Ingest, Static ModelScan AST Inspection, Sigstore Cosign Signing, AIBOM Generation, and Kubernetes Admission Gate Verification](./assets/end-to-end-model-supply-chain-provenance-pipeline.svg)
 
 ## An everyday analogy
+
+![Diagram: an unsealed capsule compared with tamper-evident sealed medication](./assets/blister-pack.svg)
 
 Think of model supply chain security like **checking the security seals on pharmaceutical medications**:
 
@@ -218,9 +209,12 @@ spec:
 
 ### 4. Supply Chain SLSA Level 3 Build Verification and Rekor Transparency Logs
 To guarantee that a model artifact has not been modified between the training cluster and production GPU pods:
+
 1. **SLSA Level 3 Provenance:** The automated build system records non-falsifiable build metadata, including git commit SHAs, base container digest hashes, training dataset manifest hashes, and the exact builder identity.
 2. **Rekor Immutable Transparency Ledger:** Signatures generated by Sigstore Cosign are committed to the public or private Rekor append-only transparency log. Deployment clusters query Rekor to verify the timestamped inclusion proof before mounting model weights.
 3. **Automated Signature Attestation Webhooks:** Kubernetes admission webhooks (e.g. Kyverno, OPA Gatekeeper) intercept every model mount request, verify the cryptographic signature against the authorized OIDC identity (e.g. `sigstore.internal/org/repo/.github/workflows/train.yml@refs/heads/main`), and reject any unauthenticated artifact.
+
+![Diagram: how SLSA provenance, a transparency log and an admission webhook verify an artefact](./assets/slsa-rekor.svg)
 
 ```text
 +-------------------------------------------------------------------------------+
@@ -236,8 +230,11 @@ To guarantee that a model artifact has not been modified between the training cl
 
 ### 5. Deep AST Analysis of Tokenizer Configuration Files
 While model weight files (`.safetensors`) are strictly non-executable, auxiliary model bundle files like `tokenizer.json`, `vocab.json`, and `added_tokens.json` must also be validated:
+
 - Attackers can inject Unicode homoglyphs or invisible control characters into vocabulary files to manipulate downstream parsing logic.
 - Model supply chain scanners must enforce strict schema validation on all JSON configuration files, ensuring token IDs are contiguous positive integers and special tokens match expected regex patterns.
+
+![Diagram: the auxiliary files in a model bundle that also require validation](./assets/bundle-hazards.svg)
 
 
 ### 6. Vulnerability Disclosure & CVE Tracking in Machine Learning
@@ -264,6 +261,8 @@ When security vulnerabilities are discovered in ML libraries (such as CVEs in Py
 
 ## Deep Architectural Breakdown: SafeTensors Binary Header Structure
 
+![Diagram: the three sections of a SafeTensors file](./assets/safetensors-format.svg)
+
 The `SafeTensors` format specification is lightweight and completely non-executable:
 
 ### 1. Header Length (8 Bytes)
@@ -284,6 +283,8 @@ Contiguous raw memory buffers mapped directly into CPU/GPU memory via `mmap()`, 
 ```
 
 ## Implications: security, privacy, performance, scalability, and cost
+
+![Diagram: the performance and cost implications of supply chain controls](./assets/supply-chain-implications.svg)
 
 ### 1. Ingestion Performance: SafeTensors vs Pickle
 SafeTensors loads up to 4x faster than PyTorch pickle on CPU and supports instantaneous zero-copy memory mapping (`mmap`), reducing cold-start container initialization times from 90 seconds to under 15 seconds.
@@ -315,6 +316,8 @@ Running static AST scanning with ModelScan takes under 2 seconds for a 14GB mode
 
 ## When to use it — and when not to
 
+![Diagram: where SafeTensors and signature verification are required](./assets/formats-when.svg)
+
 ### Enforce SafeTensors and Sigstore Verification for:
 - All production serving workloads, cloud deployments, and shared team registries.
 - Models downloaded from public hubs (Hugging Face, Civitai).
@@ -329,6 +332,23 @@ Running static AST scanning with ModelScan takes under 2 seconds for a 14GB mode
 - [ ] CycloneDX AIBOM manifest generated for every release.
 - [ ] Kubernetes admission controller configured to enforce SafeTensors signatures.
 
+## The AI connection
+
+- **A model checkpoint is executable software.** Pickle deserialisation runs code, so
+  `torch.load` on an untrusted file is running a stranger's program, not reading data.
+
+- **The AI supply chain has no equivalent of a package lockfile** by default — weights,
+  tokenizers and datasets all arrive with less provenance than a Python dependency.
+
+- **SafeTensors makes the attack architecturally impossible** rather than filtered: a
+  JSON header and raw buffers have nowhere to put a `__reduce__`.
+
+- **A weight backdoor survives every functional test.** The model behaves correctly
+  until a trigger token appears, which is why provenance matters more than evaluation.
+
+- **The performance argument agrees with the security one**, unusually: memory-mapped
+  SafeTensors cuts a 90-second cold start to under 15.
+
 ## Knowledge check
 
 1. **Why is Python pickle vulnerable to RCE?** Because pickle is an executable virtual machine that evaluates arbitrary Python callables (such as `os.system`) during object reconstruction.
@@ -338,6 +358,7 @@ Running static AST scanning with ModelScan takes under 2 seconds for a 14GB mode
 ## Hands-on exercise
 
 In this lab, you will build a **Production Model Supply Chain Scanner in Python**. Your implementation will:
+
 1. Walk model directories and identify forbidden pickle extensions (`.pt`, `.pkl`, `.bin`).
 2. Calculate cryptographic SHA256 digests for all artifacts.
 3. Validate header metadata for `.safetensors` files.

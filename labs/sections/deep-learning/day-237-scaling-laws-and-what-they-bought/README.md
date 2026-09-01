@@ -9,7 +9,7 @@ Topic: Neural Scaling Laws, Compute Budgeting, and Chinchilla Optimization.
 Build and test a modular scaling law simulator and compute budget optimization engine in Python. Implement the $C = 6ND$ calculation formula, solve for Chinchilla compute-optimal parameter-token allocations, and compute predicted validation loss trajectories.
 
 ## Learning objectives
-- Calculate training compute FLOPs using the foundational $C pprox 6ND$ formula.
+- Calculate training compute FLOPs using the foundational $C \approx 6ND$ formula.
 - Implement the Chinchilla compute-optimal resource allocation algorithm.
 - Predict cross-entropy loss trajectories across compute scales using power-law constants.
 - Analyze the economics of inference-optimal overtraining.
@@ -66,7 +66,7 @@ Scaling Laws Demo: Compute = 5.88e+21 FLOPs, Optimal Params = 7.0B, Tokens = 140
 ```
 
 ## Validation steps
-1. Verify `calculate_training_flops` multiplies $6 	imes N 	imes D$.
+1. Verify `calculate_training_flops` multiplies $6 \times N \times D$.
 2. Confirm `compute_chinchilla_optimal` enforces $D = 20N$.
 3. Confirm predicted loss exceeds irreducible language entropy $E = 1.69$.
 4. Ensure all unit test assertions pass.

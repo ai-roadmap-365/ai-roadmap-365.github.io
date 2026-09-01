@@ -76,7 +76,7 @@ const loadYaml = (p) => {
 function proseParagraphs(mdx) {
   const body = mdx
     .replace(/^---\n[\s\S]*?\n---\n/, '')
-    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^```[\s\S]*?^```/gm, '')
     .replace(/^\|.*$/gm, '')
     .replace(/^#{1,6} .*$/gm, '')
     .replace(/^!\[.*$/gm, '');
@@ -96,7 +96,7 @@ function analyseDay(day) {
   // Prose only: code blocks are not what "too much essay" means.
   const proseWords = mdx
     .replace(/^---\n[\s\S]*?\n---\n/, '')
-    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^```[\s\S]*?^```/gm, '')
     .split(/\s+/)
     .filter(Boolean).length;
   const readingMinutes = Math.round(proseWords / 240);
