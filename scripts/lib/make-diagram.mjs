@@ -14,7 +14,16 @@
  *   compare    two columns set against each other
  *   states     labelled boxes joined by captioned arrows
  */
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// Quotes matter as much as angle brackets here: every one of these values is interpolated into a
+// double-quoted XML attribute, so an unescaped " ends the attribute early and the whole file stops
+// being well-formed. A browser does not render a malformed SVG at all, it shows a broken image, so
+// the failure is total and silent — nine diagrams shipped that way before this line was fixed.
+const esc = (s) =>
+  String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MONO = 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace';
