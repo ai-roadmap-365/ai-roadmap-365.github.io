@@ -54,6 +54,14 @@
 </p>
 
 <p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/journey-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/journey-light.svg">
+    <img src="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/journey-light.svg" alt="The whole year end to end: nine courses on one path — Foundations (days 1-42), Python (43-98), Maths (99-140), Machine Learning (141-196), Deep Learning (197-238), LLMs (239-287), AI Engineering (288-329), Deploy (330-350) and the Capstone (351-365), each with one lesson and one runnable lab a day." width="880">
+  </picture>
+</p>
+
+<p align="center">
   <a href="#vision-and-audience">✨ Why</a> ·
   <a href="https://ai-roadmap-365.github.io/">📖 Read</a> ·
   <a href="CURRICULUM.md">🗺️ Curriculum</a> ·

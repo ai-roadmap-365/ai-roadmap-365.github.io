@@ -100,7 +100,11 @@ function animationName(decls, keyframeNames) {
 const problems = [];
 const stats = { scanned: 0, animated: 0 };
 
-for (const rel of globSync('{content,public,src}/**/*.svg', { cwd: ROOT }).sort()) {
+// `assets/` is in this list because it was NOT, and that is exactly how the
+// README art shipped unchecked: it was authored straight into the public copy,
+// so it never met a gate at all. A checker that skips a directory is a checker
+// that guarantees nothing about it.
+for (const rel of globSync('{assets,content,public,src}/**/*.svg', { cwd: ROOT }).sort()) {
   const svg = readFileSync(path.join(ROOT, rel), 'utf8');
   stats.scanned += 1;
   const fail = (rule, detail) => problems.push({ rel, rule, detail });
