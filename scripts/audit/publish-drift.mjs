@@ -22,7 +22,21 @@ import { readFileSync } from 'node:fs';
 import yaml from 'js-yaml';
 
 const cfg = yaml.load(readFileSync('config/course.config.yml', 'utf8'));
-const repo = cfg?.repository?.public_canonical ?? 'ai-roadmap-365/ai-roadmap-365';
+// Derived from the config, never hard-coded. This read used to be
+// `cfg?.repository?.public_canonical`, a key that has never existed in
+// course.config.yml, so it always fell through to a literal naming the OLD
+// public repository — and the audit spent its life comparing this tree
+// against a copy no reader ever visits. A fallback that silently points
+// somewhere plausible is worse than no fallback, so there isn't one.
+const owner = cfg?.repository?.owner;
+const name = cfg?.repository?.name ?? cfg?.repository?.public_name;
+if (!owner || !name) {
+  console.error(
+    '\u2717 publish-drift: repository.owner/name missing from config/course.config.yml',
+  );
+  process.exit(1);
+}
+const repo = `${owner}/${name}`;
 const API = `https://api.github.com/repos/${repo}/contents`;
 
 const args = process.argv.slice(2);
@@ -107,5 +121,5 @@ if (!drifted.length) {
 console.error(`\n${drifted.length} difference(s) across ${sample.length} sampled directories:`);
 for (const d of drifted.slice(0, 20)) console.error(`  ${d.why.padEnd(24)} ${d.dir}`);
 if (drifted.length > 20) console.error(`  … and ${drifted.length - 20} more`);
-console.error('\nRun: npm run release:public && npm run release:site');
+console.error('\nRun: npm run release:public (the site then deploys from main via Actions)');
 process.exit(1);

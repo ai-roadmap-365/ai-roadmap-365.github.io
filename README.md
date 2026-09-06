@@ -1,8 +1,20 @@
 <p align="center">
-  <img src="assets/readme/hero.svg" alt="365 Days of AI Mastery — one year, nine courses, every day: from how a computer works to shipping production AI systems" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/hero-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/hero-light.svg">
+    <img src="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/hero-light.svg" alt="365 Days of AI Mastery: nine standalone courses, one lesson and one runnable lab every day, with the day count read from the curriculum itself." width="880">
+  </picture>
 </p>
 
 <h1 align="center">📚 365 Days of AI Mastery</h1>
+
+<p align="center">
+  <strong>Star us&nbsp;❤️&nbsp;→</strong>&nbsp;<a href="https://github.com/ai-roadmap-365/ai-roadmap-365.github.io" title="Star 365 Days of AI Mastery on GitHub"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/star-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/star-light.svg">
+    <img src="https://raw.githubusercontent.com/ai-roadmap-365/ai-roadmap-365.github.io/main/assets/readme/star-light.svg" alt="Star this repository on GitHub" width="132" height="34" align="middle">
+  </picture></a>
+</p>
 
 <p align="center">
   <b>📖 Read the course →
@@ -33,7 +45,7 @@
   <img alt="site" src="https://img.shields.io/badge/site-GitHub%20Pages-222222?logo=github">
   <img alt="python" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
   <img alt="offline" src="https://img.shields.io/badge/labs-run%20offline-475569">
-  <img alt="validation" src="https://img.shields.io/badge/verify%3Aall-24%20gates-16a34a">
+  <img alt="validation" src="https://img.shields.io/badge/verify%3Aall-28%20gates-16a34a">
 </p>
 
 <p align="center">
@@ -936,7 +948,7 @@ labs/sections/...          ← hands-on labs: one directory per day (mirrors con
 catalog/                   ← tools/frameworks/models/projects/free-open-source data
 src/                       ← the Astro website (a viewer — content never depends on it)
 scripts/validate/          ← the validation framework (one script per gate)
-scripts/release/           ← site publishing (build, verify, push to the site branch)
+scripts/release/           ← public sync, and the local site build and verification
 tests/                     ← unit tests (vitest)
 docs/                      ← design documents
 dist/                      ← build output (gitignored): the built site and the offline bundle
@@ -1049,12 +1061,16 @@ and `validate:privacy` fails if learner-facing content references it.
 
 ## Repository and link strategy
 
-**One repository, everything public.** `sandeepbazar/ai-roadmap-365` carries
-the whole course on `main` — lesson content, labs, instructor material, the
-site source, the curriculum, the scripts and this configuration. The rendered
-site is published to the `site` branch as generated output and served from
-there by GitHub Pages. There is no private repository and nothing is copied
-between repositories.
+**One public repository.** `ai-roadmap-365/ai-roadmap-365.github.io` carries
+everything a learner or a contributor needs on `main` — lesson content, labs,
+the site source, the curriculum, the scripts, the tests and this
+configuration. The rendered site is published to the `site` branch as
+generated output and served from there by GitHub Pages.
+
+The `.github.io` suffix is load-bearing: GitHub serves an organization's root
+site only from a repository named exactly `<org>.github.io`, and Pages URLs
+are not redirected on rename. The repository name is the site address, so it
+must not be renamed.
 
 Every URL comes from `config/course.config.yml` through the helpers in
 `scripts/lib/links.mjs` — `getLessonUrl`, `getLocalLabUrl`, `getRepoLabUrl`,
@@ -1078,14 +1094,16 @@ mode.
 ```bash
 npm run generate:section-nav          # regenerate navigation and the week tables
 npm run generate:social -- --day 1    # the LinkedIn post and its share card
-npm run release:site                  # build, verify and publish to the site branch
+npm run build:site                    # build and verify the site locally
 ```
 
-Because labs and lessons live in the same repository, publishing a day is one
-push plus one site build — there is no copy step that can leave the repository
-and the site disagreeing. `release:site` refuses to publish if the built
-output references localhost or an internal route, and the site build strips
-`/admin` before pushing.
+Because labs and lessons live in the same repository, publishing a day is a
+single push to `main` — there is no copy step that can leave the repository and
+the site disagreeing, and no second branch to keep in step.
+`.github/workflows/pages.yml` builds on that push and deploys the result to
+GitHub Pages. `build:site` runs the same checks locally: it refuses to pass if
+the built output references localhost or an internal route, and it strips
+`/admin` from the build.
 
 ## Security controls
 
@@ -1147,4 +1165,5 @@ To write day N:
 5. Set the day to `in-review` in `curriculum/progress.yml`, run
    `npm run verify:all`, fix failures, then flip flags to true and status to
    `complete` only when everything passes.
-6. `npm run release:site` to publish the day to the course site.
+6. Push to `main`; the Pages workflow builds and publishes the day to the
+   course site.

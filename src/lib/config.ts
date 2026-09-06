@@ -15,7 +15,8 @@ export interface RepositoryConfig {
   public_name: string;
   public_url: string;
   public_branch: string;
-  site_branch: string;
+  /** Removed in A49; Pages is deployed by workflow, not a branch. */
+  site_branch?: string;
 }
 
 export interface WebsiteConfig {

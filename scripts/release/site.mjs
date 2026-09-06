@@ -1,38 +1,33 @@
 #!/usr/bin/env node
 /**
- * Publish the rendered course site to the `site` branch.
+ * Build and verify the publishable course site into `dist/`.
  *
- * Model (A31): one repository. `main` carries the whole course - lessons,
- * labs, instructor material, site source and pipelines. The rendered site is
- * published to a dedicated `site` branch as generated output, never source,
- * and GitHub Pages serves that branch.
+ * This script does NOT deploy. GitHub Pages is fed by
+ * `.github/workflows/pages.yml`, which runs this and then hands `dist/` to
+ * actions/deploy-pages (A49). One branch, `main`, is both the source and the
+ * thing that triggers a publish.
  *
- * The branch is force-pushed on every release because it holds only generated
- * output; its history carries no information `main` does not already
- * have.
+ * It used to force-push the built HTML to a dedicated `site` branch. That
+ * branch existed only because Pages could not otherwise be pointed at a
+ * subdirectory of a build, and it cost a second branch, a force-push over
+ * generated history on every release, and an SSH remote that only the owner's
+ * machine had. Deploying the artifact directly removes all three.
+ *
+ * What remains here is everything that has to be true before anything is
+ * served: the build succeeds, the authoring-only routes are stripped, Jekyll
+ * is disabled so Astro's /_astro assets resolve, and no page references
+ * localhost or links into a route that was stripped.
  *
  * Usage:
- *   node scripts/release/site.mjs            # build, verify, push
- *   node scripts/release/site.mjs --dry-run  # build and verify only
+ *   node scripts/release/site.mjs     # build, strip, verify; leaves dist/
  */
 
 import { execFileSync } from 'node:child_process';
-import {
-  cpSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-  readdirSync,
-  statSync,
-} from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import yaml from 'js-yaml';
 
 const repoRoot = process.cwd();
-const dryRun = process.argv.includes('--dry-run');
 
 const config = yaml.load(readFileSync(path.join(repoRoot, 'config', 'course.config.yml'), 'utf8'));
 const dist = path.join(repoRoot, 'dist');
@@ -50,7 +45,7 @@ function run(cmd, args, opts = {}) {
 }
 
 function fail(message) {
-  console.error(`✗ release:site: ${message}`);
+  console.error(`✗ build:site: ${message}`);
   process.exit(1);
 }
 
@@ -58,9 +53,6 @@ function fail(message) {
 
 if (!config.website.public_base_url) fail('website.public_base_url is null; nothing to publish to');
 if (!config.repository.public_url) fail('repository.public_url is null');
-
-const siteBranch = config.repository.site_branch;
-if (!siteBranch) fail('repository.site_branch is not set in course.config.yml');
 
 // ------------------------------------------------------------------- build
 
@@ -120,35 +112,7 @@ if (leaks.length) {
 const pages = textFiles.filter((f) => f.endsWith('.html')).length;
 console.log(`· verified ${pages} pages: no localhost, no internal routes`);
 
-if (dryRun) {
-  console.log('✓ release:site: dry run complete, nothing pushed');
-  process.exit(0);
-}
-
-// -------------------------------------------------------------------- push
-
-const remote = `git@github.com:${config.repository.owner}/${config.repository.public_name}.git`;
-const staging = mkdtempSync(path.join(os.tmpdir(), 'site-publish-'));
-
-try {
-  cpSync(dist, staging, { recursive: true });
-
-  run('git', ['init', '-q', '-b', siteBranch], { cwd: staging });
-  // A fresh temp repo inherits the GLOBAL git identity, which is not
-  // necessarily this project's. Set it explicitly (A24, A38).
-  run('git', ['config', 'user.name', config.committer.name], { cwd: staging });
-  run('git', ['config', 'user.email', config.committer.email], { cwd: staging });
-  run('git', ['add', '-A'], { cwd: staging });
-
-  const stamp = run('git', ['log', '-1', '--format=%h %s'], { cwd: repoRoot }).trim();
-  run('git', ['commit', '-q', '-m', `Publish course site\n\nBuilt from main ${stamp}`], {
-    cwd: staging,
-  });
-
-  console.log(`· force-pushing ${pages} pages to ${config.repository.public_name}:${siteBranch}`);
-  run('git', ['push', '-q', '--force', remote, `${siteBranch}:${siteBranch}`], { cwd: staging });
-
-  console.log(`✓ release:site: published to ${config.website.public_base_url}`);
-} finally {
-  rmSync(staging, { recursive: true, force: true });
-}
+console.log(
+  `\u2713 build:site: ${pages} pages built and verified in dist/. ` +
+    'Deployment is .github/workflows/pages.yml, not this script.',
+);

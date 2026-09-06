@@ -23,7 +23,6 @@ const baseConfig = {
     public_name: 'ai-roadmap-365.github.io',
     public_url: 'https://github.com/ai-roadmap-365/ai-roadmap-365.github.io',
     public_branch: 'main',
-    site_branch: 'site',
   },
   website: {
     local_base_url: 'http://localhost:4321',
